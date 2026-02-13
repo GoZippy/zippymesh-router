@@ -56,12 +56,12 @@ export async function GET() {
     }
 
     const settings = await readSettings();
-    const has9Router = !!(settings?.env?.ANTHROPIC_BASE_URL);
+    const hasZippyMesh = !!(settings?.env?.ANTHROPIC_BASE_URL);
 
     return NextResponse.json({
       installed: true,
       settings: settings,
-      has9Router: has9Router,
+      hasZippyMesh: hasZippyMesh,
       settingsPath: getClaudeSettingsPath(),
     });
   } catch (error) {

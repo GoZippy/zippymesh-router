@@ -4,35 +4,24 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { PROVIDER_MODELS, getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
-import { ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard, DefaultToolCard } from "./components";
+import { ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard, VoidSpecToolCard, DefaultToolCard } from "./components";
 
-const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
+
 
 export default function CLIToolsPageClient({ machineId }) {
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedTool, setExpandedTool] = useState(null);
   const [modelMappings, setModelMappings] = useState({});
-  const [cloudEnabled, setCloudEnabled] = useState(false);
+
   const [apiKeys, setApiKeys] = useState([]);
 
   useEffect(() => {
     fetchConnections();
-    loadCloudSettings();
     fetchApiKeys();
   }, []);
 
-  const loadCloudSettings = async () => {
-    try {
-      const res = await fetch("/api/settings");
-      if (res.ok) {
-        const data = await res.json();
-        setCloudEnabled(data.cloudEnabled || false);
-      }
-    } catch (error) {
-      console.log("Error loading cloud settings:", error);
-    }
-  };
+
 
   const fetchApiKeys = async () => {
     try {
@@ -68,7 +57,7 @@ export default function CLIToolsPageClient({ machineId }) {
     const activeProviders = getActiveProviders();
     const models = [];
     const seenModels = new Set();
-    
+
     activeProviders.forEach(conn => {
       const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
       const providerModels = getModelsByProviderId(conn.provider);
@@ -87,7 +76,7 @@ export default function CLIToolsPageClient({ machineId }) {
         }
       });
     });
-    
+
     return models;
   };
 
@@ -108,9 +97,6 @@ export default function CLIToolsPageClient({ machineId }) {
   }, []);
 
   const getBaseUrl = () => {
-    if (cloudEnabled && CLOUD_URL) {
-      return CLOUD_URL;
-    }
     if (typeof window !== "undefined") {
       return window.location.origin;
     }
@@ -151,17 +137,19 @@ export default function CLIToolsPageClient({ machineId }) {
             modelMappings={modelMappings[toolId] || {}}
             onModelMappingChange={(alias, target) => handleModelMappingChange(toolId, alias, target)}
             hasActiveProviders={hasActiveProviders}
-            cloudEnabled={cloudEnabled}
+
           />
         );
       case "codex":
-        return <CodexToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} cloudEnabled={cloudEnabled} />;
+        return <CodexToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} />;
       case "droid":
-        return <DroidToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} cloudEnabled={cloudEnabled} />;
+        return <DroidToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
       case "openclaw":
-        return <OpenClawToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} cloudEnabled={cloudEnabled} />;
+        return <OpenClawToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
+      case "voidspec":
+        return <VoidSpecToolCard key={toolId} {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
       default:
-        return <DefaultToolCard key={toolId} toolId={toolId} {...commonProps} activeProviders={getActiveProviders()} cloudEnabled={cloudEnabled} />;
+        return <DefaultToolCard key={toolId} toolId={toolId} {...commonProps} activeProviders={getActiveProviders()} />;
     }
   };
 

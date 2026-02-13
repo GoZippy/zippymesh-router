@@ -1,22 +1,8 @@
-import initializeCloudSync from "@/shared/services/initializeCloudSync";
-
-// Initialize cloud sync when this module is imported
-let initialized = false;
+// Cloud sync removed for security — this is a no-op.
+// Kept as a module so `import "@/lib/initCloudSync"` in page.js doesn't break.
 
 export async function ensureCloudSyncInitialized() {
-  if (!initialized) {
-    try {
-      await initializeCloudSync();
-      initialized = true;
-    } catch (error) {
-      console.error("[ServerInit] Error initializing cloud sync:", error);
-    }
-  }
-  return initialized;
+  return true;
 }
 
-// Auto-initialize when module loads
-ensureCloudSyncInitialized().catch(console.log);
-
 export default ensureCloudSyncInitialized;
-

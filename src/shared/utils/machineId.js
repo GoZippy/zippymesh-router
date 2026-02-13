@@ -9,7 +9,7 @@ import { machineIdSync } from 'node-machine-id';
  */
 export async function getConsistentMachineId(salt = null) {
   // For server-side, use node-machine-id with salt
-  const saltValue = salt || process.env.MACHINE_ID_SALT || 'endpoint-proxy-salt';
+  const saltValue = salt || process.env.MACHINE_ID_SALT || 'zippymesh-salt';
   try {
     const rawMachineId = machineIdSync();
     // Create consistent ID using salt

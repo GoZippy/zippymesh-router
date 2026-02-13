@@ -20,7 +20,7 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
-  
+
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
     const url = new URL(request.url);
@@ -34,7 +34,7 @@ export async function handleChat(request, clientRawRequest = null) {
   // Log request endpoint and model
   const url = new URL(request.url);
   const modelStr = body.model;
-  
+
   // Count messages (support both messages[] and input[] formats)
   const msgCount = body.messages?.length || body.input?.length || 0;
   const toolCount = body.tools?.length || 0;
@@ -71,93 +71,50 @@ export async function handleChat(request, clientRawRequest = null) {
   return handleSingleModelChat(body, modelStr, clientRawRequest, request);
 }
 
+import { handleOrchestratedChat } from "../services/orchestrator.js";
+import { compressContext } from "../utils/compression.js";
+
 /**
- * Handle single model chat request
+ * Handle single model chat request with advanced orchestration
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null) {
-  const modelInfo = await getModelInfo(modelStr);
-  if (!modelInfo.provider) {
-    log.warn("CHAT", "Invalid model format", { model: modelStr });
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
-  }
-
-  const { provider, model } = modelInfo;
-
-  // Log model routing (alias → actual model)
-  if (modelStr !== `${provider}/${model}`) {
-    log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
-  } else {
-    log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
-  }
-
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
 
-  // Try with available accounts (fallback on errors)
-  let excludeConnectionId = null;
-  let lastError = null;
-  let lastStatus = null;
-
-  while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionId);
-
-    // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
-      if (credentials?.allRateLimited) {
-        const errorMsg = lastError || credentials.lastError || "Unavailable";
-        const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
-      }
-      if (!excludeConnectionId) {
-        log.error("AUTH", `No credentials for provider: ${provider}`);
-        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
-      }
-      log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
-    }
-
-    // Log account selection
-    const accountId = credentials.connectionId.slice(0, 8);
-    log.info("AUTH", `Using ${provider} account: ${accountId}...`);
-
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
-    
-    // Use shared chatCore
-    const result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
-      modelInfo: { provider, model },
-      credentials: refreshedCredentials,
-      log,
-      clientRawRequest,
-      connectionId: credentials.connectionId,
-      userAgent,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
+  // Call the orchestrator to handle multi-account and cross-provider failover
+  return await handleOrchestratedChat({
+    body,
+    modelStr,
+    handleChatCore,
+    log,
+    clientRawRequest,
+    userAgent,
+    callbacks: {
+      onCredentialsRefreshed: async (newCreds, connectionId) => {
+        await updateProviderCredentials(connectionId, {
           accessToken: newCreds.accessToken,
           refreshToken: newCreds.refreshToken,
           providerSpecificData: newCreds.providerSpecificData,
           testStatus: "active"
         });
       },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials);
+      onRequestSuccess: async (connectionId, currentConnection) => {
+        await clearAccountError(connectionId, currentConnection);
+      },
+      // Failure callback for orchestrator to mark accounts as unavailable
+      onFailure: async (connectionId, status, error, provider) => {
+        await markAccountUnavailable(connectionId, status, error, provider);
       }
-    });
-    
-    if (result.success) return result.response;
-
-    // Mark account unavailable (auto-calculates cooldown with exponential backoff)
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider);
-    
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${accountId}... unavailable (${result.status}), trying fallback`);
-      excludeConnectionId = credentials.connectionId;
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
+    },
+    // Context compression logic
+    prepareBody: (body, candidate) => {
+      // If we are switching to a model with potentially smaller context or just for cost,
+      // we can apply compression here.
+      if (body.messages && body.messages.length > 10) {
+        log.info("COMPRESSION", `Compressing context for ${candidate.modelInfo.provider}/${candidate.modelInfo.model}`);
+        return { ...body, messages: compressContext(body.messages) };
+      }
+      return body;
     }
-
-    return result.response;
-  }
+  });
 }

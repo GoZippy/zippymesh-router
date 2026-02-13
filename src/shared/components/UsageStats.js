@@ -6,6 +6,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import Card from "./Card";
 import Badge from "./Badge";
 import { CardSkeleton } from "./Loading";
+import TokenUsageChart from "@/app/(dashboard)/dashboard/usage/components/TokenUsageChart";
+import CostTrendChart from "@/app/(dashboard)/dashboard/usage/components/CostTrendChart";
 
 function SortIcon({ field, currentSort, currentOrder }) {
   if (currentSort !== field) return <span className="ml-1 opacity-20">↕</span>;
@@ -175,7 +177,7 @@ export default function UsageStats() {
     if (autoRefresh) {
       // Clear any existing interval first
       if (intervalId) clearInterval(intervalId);
-      
+
       intervalId = setInterval(() => {
         if (isPageVisible) {
           fetchStats(false); // fetch without loading skeleton
@@ -226,21 +228,19 @@ export default function UsageStats() {
           <div className="flex items-center gap-1 bg-bg-subtle rounded-lg p-1 border border-border">
             <button
               onClick={() => setViewMode("tokens")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "tokens"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-text-muted hover:text-text hover:bg-bg-hover"
-              }`}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens"
+                ? "bg-primary text-white shadow-sm"
+                : "text-text-muted hover:text-text hover:bg-bg-hover"
+                }`}
             >
               Tokens
             </button>
             <button
               onClick={() => setViewMode("costs")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                viewMode === "costs"
-                  ? "bg-primary text-white shadow-sm"
-                  : "text-text-muted hover:text-text hover:bg-bg-hover"
-              }`}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "costs"
+                ? "bg-primary text-white shadow-sm"
+                : "text-text-muted hover:text-text hover:bg-bg-hover"
+                }`}
             >
               Costs
             </button>
@@ -255,14 +255,12 @@ export default function UsageStats() {
               role="switch"
               aria-checked={autoRefresh}
               aria-label="Toggle auto refresh"
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 ${
-                autoRefresh ? "bg-primary" : "bg-bg-subtle border border-border"
-              }`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 ${autoRefresh ? "bg-primary" : "bg-bg-subtle border border-border"
+                }`}
             >
               <span
-                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                  autoRefresh ? "translate-x-5" : "translate-x-1"
-                }`}
+                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoRefresh ? "translate-x-5" : "translate-x-1"
+                  }`}
               />
             </button>
           </div>
@@ -359,6 +357,14 @@ export default function UsageStats() {
           </div>
         </Card>
       </div>
+
+      {/* Usage Charts */}
+      {(stats.last24Hours || []).length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <TokenUsageChart data={stats.last24Hours} />
+          <CostTrendChart data={stats.last24Hours} />
+        </div>
+      )}
 
       {/* Usage by Model Table */}
       <Card className="overflow-hidden">
@@ -492,9 +498,8 @@ export default function UsageStats() {
               {sortedModels.map((data) => (
                 <tr key={data.key} className="hover:bg-bg-subtle/20">
                   <td
-                    className={`px-6 py-3 font-medium transition-colors ${
-                      data.pending > 0 ? "text-primary" : ""
-                    }`}
+                    className={`px-6 py-3 font-medium transition-colors ${data.pending > 0 ? "text-primary" : ""
+                      }`}
                   >
                     {data.rawModel}
                   </td>
@@ -695,9 +700,8 @@ export default function UsageStats() {
               {sortedAccounts.map((data) => (
                 <tr key={data.key} className="hover:bg-bg-subtle/20">
                   <td
-                    className={`px-6 py-3 font-medium transition-colors ${
-                      data.pending > 0 ? "text-primary" : ""
-                    }`}
+                    className={`px-6 py-3 font-medium transition-colors ${data.pending > 0 ? "text-primary" : ""
+                      }`}
                   >
                     {data.rawModel}
                   </td>
@@ -711,9 +715,8 @@ export default function UsageStats() {
                   </td>
                   <td className="px-6 py-3">
                     <span
-                      className={`font-medium transition-colors ${
-                        data.pending > 0 ? "text-primary" : ""
-                      }`}
+                      className={`font-medium transition-colors ${data.pending > 0 ? "text-primary" : ""
+                        }`}
                     >
                       {data.accountName ||
                         `Account ${data.connectionId?.slice(0, 8)}...`}

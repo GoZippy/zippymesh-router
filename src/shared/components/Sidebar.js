@@ -12,6 +12,7 @@ import { ConfirmModal } from "./Modal";
 const navItems = [
   { href: "/dashboard/endpoint", label: "Endpoint", icon: "api" },
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
+  { href: "/dashboard/pools", label: "Pools", icon: "groups" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
@@ -38,7 +39,7 @@ export default function Sidebar({ onClose }) {
     fetch("/api/settings")
       .then(res => res.json())
       .then(data => setShowDebug(data?.enableRequestLogs === true))
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   const isActive = (href) => {

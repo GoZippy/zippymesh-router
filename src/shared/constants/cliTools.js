@@ -46,6 +46,14 @@ export const CLI_TOOLS = {
     description: "Open Claw AI Assistant",
     configType: "custom",
   },
+  voidspec: {
+    id: "voidspec",
+    name: "VoidSpec",
+    icon: "terminal",
+    color: "#6B46C1",
+    description: "AI-powered requirements and design generator",
+    configType: "custom",
+  },
   cursor: {
     id: "cursor",
     name: "Cursor",

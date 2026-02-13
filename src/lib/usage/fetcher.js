@@ -76,7 +76,7 @@ async function getGitHubUsage(accessToken, providerSpecificData) {
       // Free/limited plan format
       const monthlyQuotas = data.monthly_quotas || {};
       const usedQuotas = data.limited_user_quotas || {};
-      
+
       return {
         plan: data.copilot_plan || data.access_type_sku,
         resetDate: data.limited_user_reset_date,
@@ -103,7 +103,7 @@ async function getGitHubUsage(accessToken, providerSpecificData) {
 
 function formatGitHubQuotaSnapshot(quota) {
   if (!quota) return { used: 0, total: 0, unlimited: true };
-  
+
   return {
     used: quota.entitlement - quota.remaining,
     total: quota.entitlement,
@@ -134,9 +134,9 @@ async function getGeminiUsage(accessToken) {
       return { message: "Gemini CLI uses Google Cloud quotas. Check Google Cloud Console for details." };
     }
 
-    return { message: "Gemini CLI connected. Usage tracked via Google Cloud Console." };
+    return { message: "Gemini CLI connected. Local usage tracking only (Google Cloud Console may have separate logs)." };
   } catch (error) {
-    return { message: "Unable to fetch Gemini usage. Check Google Cloud Console." };
+    return { message: "Unable to fetch Gemini usage." };
   }
 }
 
@@ -146,7 +146,7 @@ async function getGeminiUsage(accessToken) {
 async function getAntigravityUsage(accessToken) {
   try {
     // Similar to Gemini, uses Google Cloud
-    return { message: "Antigravity connected. Usage tracked via Google Cloud Console." };
+    return { message: "Antigravity connected. Local usage tracking only (Google Cloud Console may have separate logs)." };
   } catch (error) {
     return { message: "Unable to fetch Antigravity usage." };
   }

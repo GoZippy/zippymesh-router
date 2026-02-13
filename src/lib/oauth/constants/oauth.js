@@ -73,8 +73,6 @@ export const ANTIGRAVITY_CONFIG = {
     "https://www.googleapis.com/auth/cloud-platform",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/cclog",
-    "https://www.googleapis.com/auth/experimentsandconfigs",
   ],
   // Antigravity specific
   apiEndpoint: "https://cloudcode-pa.googleapis.com",
@@ -151,9 +149,7 @@ export const CURSOR_CONFIG = {
   chatEndpoint: "/aiserver.v1.ChatService/StreamUnifiedChatWithTools",
   modelsEndpoint: "/aiserver.v1.AiService/GetDefaultModelNudgeData",
   // Additional endpoints
-  api3Endpoint: "https://api3.cursor.sh", // Telemetry
-  agentEndpoint: "https://agent.api5.cursor.sh", // Privacy mode
-  agentNonPrivacyEndpoint: "https://agentn.api5.cursor.sh", // Non-privacy mode
+  modelsEndpoint: "/aiserver.v1.AiService/GetDefaultModelNudgeData",
   // Client metadata
   clientVersion: "0.48.6",
   clientType: "ide",

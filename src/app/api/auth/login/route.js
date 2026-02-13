@@ -4,9 +4,10 @@ import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { cookies } from "next/headers";
 
-const SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "9router-default-secret-change-me"
-);
+if (!process.env.JWT_SECRET) {
+  throw new Error("FATAL: JWT_SECRET environment variable is not set. Refusing to start with no secret.");
+}
+const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
 export async function POST(request) {
   try {

@@ -28,23 +28,23 @@ export default function ProviderDetailPage() {
 
   const providerInfo = providerNode
     ? {
-        id: providerNode.id,
-        name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
-        color: providerNode.type === "anthropic-compatible" ? "#D97757" : "#10A37F",
-        textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
-        apiType: providerNode.apiType,
-        baseUrl: providerNode.baseUrl,
-        type: providerNode.type,
-      }
+      id: providerNode.id,
+      name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
+      color: providerNode.type === "anthropic-compatible" ? "#D97757" : "#10A37F",
+      textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
+      apiType: providerNode.apiType,
+      baseUrl: providerNode.baseUrl,
+      type: providerNode.type,
+    }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId]);
   const isOAuth = !!OAUTH_PROVIDERS[providerId];
   const models = getModelsByProviderId(providerId);
   const providerAlias = getProviderAlias(providerId);
-  
+
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
-  
+
   const providerStorageAlias = isCompatible ? providerId : providerAlias;
   const providerDisplayAlias = isCompatible
     ? (providerNode?.prefix || providerId)
@@ -319,7 +319,7 @@ export default function ProviderDetailPage() {
         <CardSkeleton />
       </div>
     );
-}
+  }
 
   if (!providerInfo) {
     return (
@@ -472,22 +472,22 @@ export default function ProviderDetailPage() {
             {connections
               .sort((a, b) => (a.priority || 0) - (b.priority || 0))
               .map((conn, index) => (
-              <ConnectionRow
-                key={conn.id}
-                connection={conn}
-                isOAuth={isOAuth}
-                isFirst={index === 0}
-                isLast={index === connections.length - 1}
-                onMoveUp={() => handleSwapPriority(conn, connections[index - 1])}
-                onMoveDown={() => handleSwapPriority(conn, connections[index + 1])}
-                onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
-                onEdit={() => {
-                  setSelectedConnection(conn);
-                  setShowEditModal(true);
-                }}
-                onDelete={() => handleDelete(conn.id)}
-              />
-            ))}
+                <ConnectionRow
+                  key={conn.id}
+                  connection={conn}
+                  isOAuth={isOAuth}
+                  isFirst={index === 0}
+                  isLast={index === connections.length - 1}
+                  onMoveUp={() => handleSwapPriority(conn, connections[index - 1])}
+                  onMoveDown={() => handleSwapPriority(conn, connections[index + 1])}
+                  onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
+                  onEdit={() => {
+                    setSelectedConnection(conn);
+                    setShowEditModal(true);
+                  }}
+                  onDelete={() => handleDelete(conn.id)}
+                />
+              ))}
           </div>
         )}
       </Card>
@@ -605,13 +605,13 @@ function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy,
     if (!newModel.trim() || adding) return;
     const modelId = newModel.trim();
     const defaultAlias = generateDefaultAlias(modelId);
-    
+
     // Check if alias already exists
     if (modelAliases[defaultAlias]) {
       alert(`Alias "${defaultAlias}" already exists. Please use a different model or edit existing alias.`);
       return;
     }
-    
+
     setAdding(true);
     try {
       await onSetAlias(modelId, defaultAlias);
@@ -985,6 +985,14 @@ function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveD
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
             )}
+            {/* Group Badge */}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${connection.group === "work" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
+              connection.group === "team" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
+                connection.group === "personal" ? "bg-green-500/10 text-green-600 border-green-500/20" :
+                  "bg-gray-500/10 text-gray-600 border-gray-500/20"
+              }`}>
+              {connection.group ? connection.group.charAt(0).toUpperCase() + connection.group.slice(1) : "Default"}
+            </span>
           </div>
         </div>
       </div>
@@ -1020,6 +1028,7 @@ ConnectionRow.propTypes = {
     lastError: PropTypes.string,
     priority: PropTypes.number,
     globalPriority: PropTypes.number,
+    group: PropTypes.string,
   }).isRequired,
   isOAuth: PropTypes.bool.isRequired,
   isFirst: PropTypes.bool.isRequired,
@@ -1124,7 +1133,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
         )}
         {isCompatible && (
           <p className="text-xs text-text-muted">
-            {isAnthropic 
+            {isAnthropic
               ? `Validation checks ${providerName || "Anthropic Compatible"} by verifying the API key.`
               : `Validation checks ${providerName || "OpenAI Compatible"} via /models on your base URL.`
             }
@@ -1163,6 +1172,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
+    group: "default",
     apiKey: "",
   });
   const [testing, setTesting] = useState(false);
@@ -1176,6 +1186,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
       setFormData({
         name: connection.name || "",
         priority: connection.priority || 1,
+        group: connection.group || "default",
         apiKey: "",
       });
       setTestResult(null);
@@ -1220,7 +1231,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const updates = { name: formData.name, priority: formData.priority };
+      const updates = { name: formData.name, priority: formData.priority, group: formData.group };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -1262,12 +1273,12 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
   return (
     <Modal isOpen={isOpen} title="Edit Connection" onClose={onClose}>
       <div className="flex flex-col gap-4">
-          <Input
-            label="Name"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+        <Input
+          label="Name"
+          value={formData.name}
+          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder={isOAuth ? "Account name" : "Production Key"}
-          />
+        />
         {isOAuth && connection.email && (
           <div className="bg-sidebar/50 p-3 rounded-lg">
             <p className="text-sm text-text-muted mb-1">Email</p>
@@ -1280,6 +1291,20 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
         />
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium">Account Group</label>
+          <select
+            value={formData.group}
+            onChange={(e) => setFormData({ ...formData, group: e.target.value })}
+            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+          >
+            <option value="default">Default</option>
+            <option value="personal">Personal</option>
+            <option value="work">Work</option>
+            <option value="team">Team</option>
+          </select>
+          <p className="text-xs text-text-muted">Used for priority routing rules.</p>
+        </div>
         {!isOAuth && (
           <>
             <div className="flex gap-2">
@@ -1338,6 +1363,7 @@ EditConnectionModal.propTypes = {
     priority: PropTypes.number,
     authType: PropTypes.string,
     provider: PropTypes.string,
+    group: PropTypes.string,
   }),
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
@@ -1395,10 +1421,10 @@ function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic })
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          baseUrl: formData.baseUrl, 
-          apiKey: checkKey, 
-          type: isAnthropic ? "anthropic-compatible" : "openai-compatible" 
+        body: JSON.stringify({
+          baseUrl: formData.baseUrl,
+          apiKey: checkKey,
+          type: isAnthropic ? "anthropic-compatible" : "openai-compatible"
         }),
       });
       const data = await res.json();

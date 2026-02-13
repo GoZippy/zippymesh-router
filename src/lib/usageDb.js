@@ -9,16 +9,16 @@ const isCloud = typeof caches !== 'undefined' || typeof caches === 'object';
 
 // Get app name from root package.json config
 function getAppName() {
-  if (isCloud) return "9router"; // Skip file system access in Workers
+  if (isCloud) return "zippymesh"; // Skip file system access in Workers
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   // Look for root package.json (monorepo root)
   const rootPkgPath = path.resolve(__dirname, "../../../package.json");
   try {
     const pkg = JSON.parse(fs.readFileSync(rootPkgPath, "utf-8"));
-    return pkg.config?.appName || "9router";
+    return pkg.config?.appName || "zippymesh";
   } catch {
-    return "9router";
+    return "zippymesh";
   }
 }
 
@@ -40,7 +40,7 @@ function getUserDataDir() {
   } catch (error) {
     console.error("[usageDb] Failed to get user data directory:", error.message);
     // Fallback to cwd if homedir fails
-    return path.join(process.cwd(), ".9router");
+    return path.join(process.cwd(), ".zippymesh");
   }
 }
 
@@ -105,7 +105,7 @@ export async function getUsageDb() {
   if (isCloud) {
     // Return in-memory DB for Workers
     if (!dbInstance) {
-      dbInstance = new Low({ read: async () => {}, write: async () => {} }, defaultData);
+      dbInstance = new Low({ read: async () => { }, write: async () => { } }, defaultData);
       dbInstance.data = defaultData;
     }
     return dbInstance;
@@ -233,7 +233,7 @@ export async function appendRequestLog({ model, provider, connectionId, tokens, 
       if (conn) {
         account = conn.name || conn.email || account;
       }
-    } catch {}
+    } catch { }
 
     const sent = tokens?.prompt_tokens !== undefined ? tokens.prompt_tokens : "-";
     const received = tokens?.completion_tokens !== undefined ? tokens.completion_tokens : "-";
@@ -258,23 +258,23 @@ export async function appendRequestLog({ model, provider, connectionId, tokens, 
  */
 export async function getRecentLogs(limit = 200) {
   if (isCloud) return []; // Skip in Workers
-  
+
   // Runtime check: ensure fs module is available
   if (!fs || typeof fs.existsSync !== "function") {
     console.error("[usageDb] fs module not available in this environment");
     return [];
   }
-  
+
   if (!LOG_FILE) {
     console.error("[usageDb] LOG_FILE path not defined");
     return [];
   }
-  
+
   if (!fs.existsSync(LOG_FILE)) {
     console.log(`[usageDb] Log file does not exist: ${LOG_FILE}`);
     return [];
   }
-  
+
   try {
     const content = fs.readFileSync(LOG_FILE, "utf-8");
     const lines = content.trim().split("\n");
@@ -376,6 +376,7 @@ export async function getUsageStats() {
     byModel: {},
     byAccount: {},
     last10Minutes: [],
+    last24Hours: [],
     pending: pendingRequests,
     activeRequests: []
   };
@@ -420,6 +421,25 @@ export async function getUsageStats() {
     stats.last10Minutes.push(bucketMap[bucketKey]);
   }
 
+  // Initialize 24-hour buckets
+  const currentHourStart = new Date(Math.floor(now.getTime() / 3600000) * 3600000);
+  const twentyFourHoursAgo = new Date(currentHourStart.getTime() - 23 * 60 * 60 * 1000);
+
+  const hourlyBucketMap = {};
+  for (let i = 0; i < 24; i++) {
+    const bucketTime = new Date(currentHourStart.getTime() - (23 - i) * 60 * 60 * 1000);
+    const bucketKey = bucketTime.getTime();
+    hourlyBucketMap[bucketKey] = {
+      timestamp: bucketTime.toISOString(),
+      requests: 0,
+      errors: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cost: 0
+    };
+    stats.last24Hours.push(hourlyBucketMap[bucketKey]);
+  }
+
   for (const entry of history) {
     const promptTokens = entry.tokens?.prompt_tokens || 0;
     const completionTokens = entry.tokens?.completion_tokens || 0;
@@ -440,6 +460,22 @@ export async function getUsageStats() {
         bucketMap[entryMinuteStart].promptTokens += promptTokens;
         bucketMap[entryMinuteStart].completionTokens += completionTokens;
         bucketMap[entryMinuteStart].cost += entryCost;
+      }
+    }
+
+    // Last 24 hours aggregation - floor entry time to its hour
+    if (entryTime >= twentyFourHoursAgo && entryTime <= now) {
+      const entryHourStart = Math.floor(entryTime.getTime() / 3600000) * 3600000;
+      if (hourlyBucketMap[entryHourStart]) {
+        hourlyBucketMap[entryHourStart].requests++;
+        hourlyBucketMap[entryHourStart].promptTokens += promptTokens;
+        hourlyBucketMap[entryHourStart].completionTokens += completionTokens;
+        hourlyBucketMap[entryHourStart].cost += entryCost;
+
+        // Count errors for this hour
+        if (entry.status && entry.status >= 400) {
+          hourlyBucketMap[entryHourStart].errors++;
+        }
       }
     }
 

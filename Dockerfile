@@ -1,28 +1,32 @@
-FROM node:20-alpine AS builder
+# Build stage
+FROM node:18-alpine AS builder
 WORKDIR /app
-
 COPY package*.json ./
-RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
-
-COPY . ./
+RUN npm install
+COPY . .
 RUN npm run build
 
-FROM node:20-alpine AS runner
+# Production stage
+FROM node:18-alpine AS runner
 WORKDIR /app
 
-LABEL org.opencontainers.image.title="9router"
-
 ENV NODE_ENV=production
-ENV PORT=20128
-ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+ENV DATA_DIR=/app/data
 
-# Runtime writable location for localDb when DATA_DIR is configured to /app/data
-RUN mkdir -p /app/data
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
 
-EXPOSE 20128
+# Ensure data directory exists
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 
-CMD ["node", "server.js"]
+USER nextjs
+
+EXPOSE 3000
+
+CMD ["npm", "start"]

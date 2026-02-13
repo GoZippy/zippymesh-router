@@ -88,8 +88,8 @@ export const PROVIDERS = {
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     format: "openai",
     headers: {
-      "HTTP-Referer": "https://endpoint-proxy.local",
-      "X-Title": "Endpoint Proxy"
+      "HTTP-Referer": "https://zippymesh.local",
+      "X-Title": "ZippyMesh"
     }
   },
   openai: {

@@ -1,7 +1,7 @@
-// Auto-initialize cloud sync when server starts
-import "@/lib/initCloudSync";
+import { startDiscoveryLoop } from "@/sse/services/discovery";
 
-// This API route is called automatically to initialize sync
+// This API route is called automatically to initialize the local orchestrator and health checks
 export async function GET() {
-  return new Response("Initialized", { status: 200 });
+  startDiscoveryLoop();
+  return new Response("ZippyMesh Services Initialized", { status: 200 });
 }

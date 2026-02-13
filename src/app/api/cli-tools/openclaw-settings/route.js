@@ -36,10 +36,10 @@ const readSettings = async () => {
   }
 };
 
-// Check if settings has 9Router config
-const has9RouterConfig = (settings) => {
+// Check if settings has ZippyMesh config
+const hasZippyMeshConfig = (settings) => {
   if (!settings || !settings.models || !settings.models.providers) return false;
-  return !!settings.models.providers["9router"];
+  return !!settings.models.providers["zippymesh"];
 };
 
 // GET - Check openclaw CLI and read current settings
@@ -60,7 +60,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings,
-      has9Router: has9RouterConfig(settings),
+      hasZippyMesh: hasZippyMeshConfig(settings),
       settingsPath: getOpenClawSettingsPath(),
     });
   } catch (error) {
@@ -69,7 +69,7 @@ export async function GET() {
   }
 }
 
-// POST - Update 9Router settings (merge with existing settings)
+// POST - Update ZippyMesh settings (merge with existing settings)
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, model } = await request.json();
@@ -102,10 +102,10 @@ export async function POST(request) {
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
 
     // Update agents.defaults.model.primary
-    settings.agents.defaults.model.primary = `9router/${model}`;
+    settings.agents.defaults.model.primary = `zippymesh/${model}`;
 
-    // Update models.providers.9router
-    settings.models.providers["9router"] = {
+    // Update models.providers.zippymesh
+    settings.models.providers["zippymesh"] = {
       baseUrl: normalizedBaseUrl,
       apiKey: apiKey || "your_api_key",
       api: "openai-completions",
@@ -131,7 +131,7 @@ export async function POST(request) {
   }
 }
 
-// DELETE - Remove 9Router settings only (keep other settings)
+// DELETE - Remove ZippyMesh settings only (keep other settings)
 export async function DELETE() {
   try {
     const settingsPath = getOpenClawSettingsPath();
@@ -151,9 +151,9 @@ export async function DELETE() {
       throw error;
     }
 
-    // Remove 9Router from models.providers
+    // Remove ZippyMesh from models.providers
     if (settings.models && settings.models.providers) {
-      delete settings.models.providers["9router"];
+      delete settings.models.providers["zippymesh"];
       
       // Remove providers object if empty
       if (Object.keys(settings.models.providers).length === 0) {
@@ -161,8 +161,8 @@ export async function DELETE() {
       }
     }
 
-    // Reset agents.defaults.model.primary if it uses 9router
-    if (settings.agents?.defaults?.model?.primary?.startsWith("9router/")) {
+    // Reset agents.defaults.model.primary if it uses zippymesh
+    if (settings.agents?.defaults?.model?.primary?.startsWith("zippymesh/")) {
       delete settings.agents.defaults.model.primary;
     }
 
@@ -171,7 +171,7 @@ export async function DELETE() {
 
     return NextResponse.json({
       success: true,
-      message: "9Router settings removed successfully",
+      message: "ZippyMesh settings removed successfully",
     });
   } catch (error) {
     console.log("Error resetting openclaw settings:", error);

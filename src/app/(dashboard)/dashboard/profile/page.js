@@ -126,7 +126,7 @@ export default function ProfilePage() {
           </div>
           <div className="pt-4 border-t border-border">
             <p className="text-sm text-text-muted">
-              All data is stored locally in the <code className="bg-sidebar px-1 rounded">~/.9router/db.json</code> file.
+              All data is stored locally in the <code className="bg-sidebar px-1 rounded">~/.zippymesh/db.json</code> file.
             </p>
           </div>
         </Card>
@@ -324,7 +324,7 @@ export default function ProfilePage() {
             <div className="flex items-center justify-between p-4 rounded-lg bg-bg border border-border">
               <div>
                 <p className="font-medium">Database Location</p>
-                <p className="text-sm text-text-muted font-mono">~/.9router/db.json</p>
+                <p className="text-sm text-text-muted font-mono">~/.zippymesh/db.json</p>
               </div>
             </div>
           </div>
