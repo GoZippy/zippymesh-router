@@ -19,7 +19,10 @@ export async function proxy(request) {
   const isPublicApi = [
     "/api/auth/login",
     "/api/settings/require-login",
-    "/api/init"
+    "/api/init",
+    "/api/health",
+    "/api/models/available",
+    "/api/cli-tools/openclaw-settings"
   ].includes(normalizedPath);
 
   // AI V1 APIs handle their own authentication (API Key check)

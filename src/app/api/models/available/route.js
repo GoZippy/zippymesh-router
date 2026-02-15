@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getProviderConnections, getModelAliases, getCombos } from "@/models";
-import { MODEL_EQUIVALENCE } from "@/sse/config/modelEquivalence.js";
+import { getProviderConnections, getModelAliases } from "@/models";
+import { getCombos } from "@/lib/localDb.js";
+import { SOTA_EQUIVALENCE } from "@/sse/config/modelEquivalence.js";
 
 /**
  * GET /api/models/available
@@ -51,10 +52,7 @@ export async function GET() {
     });
 
     // Build equivalence groups (which models are considered equivalent)
-    const equivalenceGroups = {};
-    for (const [groupKey, models] of Object.entries(MODEL_EQUIVALENCE)) {
-      equivalenceGroups[groupKey] = models;
-    }
+    const equivalenceGroups = SOTA_EQUIVALENCE || {};
 
     return NextResponse.json({
       availableModels: Array.from(availableModels).sort(),
