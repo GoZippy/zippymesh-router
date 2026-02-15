@@ -15,6 +15,8 @@ ZippyMesh sits between your CLI tools (Claude Code, Codex, Cline, etc.) and upst
 - **Auto token refresh** — OAuth tokens refreshed automatically
 - **Custom combos** — build fallback chains across providers
 - **Usage tracking** — token counts, cost estimation, request logs
+- **Service Discovery** — auto-validation of credentials and health checks
+- **Context Compression** — smart summarization to fit context limits
 - **Web dashboard** — manage providers, keys, combos, and settings
 
 ## Quick Start

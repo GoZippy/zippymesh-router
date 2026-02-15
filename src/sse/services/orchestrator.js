@@ -2,6 +2,8 @@ import { getProviderConnections, getPricing } from "@/lib/localDb";
 import { getEquivalentModels } from "../config/modelEquivalence";
 import { parseModel } from "open-sse/services/model";
 import { filterAvailableAccounts } from "open-sse/services/accountFallback";
+import { errorResponse } from "open-sse/utils/error.js";
+import { appendRequestLog } from "@/lib/usageDb.js";
 
 /**
  * Orchestrator Service
@@ -65,7 +67,8 @@ export async function handleOrchestratedChat(params) {
     const candidates = await findBestCandidates(modelStr);
 
     if (candidates.length === 0) {
-        return { success: false, status: 404, error: `No available accounts for ${modelStr} or equivalents` };
+        await appendRequestLog({ model: modelStr, status: 404 });
+        return errorResponse(404, `No available accounts for ${modelStr} or equivalents`);
     }
 
     let lastError = null;
@@ -105,6 +108,13 @@ export async function handleOrchestratedChat(params) {
 
         if (result.success) {
             log?.info?.("ORCHESTRATOR", `Success via ${modelInfo.provider}/${modelInfo.model}`);
+            await appendRequestLog({
+                model: modelInfo.model,
+                provider: modelInfo.provider,
+                connectionId: connection.id,
+                status: result.status || 200,
+                tokens: result.usage // Assuming handleChatCore returns usage in result
+            });
             return result;
         }
 
@@ -118,5 +128,6 @@ export async function handleOrchestratedChat(params) {
         lastStatus = result.status;
     }
 
-    return { success: false, status: lastStatus, error: lastError || "All candidates failed" };
+    await appendRequestLog({ model: modelStr, status: lastStatus });
+    return errorResponse(lastStatus, lastError || "All candidates failed");
 }

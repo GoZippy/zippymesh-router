@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, Button, Input, Select, Toggle } from "@/shared/components";
-import { AI_PROVIDERS, AUTH_METHODS } from "@/shared/constants/config";
+import { AI_PROVIDERS, AUTH_METHODS, OAUTH_PROVIDERS } from "@/shared/constants/config";
+import { OAuthModal } from "@/shared/components";
 
 const providerOptions = Object.values(AI_PROVIDERS).map((p) => ({
   value: p.id,
@@ -21,11 +22,12 @@ export default function NewProviderPage() {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     provider: "",
-    authMethod: "api_key",
+    authMethod: "apikey",
     apiKey: "",
-    displayName: "",
+    name: "",
     isActive: true,
   });
+  const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [errors, setErrors] = useState({});
 
   const handleChange = (field, value) => {
@@ -136,14 +138,13 @@ export default function NewProviderPage() {
                   key={method.value}
                   type="button"
                   onClick={() => handleChange("authMethod", method.value)}
-                  className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-lg border transition-all ${
-                    formData.authMethod === method.value
-                      ? "border-primary bg-primary/5 text-primary"
-                      : "border-border hover:border-primary/50"
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-lg border transition-all ${formData.authMethod === method.value
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border hover:border-primary/50"
+                    }`}
                 >
                   <span className="material-symbols-outlined">
-                    {method.value === "api_key" ? "key" : "lock"}
+                    {method.value === "apikey" ? "key" : "lock"}
                   </span>
                   <span className="font-medium">{method.label}</span>
                 </button>
@@ -152,7 +153,7 @@ export default function NewProviderPage() {
           </div>
 
           {/* API Key Input */}
-          {formData.authMethod === "api_key" && (
+          {formData.authMethod === "apikey" && (
             <Input
               label="API Key"
               type="password"
@@ -166,24 +167,31 @@ export default function NewProviderPage() {
           )}
 
           {/* OAuth2 Button */}
-          {formData.authMethod === "oauth2" && (
+          {formData.authMethod === "oauth" && (
             <Card.Section>
               <p className="text-sm text-text-muted mb-4">
                 Connect your account using OAuth2 authentication.
               </p>
-              <Button type="button" variant="secondary" icon="link">
+              <Button
+                type="button"
+                variant="secondary"
+                icon="link"
+                onClick={() => setShowOAuthModal(true)}
+              >
                 Connect with OAuth2
               </Button>
             </Card.Section>
           )}
 
-          {/* Display Name */}
+          {/* Name */}
           <Input
-            label="Display Name"
+            label="Name"
             placeholder="e.g., Production API, Dev Environment"
-            value={formData.displayName}
-            onChange={(e) => handleChange("displayName", e.target.value)}
-            hint="Optional. A friendly name to identify this configuration."
+            value={formData.name}
+            onChange={(e) => handleChange("name", e.target.value)}
+            hint="A friendly name to identify this configuration."
+            required
+            error={errors.name}
           />
 
           {/* Active Toggle */}
@@ -214,6 +222,19 @@ export default function NewProviderPage() {
           </div>
         </form>
       </Card>
+
+      {selectedProvider && (
+        <OAuthModal
+          isOpen={showOAuthModal}
+          provider={formData.provider}
+          providerInfo={selectedProvider}
+          onClose={() => setShowOAuthModal(false)}
+          onSuccess={() => {
+            setShowOAuthModal(false);
+            router.push("/dashboard/providers");
+          }}
+        />
+      )}
     </div>
   );
 }

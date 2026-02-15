@@ -26,6 +26,11 @@ function getAppName() {
 function getUserDataDir() {
   if (isCloud) return "/tmp"; // Fallback for Workers
 
+  // Respect DATA_DIR environment variable first (for multi-instance deployments)
+  if (process.env.DATA_DIR) {
+    return process.env.DATA_DIR;
+  }
+
   try {
     const platform = process.platform;
     const homeDir = os.homedir();
@@ -48,6 +53,11 @@ function getUserDataDir() {
 const DATA_DIR = getUserDataDir();
 const DB_FILE = isCloud ? null : path.join(DATA_DIR, "usage.json");
 const LOG_FILE = isCloud ? null : path.join(DATA_DIR, "log.txt");
+
+// Ensure data directory exists for multi-instance deployments
+if (!isCloud && !fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // Ensure data directory exists
 if (!isCloud && fs && typeof fs.existsSync === "function") {
@@ -240,6 +250,9 @@ export async function appendRequestLog({ model, provider, connectionId, tokens, 
 
     const line = `${timestamp} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${status}\n`;
 
+    if (!fs.existsSync(LOG_FILE)) {
+      fs.writeFileSync(LOG_FILE, "");
+    }
     fs.appendFileSync(LOG_FILE, line);
 
     // Trim to keep only last 200 lines

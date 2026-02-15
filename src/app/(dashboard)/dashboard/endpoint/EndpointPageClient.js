@@ -11,6 +11,7 @@ export default function APIPageClient({ machineId }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
+  const [showSnippets, setShowSnippets] = useState(null);
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -98,9 +99,9 @@ export default function APIPageClient({ machineId }) {
 
         {/* Endpoint URL */}
         <div className="flex gap-2 mb-3">
-          <Input 
-            value={baseUrl} 
-            readOnly 
+          <Input
+            value={baseUrl}
+            readOnly
             className="flex-1 font-mono text-sm"
           />
           <Button
@@ -168,6 +169,65 @@ export default function APIPageClient({ machineId }) {
           </div>
         )}
       </Card>
+
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Connect to Tools</h2>
+          <p className="text-sm text-text-muted">Integration Snippets</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-bg/50">
+            <h3 className="font-medium text-sm">OpenClaw</h3>
+            <p className="text-xs text-text-muted mb-2">Resilient OpenAI-compatible gateway</p>
+            <Button size="sm" variant="secondary" icon="code" onClick={() => setShowSnippets("openclaw")}>
+              Get Config
+            </Button>
+          </div>
+          <div className="flex flex-col gap-2 p-4 rounded-lg border border-border bg-bg/50">
+            <h3 className="font-medium text-sm">VS Code (Continue)</h3>
+            <p className="text-xs text-text-muted mb-2">Use ZippyMesh for local development</p>
+            <Button size="sm" variant="secondary" icon="code" onClick={() => setShowSnippets("continue")}>
+              Get Config
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Snippet Modal */}
+      {showSnippets && (
+        <Modal
+          isOpen={!!showSnippets}
+          onClose={() => setShowSnippets(null)}
+          title={`Integration: ${showSnippets === 'openclaw' ? 'OpenClaw' : 'Continue (VS Code)'}`}
+          size="xl"
+        >
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono text-text-muted">
+                {showSnippets === 'openclaw' ? 'openclaw.json' : 'config.json'}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={copied === "snippet" ? "check" : "content_copy"}
+                onClick={() => {
+                  const content = showSnippets === 'openclaw'
+                    ? `{\n  "zippymesh": {\n    "baseUrl": "${baseUrl}",\n    "apiKey": "${keys[0]?.key || 'YOUR_KEY'}",\n    "api": "openai-completions",\n    "models": [\n      {\n        "id": "auto",\n        "name": "ZippyMesh Auto",\n        "contextWindow": 128000\n      }\n    ]\n  }\n}`
+                    : `{\n  "models": [\n    {\n      "title": "ZippyMesh",\n      "provider": "openai",\n      "model": "zippymesh/auto",\n      "apiKey": "${keys[0]?.key || 'YOUR_KEY'}",\n      "apiBase": "${baseUrl}"\n    }\n  ]\n}`;
+                  copy(content, "snippet");
+                }}
+              >
+                {copied === "snippet" ? "Copied!" : "Copy Snippet"}
+              </Button>
+            </div>
+            <pre className="p-4 bg-black/5 dark:bg-white/5 border border-border rounded font-mono text-xs overflow-x-auto">
+              {showSnippets === 'openclaw'
+                ? `{\n  "zippymesh": {\n    "baseUrl": "${baseUrl}",\n    "apiKey": "${keys[0]?.key || 'YOUR_KEY'}",\n    "api": "openai-completions",\n    "models": [\n      {\n        "id": "auto",\n        "name": "ZippyMesh Auto",\n        "contextWindow": 128000\n      }\n    ]\n  }\n}`
+                : `{\n  "models": [\n    {\n      "title": "ZippyMesh",\n      "provider": "openai",\n      "model": "zippymesh/auto",\n      "apiKey": "${keys[0]?.key || 'YOUR_KEY'}",\n      "apiBase": "${baseUrl}"\n    }\n  ]\n}`}
+            </pre>
+          </div>
+        </Modal>
+      )}
 
       {/* Add Key Modal */}
       <Modal

@@ -73,11 +73,59 @@ export async function GET() {
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, model } = await request.json();
-    
+
     if (!baseUrl || !model) {
       return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
     }
 
+    // Validate API key format
+    if (!apiKey || typeof apiKey !== "string" || !apiKey.startsWith("sk-")) {
+      return NextResponse.json(
+        { error: "Invalid API key format (must start with sk-)" },
+        { status: 400 }
+      );
+    }
+
+    // Test the API key with actual ZippyMesh endpoint
+    const testUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    try {
+      const testResponse = await fetch(`${testUrl}/models`, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 5000
+      });
+
+      if (!testResponse.ok) {
+        return NextResponse.json(
+          {
+            error: `API key validation failed (HTTP ${testResponse.status})`,
+            details: `ZippyMesh returned ${testResponse.status} when testing models endpoint. Check your API key and base URL.`
+          },
+          { status: 400 }
+        );
+      }
+
+      const modelsData = await testResponse.json();
+      if (!modelsData.data || !Array.isArray(modelsData.data) || modelsData.data.length === 0) {
+        console.warn("[openclaw-settings] API key is valid but no models returned from /v1/models");
+        // Don't fail on this - the endpoint might be different or models loading
+      }
+
+    } catch (testError) {
+      console.error("[openclaw-settings] Error testing API key:", testError.message);
+      return NextResponse.json(
+        {
+          error: "Could not validate API key",
+          details: `Connection failed: ${testError.message}. Ensure ZippyMesh is running at ${testUrl} and the API key is valid.`
+        },
+        { status: 500 }
+      );
+    }
+
+    // API key is valid - proceed with writing config
     const openclawDir = getOpenClawDir();
     const settingsPath = getOpenClawSettingsPath();
 
@@ -99,7 +147,7 @@ export async function POST(request) {
     if (!settings.models.providers) settings.models.providers = {};
 
     // Normalize baseUrl to ensure /v1 suffix
-    const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    const normalizedBaseUrl = testUrl.endsWith("/v1") ? testUrl : `${testUrl}/v1`;
 
     // Update agents.defaults.model.primary
     settings.agents.defaults.model.primary = `zippymesh/${model}`;
@@ -107,7 +155,7 @@ export async function POST(request) {
     // Update models.providers.zippymesh
     settings.models.providers["zippymesh"] = {
       baseUrl: normalizedBaseUrl,
-      apiKey: apiKey || "your_api_key",
+      apiKey: apiKey,
       api: "openai-completions",
       models: [
         {
@@ -124,6 +172,7 @@ export async function POST(request) {
       success: true,
       message: "Open Claw settings applied successfully!",
       settingsPath,
+      validated: true
     });
   } catch (error) {
     console.log("Error updating openclaw settings:", error);

@@ -29,13 +29,17 @@ export default function ProviderLimits() {
   // Fetch all provider connections
   const fetchConnections = useCallback(async () => {
     try {
-      const response = await fetch("/api/providers/client");
-      if (!response.ok) throw new Error("Failed to fetch connections");
-      
+      const response = await fetch("/api/providers");
       const data = await response.json();
-      const connectionList = data.connections || [];
-      setConnections(connectionList);
-      return connectionList;
+      if (response.ok) {
+        const connectionList = data.connections || [];
+        setConnections(connectionList);
+        return connectionList;
+      } else {
+        console.error("Failed to fetch connections:", data.error || response.statusText);
+        setConnections([]);
+        return [];
+      }
     } catch (error) {
       console.error("Error fetching connections:", error);
       setConnections([]);
@@ -51,18 +55,18 @@ export default function ProviderLimits() {
     try {
       console.log(`[ProviderLimits] Fetching quota for ${provider} (${connectionId})`);
       const response = await fetch(`/api/usage/${connectionId}`);
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMsg = errorData.error || response.statusText;
-        
+
         // Handle different error types gracefully
         if (response.status === 404) {
           // Connection not found - skip silently
           console.warn(`[ProviderLimits] Connection not found for ${provider}, skipping`);
           return;
         }
-        
+
         if (response.status === 401) {
           // Auth error - show message instead of throwing
           console.warn(`[ProviderLimits] Auth error for ${provider}:`, errorMsg);
@@ -75,16 +79,16 @@ export default function ProviderLimits() {
           }));
           return;
         }
-        
+
         throw new Error(`HTTP ${response.status}: ${errorMsg}`);
       }
 
       const data = await response.json();
       console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
-      
+
       // Parse quota data using provider-specific parser
       const parsedQuotas = parseQuotaData(provider, data);
-      
+
       setQuotaData((prev) => ({
         ...prev,
         [connectionId]: {
@@ -123,12 +127,12 @@ export default function ProviderLimits() {
 
     try {
       const conns = await fetchConnections();
-      
+
       // Filter only supported OAuth providers
       const oauthConnections = conns.filter(
         (conn) => USAGE_SUPPORTED_PROVIDERS.includes(conn.provider) && conn.authType === "oauth"
       );
-      
+
       // Fetch quota for supported OAuth connections only
       await Promise.all(
         oauthConnections.map((conn) => fetchQuota(conn.id, conn.provider))
@@ -258,16 +262,16 @@ export default function ProviderLimits() {
   const activeWithLimits = Object.values(quotaData).filter(
     (data) => data?.quotas?.length > 0
   ).length;
-  
+
   // Count low quotas (remaining < 30%)
   const lowQuotasCount = Object.values(quotaData).reduce((count, data) => {
     if (!data?.quotas) return count;
-    
+
     const hasLowQuota = data.quotas.some((quota) => {
       const percentage = calculatePercentage(quota.used, quota.total);
       return percentage < 30 && quota.total > 0;
     });
-    
+
     return count + (hasLowQuota ? 1 : 0);
   }, 0);
 
@@ -325,9 +329,8 @@ export default function ProviderLimits() {
             title={autoRefresh ? "Disable auto-refresh" : "Enable auto-refresh"}
           >
             <span
-              className={`material-symbols-outlined text-[18px] ${
-                autoRefresh ? "text-primary" : "text-text-muted"
-              }`}
+              className={`material-symbols-outlined text-[18px] ${autoRefresh ? "text-primary" : "text-text-muted"
+                }`}
             >
               {autoRefresh ? "toggle_on" : "toggle_off"}
             </span>
@@ -383,7 +386,7 @@ export default function ProviderLimits() {
                       )}
                     </div>
                   </div>
-                  
+
                   <button
                     onClick={() => refreshProvider(conn.id, conn.provider)}
                     disabled={isLoading}

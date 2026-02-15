@@ -131,9 +131,29 @@ Main flow modules:
 - Account fallback logic: `open-sse/services/accountFallback.js`
 - Translation registry: `open-sse/translator/index.js`
 - Stream transformations: `open-sse/utils/stream.js`, `open-sse/utils/streamHandler.js`
+- Stream transformations: `open-sse/utils/stream.js`, `open-sse/utils/streamHandler.js`
 - Usage extraction/normalization: `open-sse/utils/usageTracking.js`
 
-## 3) Persistence Layer
+## 3) Service Core (`src/sse/services`)
+
+New internal services that enhance routing intelligence:
+
+- **Discovery Service** (`discovery.js`):
+    - Periodically validates provider credentials.
+    - Manages rate-limit cooldowns and health status.
+    - Automatically re-enables accounts after backoff.
+
+- **Orchestrator** (`orchestrator.js`):
+    - Replaces simple iteration with scored candidate selection.
+    - Factors in group priority (Personal vs Work), account priority, and cost.
+    - Handles "smart fallbacks" across different providers for equivalent models.
+
+- **Compression Service** (`compression.js`):
+    - Analyzes conversation history token counts.
+    - Summarizes middle messages when context limits are approached.
+    - preserves system prompts and recent context.
+
+## 4) Persistence Layer
 
 Primary state DB:
 

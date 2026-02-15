@@ -25,6 +25,7 @@ export default function ProviderDetailPage() {
   const [modelAliases, setModelAliases] = useState({});
   const [headerImgError, setHeaderImgError] = useState(false);
   const { copied, copy } = useCopyToClipboard();
+  const activeConnection = connections.find(c => c.isActive !== false) || connections[0];
 
   const providerInfo = providerNode
     ? {
@@ -219,6 +220,20 @@ export default function ProviderDetailPage() {
     }
   };
 
+  const handleTestConnection = async (id) => {
+    try {
+      const res = await fetch(`/api/providers/${id}/test`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchConnections();
+        return data.valid;
+      }
+    } catch (error) {
+      console.log("Error testing connection:", error);
+    }
+    return false;
+  };
+
   const handleSwapPriority = async (conn1, conn2) => {
     if (!conn1 || !conn2) return;
     try {
@@ -321,6 +336,7 @@ export default function ProviderDetailPage() {
     );
   }
 
+  // Defensive check for rendering models
   if (!providerInfo) {
     return (
       <div className="text-center py-20">
@@ -383,6 +399,103 @@ export default function ProviderDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Connections Section */}
+      <Card>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-lg font-semibold">Connections</h2>
+          <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>
+            Add Connection
+          </Button>
+        </div>
+
+        {!connections || connections.length === 0 ? (
+          <div className="text-center py-10 bg-bg-subtle/30 rounded-lg border border-dashed border-border">
+            <p className="text-text-muted">No connections configured</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {connections.map((conn) => (
+              <div
+                key={conn.id}
+                className={`p-4 rounded-xl border transition-all ${activeConnection?.id === conn.id
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : "border-border hover:border-primary/50 bg-surface/50"
+                  }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`size-10 rounded-lg flex items-center justify-center ${conn.isActive ? "bg-success/10" : "bg-text-muted/10"
+                        }`}
+                    >
+                      <span
+                        className={`material-symbols-outlined ${conn.isActive ? "text-success" : "text-text-muted"
+                          }`}
+                      >
+                        {conn.isActive ? "check_circle" : "pause_circle"}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium text-text-main">
+                          {conn.name}
+                        </h4>
+                        {!conn.isActive && (
+                          <Badge variant="neutral" size="sm">
+                            Inactive
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge
+                          variant={
+                            conn.testStatus === "success"
+                              ? "success"
+                              : conn.testStatus === "error"
+                                ? "error"
+                                : "neutral"
+                          }
+                          size="sm"
+                        >
+                          {conn.testStatus || "Unknown"}
+                        </Badge>
+                        {conn.lastUsedAt && (
+                          <span className="text-xs text-text-muted">
+                            Used {new Date(conn.lastUsedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon="edit"
+                      onClick={() => {
+                        setSelectedConnection(conn);
+                        setShowEditModal(true);
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon="delete"
+                      className="text-red-500 hover:bg-red-50"
+                      onClick={() => {
+                        setSelectedConnection(conn);
+                        setShowDeleteModal(true);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {isCompatible && providerNode && (
         <Card>
@@ -485,6 +598,7 @@ export default function ProviderDetailPage() {
                     setSelectedConnection(conn);
                     setShowEditModal(true);
                   }}
+                  onTest={() => handleTestConnection(conn.id)}
                   onDelete={() => handleDelete(conn.id)}
                 />
               ))}
@@ -1004,7 +1118,10 @@ function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveD
           title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
         />
         <div className="flex gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onEdit} className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary">
+          <button onClick={onTest} className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary" title="Test Connection">
+            <span className="material-symbols-outlined text-[18px]">bolt</span>
+          </button>
+          <button onClick={onEdit} className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary" title="Edit Connection">
             <span className="material-symbols-outlined text-[18px]">edit</span>
           </button>
           <button onClick={onDelete} className="p-2 hover:bg-red-500/10 rounded text-red-500">
@@ -1037,6 +1154,7 @@ ConnectionRow.propTypes = {
   onMoveDown: PropTypes.func.isRequired,
   onToggleActive: PropTypes.func.isRequired,
   onEdit: PropTypes.func.isRequired,
+  onTest: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
 };
 
@@ -1332,18 +1450,16 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
         )}
 
         {/* Test Connection */}
-        {!isCompatible && (
-          <div className="flex items-center gap-3">
-            <Button onClick={handleTest} variant="secondary" disabled={testing}>
-              {testing ? "Testing..." : "Test Connection"}
-            </Button>
-            {testResult && (
-              <Badge variant={testResult === "success" ? "success" : "error"}>
-                {testResult === "success" ? "Valid" : "Failed"}
-              </Badge>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <Button onClick={handleTest} variant="secondary" disabled={testing}>
+            {testing ? "Testing..." : "Test Connection"}
+          </Button>
+          {testResult && (
+            <Badge variant={testResult === "success" ? "success" : "error"}>
+              {testResult === "success" ? "Valid" : "Failed"}
+            </Badge>
+          )}
+        </div>
 
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={saving}>{saving ? "Saving..." : "Save"}</Button>

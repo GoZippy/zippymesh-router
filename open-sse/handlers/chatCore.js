@@ -447,7 +447,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       response: new Response(JSON.stringify(translatedResponse), {
         headers: {
           "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*"
+          "Access-Control-Allow-Origin": "*",
+          "X-Routed-Provider": provider || "unknown",
+          "X-Routed-Model": model || "unknown",
+          "X-Account-ID": connectionId || "default"
         }
       })
     };
@@ -464,7 +467,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     "Connection": "keep-alive",
-    "Access-Control-Allow-Origin": "*"
+    "Access-Control-Allow-Origin": "*",
+    "X-Routed-Provider": provider || "unknown",
+    "X-Routed-Model": model || "unknown",
+    "X-Account-ID": connectionId || "default"
   };
 
   // Create transform stream with logger for streaming response
