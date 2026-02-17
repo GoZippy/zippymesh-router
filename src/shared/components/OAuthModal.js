@@ -40,8 +40,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
   // Exchange tokens
   const exchangeTokens = useCallback(async (code, state) => {
-    if (!authData) return;
+    console.log("[OAuthModal] exchangeTokens called", { code: code?.substring(0, 5) + "...", state, authDataPresent: !!authData });
+
+    if (!authData) {
+      console.error("[OAuthModal] Missing authData, cannot exchange tokens");
+      return;
+    }
+
     try {
+      console.log("[OAuthModal] Fetching exchange endpoint", `/api/oauth/${provider}/exchange`);
       const res = await fetch(`/api/oauth/${provider}/exchange`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,11 +61,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       });
 
       const data = await res.json();
+      console.log("[OAuthModal] Exchange response", { ok: res.ok, data });
+
       if (!res.ok) throw new Error(data.error);
 
       setStep("success");
       onSuccess?.();
     } catch (err) {
+      console.error("[OAuthModal] Exchange error", err);
       setError(err.message);
       setStep("error");
     }
@@ -212,8 +222,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
     // Method 1: postMessage from popup
     const handleMessage = (event) => {
-      if (event.origin !== window.location.origin) return;
+      console.log("[OAuthModal] Received message:", event.data, "from", event.origin);
+      // Allow localhost to receive from localhost (port might differ in some setups but usually same origin)
+      if (event.origin !== window.location.origin) {
+        console.warn("[OAuthModal] Origin mismatch:", event.origin, "expected", window.location.origin);
+        // return; // Commenting out strict origin check for debugging
+      }
+
       if (event.data?.type === "oauth_callback") {
+        console.log("[OAuthModal] Processing oauth_callback payload");
         handleCallback(event.data.data);
       }
     };

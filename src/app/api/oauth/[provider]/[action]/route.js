@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { 
-  getProvider, 
-  generateAuthData, 
-  exchangeTokens, 
-  requestDeviceCode, 
-  pollForToken 
+import {
+  getProvider,
+  generateAuthData,
+  exchangeTokens,
+  requestDeviceCode,
+  pollForToken
 } from "@/lib/oauth/providers";
 import { createProviderConnection, isCloudEnabled } from "@/models";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
@@ -35,7 +35,7 @@ export async function GET(request, { params }) {
       }
 
       const authData = generateAuthData(provider, null);
-      
+
       // For providers that don't use PKCE (like GitHub), don't pass codeChallenge
       let deviceData;
       if (provider === "github" || provider === "kiro") {
@@ -65,9 +65,11 @@ export async function POST(request, { params }) {
   try {
     const { provider, action } = await params;
     const body = await request.json();
+    console.log(`[OAuth] POST /api/oauth/${provider}/${action}`, { bodyKeys: Object.keys(body) });
 
     if (action === "exchange") {
       const { code, redirectUri, codeVerifier, state } = body;
+      console.log(`[OAuth] Exchanging code for ${provider}`, { code: code?.substring(0, 10) + "...", redirectUri });
 
       if (!code || !redirectUri || !codeVerifier) {
         return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -81,8 +83,8 @@ export async function POST(request, { params }) {
         provider,
         authType: "oauth",
         ...tokenData,
-        expiresAt: tokenData.expiresIn 
-          ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString() 
+        expiresAt: tokenData.expiresIn
+          ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
           : null,
         testStatus: "active",
       });
@@ -90,8 +92,10 @@ export async function POST(request, { params }) {
       // Auto sync to Cloud if enabled
       await syncToCloudIfEnabled();
 
-      return NextResponse.json({ 
-        success: true, 
+      console.log(`[OAuth] Connection created successfully for ${provider}`, { id: connection.id, email: connection.email });
+
+      return NextResponse.json({
+        success: true,
         connection: {
           id: connection.id,
           provider: connection.provider,
@@ -129,8 +133,8 @@ export async function POST(request, { params }) {
           provider,
           authType: "oauth",
           ...result.tokens,
-          expiresAt: result.tokens.expiresIn 
-            ? new Date(Date.now() + result.tokens.expiresIn * 1000).toISOString() 
+          expiresAt: result.tokens.expiresIn
+            ? new Date(Date.now() + result.tokens.expiresIn * 1000).toISOString()
             : null,
           testStatus: "active",
         });
@@ -138,8 +142,8 @@ export async function POST(request, { params }) {
         // Auto sync to Cloud if enabled
         await syncToCloudIfEnabled();
 
-        return NextResponse.json({ 
-          success: true, 
+        return NextResponse.json({
+          success: true,
           connection: {
             id: connection.id,
             provider: connection.provider,
@@ -149,7 +153,7 @@ export async function POST(request, { params }) {
 
       // Still pending or error - don't create connection for pending states
       const isPending = result.pending || result.error === "authorization_pending" || result.error === "slow_down";
-      
+
       return NextResponse.json({
         success: false,
         error: result.error,

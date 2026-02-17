@@ -31,10 +31,11 @@ function CallbackContent() {
       window.location.origin, // Same origin (for most providers)
       "http://localhost:1455", // Codex specific port
     ];
-    
+
     // Method 1: postMessage to opener (popup mode)
     if (window.opener) {
       try {
+        console.log("[Callback] Sending postMessage to opener");
         window.opener.postMessage({ type: "oauth_callback", data: callbackData }, "*"); // Allow any origin for local dev
         sent = true;
       } catch (e) {

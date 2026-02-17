@@ -5,7 +5,10 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 
-const isCloud = typeof caches !== 'undefined' || typeof caches === 'object';
+// Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
+// Checking 'caches' is unreliable in Node 18+ as it's often polyfilled
+const isCloud = typeof process === 'undefined' || !process.versions || !process.versions.node;
+
 
 // Get app name - fixed constant to avoid Windows path issues in standalone build
 function getAppName() {

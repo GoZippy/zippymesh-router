@@ -74,7 +74,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
       });
 
       const data = await res.json();
-      
+
       if (!res.ok) {
         throw new Error(data.error || "Import failed");
       }
@@ -120,7 +120,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                 <div className="flex-1">
                   <h3 className="font-semibold mb-1">AWS Builder ID</h3>
                   <p className="text-sm text-text-muted">
-                    Recommended for most users. Free AWS account required.
+                    Recommended. Requires Kiro IDE or CLI installed and authenticated.
                   </p>
                 </div>
               </div>
@@ -184,7 +184,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                 <div className="flex-1">
                   <h3 className="font-semibold mb-1">Import Token</h3>
                   <p className="text-sm text-text-muted">
-                    Paste refresh token from Kiro IDE.
+                    Manually paste refresh token from Kiro config file.
                   </p>
                 </div>
               </div>
@@ -309,7 +309,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                 </div>
                 <h3 className="text-lg font-semibold mb-2">Auto-detecting token...</h3>
                 <p className="text-sm text-text-muted">
-                  Reading from AWS SSO cache
+                  Reading from AWS SSO cache (~/.aws/sso/cache)
                 </p>
               </div>
             )}
@@ -335,9 +335,22 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                     <div className="flex gap-2">
                       <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">info</span>
                       <p className="text-sm text-blue-800 dark:text-blue-200">
-                        Kiro IDE not detected. Please paste your refresh token manually.
+                        Kiro IDE not detected in default location.
                       </p>
                     </div>
+                  </div>
+                )}
+
+                {!autoDetected && (
+                  <div className="bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-sm">
+                    <p className="font-medium mb-1">Where to find your token:</p>
+                    <ul className="list-disc list-inside space-y-1 text-text-muted">
+                      <li>Windows: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">%USERPROFILE%\.aws\sso\cache</code></li>
+                      <li>Mac/Linux: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">~/.aws/sso/cache</code></li>
+                    </ul>
+                    <p className="mt-2 text-xs text-text-muted">
+                      Look for a JSON file containing <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">"refreshToken": "aorAAAA..."</code>
+                    </p>
                   </div>
                 )}
 

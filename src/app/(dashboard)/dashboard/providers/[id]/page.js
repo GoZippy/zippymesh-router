@@ -400,171 +400,31 @@ export default function ProviderDetailPage() {
         </div>
       </div>
 
-      {/* Connections Section */}
-      <Card>
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-semibold">Connections</h2>
-          <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>
-            Add Connection
-          </Button>
-        </div>
 
-        {!connections || connections.length === 0 ? (
-          <div className="text-center py-10 bg-bg-subtle/30 rounded-lg border border-dashed border-border">
-            <p className="text-text-muted">No connections configured</p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-4">
-            {connections.map((conn) => (
-              <div
-                key={conn.id}
-                className={`p-4 rounded-xl border transition-all ${activeConnection?.id === conn.id
-                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
-                  : "border-border hover:border-primary/50 bg-surface/50"
-                  }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`size-10 rounded-lg flex items-center justify-center ${conn.isActive ? "bg-success/10" : "bg-text-muted/10"
-                        }`}
-                    >
-                      <span
-                        className={`material-symbols-outlined ${conn.isActive ? "text-success" : "text-text-muted"
-                          }`}
-                      >
-                        {conn.isActive ? "check_circle" : "pause_circle"}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-medium text-text-main">
-                          {conn.name}
-                        </h4>
-                        {!conn.isActive && (
-                          <Badge variant="neutral" size="sm">
-                            Inactive
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <Badge
-                          variant={
-                            conn.testStatus === "success"
-                              ? "success"
-                              : conn.testStatus === "error"
-                                ? "error"
-                                : "neutral"
-                          }
-                          size="sm"
-                        >
-                          {conn.testStatus || "Unknown"}
-                        </Badge>
-                        {conn.lastUsedAt && (
-                          <span className="text-xs text-text-muted">
-                            Used {new Date(conn.lastUsedAt).toLocaleDateString()}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon="edit"
-                      onClick={() => {
-                        setSelectedConnection(conn);
-                        setShowEditModal(true);
-                      }}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      icon="delete"
-                      className="text-red-500 hover:bg-red-50"
-                      onClick={() => {
-                        setSelectedConnection(conn);
-                        setShowDeleteModal(true);
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {isCompatible && providerNode && (
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-semibold">{isAnthropicCompatible ? "Anthropic Compatible Details" : "OpenAI Compatible Details"}</h2>
-              <p className="text-sm text-text-muted">
-                {isAnthropicCompatible ? "Messages API" : (providerNode.apiType === "responses" ? "Responses API" : "Chat Completions")} · {(providerNode.baseUrl || "").replace(/\/$/, "")}/
-                {isAnthropicCompatible ? "messages" : (providerNode.apiType === "responses" ? "responses" : "chat/completions")}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                icon="add"
-                onClick={() => setShowAddApiKeyModal(true)}
-                disabled={connections.length > 0}
-              >
-                Add
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon="edit"
-                onClick={() => setShowEditNodeModal(true)}
-              >
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon="delete"
-                onClick={async () => {
-                  if (!confirm(`Delete this ${isAnthropicCompatible ? "Anthropic" : "OpenAI"} Compatible node?`)) return;
-                  try {
-                    const res = await fetch(`/api/provider-nodes/${providerId}`, { method: "DELETE" });
-                    if (res.ok) {
-                      router.push("/dashboard/providers");
-                    }
-                  } catch (error) {
-                    console.log("Error deleting provider node:", error);
-                  }
-                }}
-              >
-                Delete
-              </Button>
-            </div>
-          </div>
-          {connections.length > 0 && (
-            <p className="text-sm text-text-muted">
-              Only one connection is allowed per compatible node. Add another node if you need more connections.
-            </p>
-          )}
-        </Card>
-      )}
 
       {/* Connections */}
       <Card>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Connections</h2>
-          {!isCompatible && (
+          <div className="flex items-center gap-2">
+            {isCompatible && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="settings"
+                onClick={() => setShowEditNodeModal(true)}
+              >
+                Configure Endpoint
+              </Button>
+            )}
             <Button
               size="sm"
               icon="add"
               onClick={() => isOAuth ? setShowOAuthModal(true) : setShowAddApiKeyModal(true)}
             >
-              Add
+              Add Connection
             </Button>
-          )}
+          </div>
         </div>
 
         {connections.length === 0 ? (
@@ -574,11 +434,16 @@ export default function ProviderDetailPage() {
             </div>
             <p className="text-text-main font-medium mb-1">No connections yet</p>
             <p className="text-sm text-text-muted mb-4">Add your first connection to get started</p>
-            {!isCompatible && (
+            <div className="flex items-center justify-center gap-2">
+              {isCompatible && (
+                <Button variant="secondary" icon="settings" onClick={() => setShowEditNodeModal(true)}>
+                  Configure Endpoint
+                </Button>
+              )}
               <Button icon="add" onClick={() => isOAuth ? setShowOAuthModal(true) : setShowAddApiKeyModal(true)}>
                 Add Connection
               </Button>
-            )}
+            </div>
           </div>
         ) : (
           <div className="flex flex-col divide-y divide-black/[0.03] dark:divide-white/[0.03]">
@@ -589,6 +454,7 @@ export default function ProviderDetailPage() {
                   key={conn.id}
                   connection={conn}
                   isOAuth={isOAuth}
+                  providerNode={providerNode}
                   isFirst={index === 0}
                   isLast={index === connections.length - 1}
                   onMoveUp={() => handleSwapPriority(conn, connections[index - 1])}
@@ -1025,10 +891,14 @@ CooldownTimer.propTypes = {
   until: PropTypes.string.isRequired,
 };
 
-function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete }) {
+function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onTest }) {
   const displayName = isOAuth
     ? connection.name || connection.email || connection.displayName || "OAuth Account"
     : connection.name;
+
+  const subLabel = !isOAuth && providerNode?.baseUrl
+    ? providerNode.baseUrl.replace(/\/$/, "")
+    : null;
 
   // Use useState + useEffect for impure Date.now() to avoid calling during render
   const [isCooldown, setIsCooldown] = useState(false);
@@ -1085,6 +955,7 @@ function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveD
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{displayName}</p>
+          {subLabel && <p className="text-xs text-text-muted truncate font-mono mt-0.5">{subLabel}</p>}
           <div className="flex items-center gap-2 mt-1">
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}

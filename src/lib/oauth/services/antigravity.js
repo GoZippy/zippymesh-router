@@ -117,7 +117,7 @@ export class AntigravityService {
     }
 
     const data = await response.json();
-    
+
     // Extract project ID
     let projectId = data.cloudaicompanionProject;
     if (typeof projectId === 'object' && projectId !== null && projectId.id) {
@@ -166,7 +166,7 @@ export class AntigravityService {
   async completeOnboarding(accessToken, projectId, tierId, maxRetries = 10) {
     for (let i = 0; i < maxRetries; i++) {
       const result = await this.onboardUser(accessToken, projectId, tierId);
-      
+
       if (result.done === true) {
         // Extract final project ID from response
         let finalProjectId = projectId;
@@ -205,20 +205,25 @@ export class AntigravityService {
   async saveTokens(tokens, userInfo, projectId) {
     const { server, token, userId } = getServerCredentials();
 
-    const response = await fetch(`${server}/api/cli/providers/antigravity`, {
+    // Use the generic OAuth save endpoint
+    const response = await fetch(`${server}/api/oauth/antigravity/save`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
-        "X-User-Id": userId,
       },
       body: JSON.stringify({
+        provider: "antigravity",
+        authType: "oauth",
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token,
         expiresIn: tokens.expires_in,
         scope: tokens.scope,
         email: userInfo.email,
-        projectId: projectId, // Send projectId to server
+        projectId: projectId,
+        providerSpecificData: {
+          projectId: projectId
+        }
       }),
     });
 
@@ -301,7 +306,7 @@ export class AntigravityService {
 
       // Load Code Assist to get project ID and tier
       const { projectId, tierId } = await this.loadCodeAssist(tokens.access_token);
-      
+
       if (!projectId) {
         throw new Error("No Google Cloud Project found. Please ensure you have a GCP project with Gemini Code Assist enabled.");
       }

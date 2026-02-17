@@ -4,9 +4,9 @@
   "description": "Zippy Mesh - Standalone AI Routing & P2P Mesh",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev -p 20128 --webpack",
     "build": "next build --webpack",
-    "start": "next start"
+    "start": "next start -p 20128"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

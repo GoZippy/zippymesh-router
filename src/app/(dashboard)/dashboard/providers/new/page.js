@@ -121,7 +121,7 @@ export default function NewProviderPage() {
               <div>
                 <p className="font-medium">{selectedProvider.name}</p>
                 <p className="text-sm text-text-muted">
-                  Selected provider
+                  {selectedProvider.helpText || "Selected provider"}
                 </p>
               </div>
             </Card.Section>
