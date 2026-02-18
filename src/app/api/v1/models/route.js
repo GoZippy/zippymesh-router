@@ -1,8 +1,10 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { getProviderConnections, getCombos } from "@/lib/localDb";
+import { getSidecarPeers } from "@/lib/sidecar";
 
 /**
  * Handle CORS preflight
+ * ... (unchanged)
  */
 export async function OPTIONS() {
   return new Response(null, {
@@ -27,7 +29,6 @@ export async function GET() {
       // Filter to only active connections
       connections = connections.filter(c => c.isActive !== false);
     } catch (e) {
-      // If database not available, return all models
       console.log("Could not fetch providers, returning all models");
     }
 
@@ -37,6 +38,14 @@ export async function GET() {
       combos = await getCombos();
     } catch (e) {
       console.log("Could not fetch combos");
+    }
+
+    // Get P2P Peers
+    let p2pPeers = [];
+    try {
+      p2pPeers = await getSidecarPeers();
+    } catch (e) {
+      console.log("Could not fetch sidecar peers");
     }
 
     // Build set of active provider aliases
@@ -61,6 +70,33 @@ export async function GET() {
         root: combo.name,
         parent: null,
       });
+    }
+
+    // Add P2P Models
+    const p2pModels = new Set();
+    for (const peer of p2pPeers) {
+      if (peer.models) {
+        for (const model of peer.models) {
+          // Avoid duplicates if multiple peers offer same model
+          const modelId = `p2p/${model.name}`;
+          if (!p2pModels.has(modelId)) {
+            p2pModels.add(modelId);
+            models.push({
+              id: modelId,
+              object: "model",
+              created: timestamp,
+              owned_by: "p2p",
+              permission: [],
+              root: model.name,
+              parent: null,
+              meta: {
+                cost: model.cost_per_token,
+                quantization: model.quantization
+              }
+            });
+          }
+        }
+      }
     }
 
     // Add provider models

@@ -1,0 +1,9 @@
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\debug\deps\libp2p_request_response-87b4bb117d6ef691.d: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\lib.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\cbor.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\codec.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler\protocol.rs
+
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\debug\deps\liblibp2p_request_response-87b4bb117d6ef691.rmeta: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\lib.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\cbor.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\codec.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler\protocol.rs
+
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\lib.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\cbor.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\codec.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\libp2p-request-response-0.26.3\src\handler\protocol.rs:

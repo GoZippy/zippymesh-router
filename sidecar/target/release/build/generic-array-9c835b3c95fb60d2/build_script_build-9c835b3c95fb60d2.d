@@ -1,0 +1,5 @@
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\release\build\generic-array-9c835b3c95fb60d2\build_script_build-9c835b3c95fb60d2.d: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\generic-array-0.14.7\build.rs
+
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\release\build\generic-array-9c835b3c95fb60d2\build_script_build-9c835b3c95fb60d2.exe: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\generic-array-0.14.7\build.rs
+
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\generic-array-0.14.7\build.rs:

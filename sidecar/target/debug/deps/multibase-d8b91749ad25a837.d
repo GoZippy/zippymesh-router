@@ -1,0 +1,11 @@
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\debug\deps\multibase-d8b91749ad25a837.d: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\debug\deps\libmultibase-d8b91749ad25a837.rlib: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+K:\Projects\ZippyMesh_LLM_Router\sidecar\target\debug\deps\libmultibase-d8b91749ad25a837.rmeta: C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs
+
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\lib.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\base.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\encoding.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\error.rs:
+C:\Users\gotad\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\multibase-0.9.2\src\impls.rs:

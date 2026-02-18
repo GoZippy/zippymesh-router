@@ -1,6 +1,7 @@
 import { callCloudWithMachineId } from "@/shared/utils/cloud.js";
 import { handleChat } from "@/sse/handlers/chat.js";
 import { initTranslators } from "open-sse/translator/index.js";
+import { proxyChatCompletion } from "@/lib/sidecar";
 
 let initialized = false;
 
@@ -29,6 +30,27 @@ export async function OPTIONS() {
 }
 
 export async function POST(request) {
+  // Check for P2P model
+  const clone = request.clone();
+  try {
+    const body = await clone.json();
+    if (body.model && body.model.startsWith("p2p/")) {
+      console.log(`[Proxy] Forwarding P2P request for ${body.model}`);
+      // Strip prefix
+      const p2pPayload = { ...body, model: body.model.replace("p2p/", "") };
+
+      const proxyRes = await proxyChatCompletion(p2pPayload);
+
+      // Return proxy response directly
+      return new Response(proxyRes.body, {
+        status: proxyRes.status,
+        headers: proxyRes.headers
+      });
+    }
+  } catch (e) {
+    console.error("[Proxy] Error checking P2P model:", e);
+  }
+
   // Fallback to local handling
   await ensureInitialized();
 

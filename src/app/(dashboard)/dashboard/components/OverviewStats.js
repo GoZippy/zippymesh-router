@@ -7,6 +7,7 @@ import BarChart from "@/shared/components/BarChart";
 
 export default function OverviewStats() {
     const [stats, setStats] = useState(null);
+    const [sidecarStatus, setSidecarStatus] = useState("checking");
     const [loading, setLoading] = useState(true);
 
     // Poll for updates every 10s
@@ -18,13 +19,24 @@ export default function OverviewStats() {
 
     const fetchStats = async () => {
         try {
+            // Fetch usage stats
             const res = await fetch("/api/usage/history");
             if (res.ok) {
                 const data = await res.json();
                 setStats(data);
             }
+
+            // Fetch sidecar health
+            const sidecarRes = await fetch("/api/sidecar/health");
+            if (sidecarRes.ok) {
+                const data = await sidecarRes.json();
+                setSidecarStatus(data.status);
+            } else {
+                setSidecarStatus("disconnected");
+            }
         } catch (error) {
             console.error("Failed to fetch overview stats:", error);
+            setSidecarStatus("disconnected");
         } finally {
             setLoading(false);
         }
@@ -251,19 +263,21 @@ export default function OverviewStats() {
                     <div className="p-4 space-y-3">
                         <div className="flex justify-between items-center text-sm">
                             <span className="text-text-muted">Version</span>
-                            <span className="font-mono">v1.0.0</span>
+                            <span className="font-mono">v1.1.0-mesh</span>
                         </div>
                         <div className="flex justify-between items-center text-sm">
-                            <span className="text-text-muted">Status</span>
+                            <span className="text-text-muted">Router Status</span>
                             <Badge variant={errorRate > 1 ? "warning" : "success"}>{statusText}</Badge>
                         </div>
                         <div className="flex justify-between items-center text-sm">
-                            <span className="text-text-muted">Environment</span>
-                            <span className="font-mono text-xs bg-bg-subtle px-2 py-0.5 rounded">Production</span>
+                            <span className="text-text-muted">Zippy Mesh</span>
+                            <Badge variant={sidecarStatus === "connected" ? "success" : "destructive"}>
+                                {sidecarStatus === "connected" ? "Online" : "Offline"}
+                            </Badge>
                         </div>
                         <div className="flex justify-between items-center text-sm">
-                            <span className="text-text-muted">Storage</span>
-                            <span className="font-mono text-xs">Local (JSON)</span>
+                            <span className="text-text-muted">Environment</span>
+                            <span className="font-mono text-xs bg-bg-subtle px-2 py-0.5 rounded">Docker</span>
                         </div>
                     </div>
                 </Card>
