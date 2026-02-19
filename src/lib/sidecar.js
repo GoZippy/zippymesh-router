@@ -1,4 +1,4 @@
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9000";
+const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:8081";
 
 /**
  * Fetch all discovered peers from the Sidecar.
@@ -44,6 +44,20 @@ export async function getSidecarHealth() {
 }
 
 /**
+ * Get Sidecar Node Info (Identity, Status).
+ * @returns {Promise<object|null>} Node info or null if failed
+ */
+export async function getSidecarInfo() {
+    try {
+        const res = await fetch(`${SIDECAR_URL}/node/info`, { signal: AbortSignal.timeout(1000) });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Proxy chat completion to Sidecar.
  * @param {object} payload - Chat completion request body
  * @returns {Promise<Response>} Fetch response
@@ -56,4 +70,38 @@ export async function proxyChatCompletion(payload) {
         },
         body: JSON.stringify(payload)
     });
+}
+
+/**
+ * Open a mock payment channel.
+ * @param {string} targetPeerId
+ * @param {number} amount
+ */
+export async function openPaymentChannel(targetPeerId, amount) {
+    try {
+        const res = await fetch(`${SIDECAR_URL}/payment/open_channel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_peer_id: targetPeerId, amount })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return await res.json();
+    } catch (error) {
+        console.error("Error opening channel:", error);
+        throw error;
+    }
+}
+
+/**
+ * Get Wallet Balance.
+ */
+export async function getWalletBalance() {
+    try {
+        const res = await fetch(`${SIDECAR_URL}/wallet/balance`);
+        if (!res.ok) return { balance: 0, currency: 'ZIP' };
+        return await res.json();
+    } catch (error) {
+        console.error("Error fetching balance:", error);
+        return { balance: 0, currency: 'ZIP' };
+    }
 }

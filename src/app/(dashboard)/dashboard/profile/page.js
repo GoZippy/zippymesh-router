@@ -213,6 +213,49 @@ export default function ProfilePage() {
           </div>
         </Card>
 
+        {/* Monetization Settings */}
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-yellow-500/10 text-yellow-500">
+              <span className="material-symbols-outlined text-[20px]">monetization_on</span>
+            </div>
+            <h3 className="text-lg font-semibold">Monetization</h3>
+          </div>
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Model Pricing</p>
+                <p className="text-sm text-text-muted">
+                  Price per 1,000 tokens (ZIP)
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-text-muted">ZIP</span>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={settings.pricePer1k || 0}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setSettings(prev => ({ ...prev, pricePer1k: val }));
+                    fetch("/api/settings", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ pricePer1k: val }),
+                    });
+                  }}
+                  disabled={loading}
+                  className="w-24 text-right"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
+              This price will be advertised to the ZippyMesh network for all models you serve.
+            </p>
+          </div>
+        </Card>
+
         {/* Routing Preferences */}
         <Card>
           <div className="flex items-center gap-3 mb-4">

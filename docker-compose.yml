@@ -1,44 +1,41 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  router:
+  zippy-router:
     build: .
-    container_name: zippy-mesh-router
+    container_name: zippy-router
     restart: unless-stopped
     ports:
       - "20128:20128"
     environment:
       - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET:-changeme_please_change_this_for_production}
+      - PORT=20128
+      - JWT_SECRET=${JWT_SECRET:-zippy_mesh_secret_key_change_me}
       - INITIAL_PASSWORD=${INITIAL_PASSWORD:-123456}
       - DATA_DIR=/app/data
-      - SIDE_CAR_URL=http://sidecar:9000
+      - SIDE_CAR_URL=http://zippy-sidecar:8080 # Future integration point
     volumes:
-      - zippymesh-data:/app/data
-    networks:
-      - zippy-net
-
-  sidecar:
-    build: 
-      context: ./sidecar
-      dockerfile: Dockerfile
-    container_name: zippy-mesh-sidecar
-    restart: unless-stopped
-    ports:
-      - "9000:9000" # Internal API
-      - "4001:4001" # P2P Libp2p
-    environment:
-      - RUST_LOG=info
-      - P2P_PORT=4001
-      - API_PORT=9000
+      - zippy-data:/app/data
     networks:
       - zippy-net
     depends_on:
-      - router
+      - zippy-sidecar
 
-volumes:
-  zippymesh-data:
+  zippy-sidecar:
+    build: ./sidecar
+    container_name: zippy-sidecar
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    networks:
+      - zippy-net
+    volumes:
+      - zippy-data:/app/data
 
 networks:
   zippy-net:
     driver: bridge
+
+volumes:
+  zippy-data:
+    driver: local

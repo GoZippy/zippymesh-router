@@ -11,6 +11,8 @@ import { ConfirmModal } from "./Modal";
 
 const navItems = [
   { href: "/dashboard/endpoint", label: "Endpoint", icon: "api" },
+  { href: "/dashboard/network", label: "Network", icon: "hub" },
+  { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet" }, // Added Wallet
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
   { href: "/dashboard/pools", label: "Pools", icon: "groups" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },

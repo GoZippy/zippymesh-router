@@ -13,4 +13,8 @@ pub enum P2PCommand {
         channel: ResponseChannel<ChatResponse>,
         response: ChatResponse,
     },
+    ConnectPeer {
+        multiaddr: String,
+        response_channel: oneshot::Sender<Result<(), String>>,
+    },
 }

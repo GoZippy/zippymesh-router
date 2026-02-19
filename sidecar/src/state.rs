@@ -12,11 +12,19 @@ pub struct PeerInfo {
     pub last_seen: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WalletState {
+    pub address: String,
+    pub balance: f64,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub peers: Arc<RwLock<HashMap<String, PeerInfo>>>,
     pub model_index: Arc<RwLock<HashMap<String, Vec<String>>>>,
     pub p2p_client: mpsc::Sender<P2PCommand>,
+    pub local_peer_id: Arc<RwLock<Option<String>>>,
+    pub wallet: Arc<RwLock<WalletState>>,
 }
 
 impl AppState {
@@ -25,6 +33,11 @@ impl AppState {
             peers: Arc::new(RwLock::new(HashMap::new())),
             model_index: Arc::new(RwLock::new(HashMap::new())),
             p2p_client,
+            local_peer_id: Arc::new(RwLock::new(None)),
+            wallet: Arc::new(RwLock::new(WalletState {
+                address: "ZIP-MOCK-DEV-WALLET-001".to_string(),
+                balance: 1000.0, 
+            })),
         }
     }
 }
