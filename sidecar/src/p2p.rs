@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{info, error};
+use futures::StreamExt;
 
 #[derive(NetworkBehaviour)]
 pub struct ZippyBehaviour {
@@ -27,12 +28,6 @@ pub async fn start_p2p_node(
     let peer_id = PeerId::from(id_keys.public());
     info!("Local peer id: {peer_id}");
 
-    let transport = tcp::tokio::Transport::new(tcp::Config::default().nodelay(true))
-        .upgrade(libp2p::core::upgrade::Version::V1)
-        .authenticate(noise::Config::new(&id_keys).unwrap())
-        .multiplex(yamux::Config::default())
-        .boxed();
-
     // Gossipsub config
     let message_id_fn = |message: &gossipsub::Message| {
         let mut s = DefaultHasher::new();
@@ -48,7 +43,7 @@ pub async fn start_p2p_node(
         .expect("Valid config");
 
     let mut gossipsub = gossipsub::Behaviour::new(
-        gossipsub::MessageAuthenticity::Signed(id_keys),
+        gossipsub::MessageAuthenticity::Signed(id_keys.clone()),
         gossipsub_config,
     )
     .expect("Correct config");
@@ -60,9 +55,13 @@ pub async fn start_p2p_node(
 
     let behaviour = ZippyBehaviour { gossipsub, mdns };
 
-    let mut swarm = SwarmBuilder::with_existing_identity(peer_id)
+    let mut swarm = SwarmBuilder::with_existing_identity(id_keys)
         .with_tokio()
-        .with_other_transport(|_key| transport)?
+        .with_tcp(
+            tcp::Config::default().nodelay(true),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
         .with_behaviour(|_| behaviour)?
         .build();
 

@@ -62,6 +62,11 @@ PUBLIC.en.md
 PR/*
 package-lock.json
 
+# Rust
+target/
+sidecar/target/
+sidecar/target_temp/
+
 
 #Ignore vscode AI rules
 .github/instructions/codacy.instructions.md
