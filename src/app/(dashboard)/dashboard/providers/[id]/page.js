@@ -24,6 +24,8 @@ export default function ProviderDetailPage() {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [modelAliases, setModelAliases] = useState({});
   const [headerImgError, setHeaderImgError] = useState(false);
+  const [testingConnections, setTestingConnections] = useState({}); // connectionId -> boolean
+  const [testResults, setTestResults] = useState({}); // connectionId -> "success" | "failed" | null
   const { copied, copy } = useCopyToClipboard();
   const activeConnection = connections.find(c => c.isActive !== false) || connections[0];
 
@@ -221,15 +223,29 @@ export default function ProviderDetailPage() {
   };
 
   const handleTestConnection = async (id) => {
+    setTestingConnections(prev => ({ ...prev, [id]: true }));
+    setTestResults(prev => ({ ...prev, [id]: null }));
     try {
       const res = await fetch(`/api/providers/${id}/test`, { method: "POST" });
       const data = await res.json();
+      const isValid = !!data.valid;
+      setTestResults(prev => ({ ...prev, [id]: isValid ? "success" : "failed" }));
       if (res.ok) {
         await fetchConnections();
-        return data.valid;
+        // Clear result after 3 seconds
+        setTimeout(() => {
+          setTestResults(prev => ({ ...prev, [id]: null }));
+        }, 3000);
+        return isValid;
       }
     } catch (error) {
       console.log("Error testing connection:", error);
+      setTestResults(prev => ({ ...prev, [id]: "failed" }));
+      setTimeout(() => {
+        setTestResults(prev => ({ ...prev, [id]: null }));
+      }, 3000);
+    } finally {
+      setTestingConnections(prev => ({ ...prev, [id]: false }));
     }
     return false;
   };
@@ -400,7 +416,19 @@ export default function ProviderDetailPage() {
         </div>
       </div>
 
-
+      {connections.length > 0 && connections.some(c => c.testStatus === "unknown" || c.testStatus === "error") && (
+        <div className="flex gap-4 p-4 rounded-xl bg-primary/5 border border-primary/20 items-start">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-primary text-xl">bolt</span>
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-primary">Connection Activation Required</p>
+            <p className="text-xs text-text-muted mt-1 leading-relaxed">
+              Before these models can be used in <strong>Combos</strong> or <strong>Routing Playbooks</strong>, you must verify the connection. Click the <span className="material-symbols-outlined text-[14px] align-middle">bolt</span> <strong>Test</strong> icon on your connection card below to activate it.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Connections */}
       <Card>
@@ -457,6 +485,8 @@ export default function ProviderDetailPage() {
                   providerNode={providerNode}
                   isFirst={index === 0}
                   isLast={index === connections.length - 1}
+                  isTesting={!!testingConnections[conn.id]}
+                  testResult={testResults[conn.id]}
                   onMoveUp={() => handleSwapPriority(conn, connections[index - 1])}
                   onMoveDown={() => handleSwapPriority(conn, connections[index + 1])}
                   onToggleActive={(isActive) => handleUpdateConnectionStatus(conn.id, isActive)}
@@ -891,7 +921,7 @@ CooldownTimer.propTypes = {
   until: PropTypes.string.isRequired,
 };
 
-function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onTest }) {
+function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isTesting, testResult, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onTest }) {
   const displayName = isOAuth
     ? connection.name || connection.email || connection.displayName || "OAuth Account"
     : connection.name;
@@ -989,8 +1019,19 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, onM
           title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
         />
         <div className="flex gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={onTest} className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary" title="Test Connection">
-            <span className="material-symbols-outlined text-[18px]">bolt</span>
+          <button
+            onClick={onTest}
+            disabled={isTesting}
+            className={`p-2 rounded transition-all duration-200 ${isTesting ? "bg-primary/10 text-primary animate-pulse" : "hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary"}`}
+            title="Test Connection - required to activate in Combos"
+          >
+            {testResult === "success" ? (
+              <span className="material-symbols-outlined text-[18px] text-green-500">check_circle</span>
+            ) : testResult === "failed" ? (
+              <span className="material-symbols-outlined text-[18px] text-red-500">error</span>
+            ) : (
+              <span className={`material-symbols-outlined text-[18px] ${isTesting ? "spin-animation" : ""}`}>bolt</span>
+            )}
           </button>
           <button onClick={onEdit} className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary" title="Edit Connection">
             <span className="material-symbols-outlined text-[18px]">edit</span>
@@ -1021,6 +1062,8 @@ ConnectionRow.propTypes = {
   isOAuth: PropTypes.bool.isRequired,
   isFirst: PropTypes.bool.isRequired,
   isLast: PropTypes.bool.isRequired,
+  isTesting: PropTypes.bool,
+  testResult: PropTypes.string,
   onMoveUp: PropTypes.func.isRequired,
   onMoveDown: PropTypes.func.isRequired,
   onToggleActive: PropTypes.func.isRequired,

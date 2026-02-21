@@ -21,6 +21,12 @@ export const SOTA_EQUIVALENCE = {
         "openai/gpt-4o-mini",
         "gemini/gemini-1.5-flash",
         "anthropic/claude-3-haiku",
+    ],
+    "llama3-sota": [
+        "groq/llama-3.1-8b-instant",
+        "groq/llama-3.3-70b-versatile",
+        "cerebras/llama3.1-8b",
+        "github_models/llama-3.1-8b-instant",
     ]
 };
 

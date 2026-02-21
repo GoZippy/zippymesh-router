@@ -14,6 +14,7 @@ const navItems = [
   { href: "/dashboard/network", label: "Network", icon: "hub" },
   { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet" }, // Added Wallet
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
+  { href: "/dashboard/routing", label: "Routing", icon: "alt_route" },
   { href: "/dashboard/pools", label: "Pools", icon: "groups" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },

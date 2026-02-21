@@ -444,6 +444,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
     return {
       success: true,
+      providerHeaders,
       response: new Response(JSON.stringify(translatedResponse), {
         headers: {
           "Content-Type": "application/json",
@@ -500,6 +501,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   return {
     success: true,
+    providerHeaders,
     response: new Response(transformedBody, {
       headers: responseHeaders
     })

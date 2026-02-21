@@ -1,9 +1,10 @@
-import { getProviderConnections, getPricing } from "@/lib/localDb";
+import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { parseModel } from "open-sse/services/model";
-import { filterAvailableAccounts } from "open-sse/services/accountFallback";
-import { errorResponse } from "open-sse/utils/error.js";
 import { appendRequestLog } from "@/lib/usageDb.js";
+import { errorResponse } from "open-sse/utils/error.js"; // re-import errorResponse if needed or keep existing
+
+// Instantiate RoutingEngine (Singleton-like)
+const routingEngine = new RoutingEngine();
 
 /**
  * Orchestrator Service
@@ -12,50 +13,26 @@ import { appendRequestLog } from "@/lib/usageDb.js";
 
 /**
  * Find the best account across all equivalent models/providers
- * @param {string} requestedModel - The model string requested by user
+ * @param {string} requestedModel - The model string requested by user (e.g. "gpt-4")
+ * @param {object} context - Additional context (userGroup, tokens, etc)
  * @returns {Promise<Object[]>} Sorted list of connection candidates
  */
-export async function findBestCandidates(requestedModel) {
+export async function findBestCandidates(requestedModel, context = {}) {
     const equivalentModels = getEquivalentModels(requestedModel);
-    const pricing = await getPricing();
 
-    let allCandidates = [];
+    // Use Routing Engine to find and rank candidates
+    const routes = await routingEngine.findRoute({
+        model: requestedModel,
+        equivalentModels: equivalentModels,
+        estimatedTokens: context.estimatedTokens || 100, // Default estimate
+        userGroup: context.userGroup || "default"
+    });
 
-    for (const modelStr of equivalentModels) {
-        const parsed = parseModel(modelStr);
-        const providerId = parsed.provider;
-
-        // Get all active connections for this provider
-        const connections = await getProviderConnections({ provider: providerId, isActive: true });
-
-        // Filter out currently rate-limited ones
-        const availableConnections = filterAvailableAccounts(connections);
-
-        for (const conn of availableConnections) {
-            // Calculate a "Score" for sorting
-            // 1. Group Priority (Personal > Work > Team > Default)
-            const GROUP_PRIORITY = { personal: 10, work: 20, team: 30, default: 40 };
-            const groupScore = GROUP_PRIORITY[conn.group || "default"] || 99;
-
-            // 2. Base Priority (lower is better, default 999)
-            const priority = conn.priority || 999;
-
-            // 3. Cost (use pricing info if available)
-            const modelShortName = parsed.model;
-            const modelPricing = pricing[providerId]?.[modelShortName] || pricing[providerId]?.["default"] || { input: 0, output: 0 };
-            const costScore = (modelPricing.input * 1000) + (modelPricing.output * 1000); // Simple per-1k cost heuristic
-
-            allCandidates.push({
-                connection: conn,
-                modelInfo: { provider: providerId, model: modelShortName },
-                score: (groupScore * 10000) + (priority * 10) + costScore, // Group is primary factor
-                costPer1k: costScore
-            });
-        }
-    }
-
-    // Sort candidates by score (lowest first)
-    return allCandidates.sort((a, b) => a.score - b.score);
+    // Map back to format expected by orchestrator loop
+    return routes.map(route => ({
+        ...route,
+        modelInfo: { provider: route.provider, model: route.model }
+    }));
 }
 
 /**
@@ -64,7 +41,23 @@ export async function findBestCandidates(requestedModel) {
 export async function handleOrchestratedChat(params) {
     const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent } = params;
 
-    const candidates = await findBestCandidates(modelStr);
+    // Extract Context for Routing
+    let estimatedTokens = 100;
+    if (body.messages) {
+        // Rough estimate: 1 char ~= 0.25 tokens
+        const textContent = JSON.stringify(body.messages);
+        estimatedTokens = Math.max(10, Math.ceil(textContent.length / 4));
+    } else if (body.prompt) {
+        estimatedTokens = Math.max(10, Math.ceil(typeof body.prompt === 'string' ? body.prompt.length / 4 : JSON.stringify(body.prompt).length / 4));
+    }
+
+    const routingContext = {
+        estimatedTokens,
+        intent: body.intent || params.intent || null,
+        userGroup: params.user?.group || "default"
+    };
+
+    const candidates = await findBestCandidates(modelStr, routingContext);
 
     if (candidates.length === 0) {
         await appendRequestLog({ model: modelStr, status: 404 });
@@ -78,7 +71,7 @@ export async function handleOrchestratedChat(params) {
         const { connection, modelInfo } = candidate;
         const accountId = connection.id.slice(0, 8);
 
-        log?.info?.("ORCHESTRATOR", `Trying ${modelInfo.provider}/${modelInfo.model} via account ${accountId}...`);
+        log?.info?.("ORCHESTRATOR", `Trying ${modelInfo.provider}/${modelInfo.model} via account ${accountId}... (Score: ${candidate.score})`);
 
         // Prepare body (e.g. apply context compression)
         let finalBody = { ...body, model: `${modelInfo.provider}/${modelInfo.model}` };
@@ -108,6 +101,12 @@ export async function handleOrchestratedChat(params) {
 
         if (result.success) {
             log?.info?.("ORCHESTRATOR", `Success via ${modelInfo.provider}/${modelInfo.model}`);
+
+            // Track Usage in Rate Limiter
+            // usage object should ideally contain { tokens: val, requests: 1 }
+            // context can include headers for syncing
+            await routingEngine.recordUsage(modelInfo.provider, modelInfo.model, result.usage || { tokens: 0 }, result.providerHeaders);
+
             await appendRequestLog({
                 model: modelInfo.model,
                 provider: modelInfo.provider,

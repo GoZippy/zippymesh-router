@@ -9,15 +9,24 @@ import { syncToCloud } from "@/app/api/sync/cloud/route";
 export async function GET() {
   try {
     const connections = await getProviderConnections();
-    
-    // Hide sensitive fields
-    const safeConnections = connections.map(c => ({
-      ...c,
-      apiKey: undefined,
-      accessToken: undefined,
-      refreshToken: undefined,
-      idToken: undefined,
-    }));
+
+    // Hide sensitive fields and normalize OAuth status
+    const safeConnections = connections.map(c => {
+      let testStatus = c.testStatus;
+      // For OAuth, if it's active, treat it as 'active' for the UI even if stored as 'unknown'
+      if (c.authType === "oauth" && c.isActive && testStatus === "unknown") {
+        testStatus = "active";
+      }
+
+      return {
+        ...c,
+        testStatus,
+        apiKey: undefined,
+        accessToken: undefined,
+        refreshToken: undefined,
+        idToken: undefined,
+      };
+    });
 
     return NextResponse.json({ connections: safeConnections });
   } catch (error) {
@@ -33,9 +42,9 @@ export async function POST(request) {
     const { provider, apiKey, name, priority, globalPriority, defaultModel, testStatus } = body;
 
     // Validation
-    const isValidProvider = APIKEY_PROVIDERS[provider] || 
-                          isOpenAICompatibleProvider(provider) || 
-                          isAnthropicCompatibleProvider(provider);
+    const isValidProvider = APIKEY_PROVIDERS[provider] ||
+      isOpenAICompatibleProvider(provider) ||
+      isAnthropicCompatibleProvider(provider);
 
     if (!provider || !isValidProvider) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });

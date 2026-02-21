@@ -19,4 +19,12 @@ export {
   deleteApiKey,
   validateApiKey,
   isCloudEnabled,
+  getRoutingPlaybooks,
+  getRoutingPlaybookById,
+  createRoutingPlaybook,
+  updateRoutingPlaybook,
+  deleteRoutingPlaybook,
+  getRateLimitConfigs,
+  getRateLimitConfig,
+  updateRateLimitConfig,
 } from "@/lib/localDb";

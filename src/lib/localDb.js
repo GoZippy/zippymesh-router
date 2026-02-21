@@ -43,6 +43,430 @@ if (!isCloud && !fs.existsSync(DATA_DIR)) {
 }
 
 // Default data structure
+export const DEFAULT_RATE_LIMITS = {
+  "groq": {
+    "buckets": [
+      {
+        "name": "llama-3-1-8b-instant-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "llama-3.1-8b-instant"
+      },
+      {
+        "name": "llama-3-1-8b-instant-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 14400,
+        "applies_to": "llama-3.1-8b-instant"
+      },
+      {
+        "name": "llama-3-1-8b-instant-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 6000,
+        "applies_to": "llama-3.1-8b-instant"
+      },
+      {
+        "name": "llama-3-1-8b-instant-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 500000,
+        "applies_to": "llama-3.1-8b-instant"
+      },
+      {
+        "name": "llama-3-3-70b-versatile-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "llama-3.3-70b-versatile"
+      },
+      {
+        "name": "llama-3-3-70b-versatile-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 1000,
+        "applies_to": "llama-3.3-70b-versatile"
+      },
+      {
+        "name": "llama-3-3-70b-versatile-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 12000,
+        "applies_to": "llama-3.3-70b-versatile"
+      },
+      {
+        "name": "llama-3-3-70b-versatile-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 100000,
+        "applies_to": "llama-3.3-70b-versatile"
+      },
+      {
+        "name": "meta-llama-llama-4-scout-17b-16e-instruct-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "meta-llama/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-scout-17b-16e-instruct-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 1000,
+        "applies_to": "meta-llama/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-scout-17b-16e-instruct-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 30000,
+        "applies_to": "meta-llama/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-scout-17b-16e-instruct-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 500000,
+        "applies_to": "meta-llama/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-maverick-17b-128e-instruct-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "meta-llama/llama-4-maverick-17b-128e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-maverick-17b-128e-instruct-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 1000,
+        "applies_to": "meta-llama/llama-4-maverick-17b-128e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-maverick-17b-128e-instruct-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 6000,
+        "applies_to": "meta-llama/llama-4-maverick-17b-128e-instruct"
+      },
+      {
+        "name": "meta-llama-llama-4-maverick-17b-128e-instruct-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 500000,
+        "applies_to": "meta-llama/llama-4-maverick-17b-128e-instruct"
+      },
+      {
+        "name": "qwen-qwen3-32b-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 60,
+        "applies_to": "qwen/qwen3-32b"
+      },
+      {
+        "name": "qwen-qwen3-32b-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 1000,
+        "applies_to": "qwen/qwen3-32b"
+      },
+      {
+        "name": "qwen-qwen3-32b-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 6000,
+        "applies_to": "qwen/qwen3-32b"
+      },
+      {
+        "name": "qwen-qwen3-32b-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 500000,
+        "applies_to": "qwen/qwen3-32b"
+      },
+      {
+        "name": "openai-gpt-oss-120b-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "openai/gpt-oss-120b"
+      },
+      {
+        "name": "openai-gpt-oss-120b-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 1000,
+        "applies_to": "openai/gpt-oss-120b"
+      },
+      {
+        "name": "openai-gpt-oss-120b-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 8000,
+        "applies_to": "openai/gpt-oss-120b"
+      },
+      {
+        "name": "openai-gpt-oss-120b-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 200000,
+        "applies_to": "openai/gpt-oss-120b"
+      },
+      {
+        "name": "groq-compound-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "groq/compound"
+      },
+      {
+        "name": "groq-compound-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 250,
+        "applies_to": "groq/compound"
+      },
+      {
+        "name": "groq-compound-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 70000,
+        "applies_to": "groq/compound"
+      },
+      {
+        "name": "whisper-large-v3-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 20,
+        "applies_to": "whisper-large-v3"
+      },
+      {
+        "name": "whisper-large-v3-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 2000,
+        "applies_to": "whisper-large-v3"
+      },
+      {
+        "name": "groq-default-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "all"
+      }
+    ]
+  },
+  "cerebras": {
+    "buckets": [
+      {
+        "name": "gpt-oss-120b-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 30,
+        "applies_to": "gpt-oss-120b"
+      },
+      {
+        "name": "gpt-oss-120b-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 14400,
+        "applies_to": "gpt-oss-120b"
+      },
+      {
+        "name": "gpt-oss-120b-tpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "tokens",
+        "value_hint": 60000,
+        "applies_to": "gpt-oss-120b"
+      },
+      {
+        "name": "gpt-oss-120b-tpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 1000000,
+        "applies_to": "gpt-oss-120b"
+      }
+    ]
+  },
+  "cloudflare_workers_ai": {
+    "buckets": [
+      {
+        "name": "-cf-microsoft-phi-2-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 720,
+        "applies_to": "@cf/microsoft/phi-2"
+      },
+      {
+        "name": "-cf-microsoft-phi-2-neurons",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "neurons",
+        "value_hint": 10000,
+        "applies_to": "@cf/microsoft/phi-2"
+      },
+      {
+        "name": "global-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 300,
+        "applies_to": "all"
+      }
+    ]
+  },
+  "github_models": {
+    "buckets": [
+      {
+        "name": "tier-low-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 15,
+        "applies_to": "tier:low"
+      },
+      {
+        "name": "tier-low-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 150,
+        "applies_to": "tier:low"
+      }
+    ]
+  },
+  "openrouter": {
+    "buckets": [
+      {
+        "name": "openrouter-free-rpm",
+        "window_type": "rolling",
+        "window_seconds": 60,
+        "unit": "requests",
+        "value_hint": 20,
+        "applies_to": "openrouter/free"
+      },
+      {
+        "name": "openrouter-free-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 50,
+        "applies_to": "openrouter/free"
+      }
+    ]
+  },
+  "github_copilot": {
+    "buckets": [
+      {
+        "name": "copilot-free-requests_per_month",
+        "window_type": "fixed_reset",
+        "window_seconds": 2592000,
+        "unit": "requests",
+        "value_hint": 50,
+        "applies_to": "copilot-free"
+      }
+    ]
+  },
+  "cursor": {
+    "buckets": []
+  },
+  "amazon_q_developer": {
+    "buckets": [
+      {
+        "name": "qdeveloper-free-requests_per_month",
+        "window_type": "fixed_reset",
+        "window_seconds": 2592000,
+        "unit": "requests",
+        "value_hint": 50,
+        "applies_to": "qdeveloper-free"
+      }
+    ]
+  },
+  "kiro_ide": {
+    "buckets": [
+      {
+        "name": "kiro-free-monthly_credits",
+        "window_type": "fixed_reset",
+        "window_seconds": 2592000,
+        "unit": "credits",
+        "value_hint": 50,
+        "applies_to": "kiro-free"
+      }
+    ]
+  },
+  "vercel_v0": {
+    "buckets": [
+      {
+        "name": "v0-free-rpd",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "requests",
+        "value_hint": 7,
+        "applies_to": "v0-free"
+      },
+      {
+        "name": "v0-free-monthly_credits",
+        "window_type": "fixed_reset",
+        "window_seconds": 2592000,
+        "unit": "credits",
+        "value_hint": 5,
+        "applies_to": "v0-free"
+      }
+    ]
+  },
+  "manus": {
+    "buckets": [
+      {
+        "name": "manus-free-tokens",
+        "window_type": "fixed_reset",
+        "window_seconds": 86400,
+        "unit": "tokens",
+        "value_hint": 300,
+        "applies_to": "manus-free"
+      }
+    ]
+  },
+  "antigravity_ide": {
+    "buckets": []
+  }
+};
 const defaultData = {
   providerConnections: [],
   providerNodes: [],
@@ -54,7 +478,10 @@ const defaultData = {
     stickyRoundRobinLimit: 3,
     requireLogin: true
   },
-  pricing: {} // NEW: pricing configuration
+  pricing: {}, // pricing configuration
+  routingPlaybooks: [], // NEW: routing playbooks
+  rateLimitConfigs: DEFAULT_RATE_LIMITS, // NEW: rate limit configurations
+  rateLimitState: {} // NEW: persisted rate limit state
 };
 
 function cloneDefaultData() {
@@ -70,6 +497,9 @@ function cloneDefaultData() {
       requireLogin: true,
     },
     pricing: {},
+    routingPlaybooks: [],
+    rateLimitConfigs: DEFAULT_RATE_LIMITS,
+    rateLimitState: {},
   };
 }
 
@@ -620,7 +1050,7 @@ export async function createApiKey(name, machineId) {
   const now = new Date().toISOString();
 
   // Always use new format: sk-{machineId}-{keyId}-{crc8}
-  const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
+  const { generateApiKeyWithMachine } = await import("../shared/utils/apiKey.js");
   const result = generateApiKeyWithMachine(machineId);
 
   const apiKey = {
@@ -738,7 +1168,7 @@ export async function getPricing() {
   const userPricing = db.data.pricing || {};
 
   // Import default pricing
-  const { getDefaultPricing } = await import("@/shared/constants/pricing.js");
+  const { getDefaultPricing } = await import("../shared/constants/pricing.js");
   const defaultPricing = getDefaultPricing();
 
   // Merge user pricing with defaults
@@ -880,4 +1310,133 @@ export async function resetAllPricing() {
   db.data.pricing = {};
   await db.write();
   return db.data.pricing;
+}
+
+// ============ Routing Playbooks ============
+
+/**
+ * Get all routing playbooks
+ */
+export async function getRoutingPlaybooks() {
+  const db = await getDb();
+  return db.data.routingPlaybooks || [];
+}
+
+/**
+ * Get routing playbook by ID
+ */
+export async function getRoutingPlaybookById(id) {
+  const db = await getDb();
+  return (db.data.routingPlaybooks || []).find(p => p.id === id) || null;
+}
+
+/**
+ * Create routing playbook
+ */
+export async function createRoutingPlaybook(data) {
+  const db = await getDb();
+  if (!db.data.routingPlaybooks) db.data.routingPlaybooks = [];
+
+  const now = new Date().toISOString();
+  const playbook = {
+    id: uuidv4(),
+    name: data.name,
+    description: data.description || "",
+    rules: data.rules || [], // Array of rule objects
+    isActive: data.isActive !== undefined ? data.isActive : true,
+    priority: data.priority || 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.data.routingPlaybooks.push(playbook);
+  await db.write();
+  return playbook;
+}
+
+/**
+ * Update routing playbook
+ */
+export async function updateRoutingPlaybook(id, data) {
+  const db = await getDb();
+  if (!db.data.routingPlaybooks) db.data.routingPlaybooks = [];
+
+  const index = db.data.routingPlaybooks.findIndex(p => p.id === id);
+  if (index === -1) return null;
+
+  db.data.routingPlaybooks[index] = {
+    ...db.data.routingPlaybooks[index],
+    ...data,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await db.write();
+  return db.data.routingPlaybooks[index];
+}
+
+/**
+ * Delete routing playbook
+ */
+export async function deleteRoutingPlaybook(id) {
+  const db = await getDb();
+  if (!db.data.routingPlaybooks) return false;
+
+  const index = db.data.routingPlaybooks.findIndex(p => p.id === id);
+  if (index === -1) return false;
+
+  db.data.routingPlaybooks.splice(index, 1);
+  await db.write();
+  return true;
+}
+
+// ============ Rate Limit Configs ============
+
+/**
+ * Get all rate limit configs
+ */
+export async function getRateLimitConfigs() {
+  const db = await getDb();
+  return db.data.rateLimitConfigs || {};
+}
+
+/**
+ * Get rate limit config for a provider
+ */
+export async function getRateLimitConfig(providerId) {
+  const db = await getDb();
+  return (db.data.rateLimitConfigs || {})[providerId] || null;
+}
+
+/**
+ * Update rate limit config for a provider
+ * @param {string} providerId
+ * @param {object} config - The config object (can match the user's JSON structure)
+ */
+export async function updateRateLimitConfig(providerId, config) {
+  const db = await getDb();
+  if (!db.data.rateLimitConfigs) db.data.rateLimitConfigs = {};
+
+  db.data.rateLimitConfigs[providerId] = config;
+  await db.write();
+  return config;
+}
+
+
+
+
+// ============ Rate Limit State ============
+
+// Get persisted rate limit state
+export async function getRateLimitState() {
+  const db = await getDb();
+  await db.read();
+  return db.data.rateLimitState || { windows: {} };
+}
+
+// Save rate limit state
+export async function saveRateLimitState(state) {
+  const db = await getDb();
+  await db.read();
+  db.data.rateLimitState = state;
+  await db.write();
 }

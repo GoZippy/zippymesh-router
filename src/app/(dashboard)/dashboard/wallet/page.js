@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import Button from "@/shared/components/Button";
+import Card from "@/shared/components/Card";
+import Input from "@/shared/components/Input";
+import Badge from "@/shared/components/Badge";
 
 export default function WalletPage() {
     const [balance, setBalance] = useState(null);
@@ -107,200 +107,164 @@ export default function WalletPage() {
     }, []);
 
     if (loading && !balance) {
-        return <div className="p-8 text-center text-zinc-500">Loading Wallet...</div>;
+        return <div className="p-8 text-center text-text-muted">Loading Wallet...</div>;
     }
 
     return (
         <div className="p-6 space-y-6 max-w-5xl mx-auto">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold flex items-center gap-2">
+                    <h1 className="text-3xl font-bold flex items-center gap-2 text-text-main">
                         <span className="material-symbols-outlined text-yellow-500 text-3xl">account_balance_wallet</span>
                         Zippy Wallet
                     </h1>
-                    <p className="text-muted-foreground mt-1">
+                    <p className="text-text-muted mt-1">
                         Manage your ZippyCoin (ZIP) earnings and payments.
                     </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={fetchData} disabled={refreshing}>
-                    <span className={`material-symbols-outlined text-sm mr-2 ${refreshing ? "animate-spin" : ""}`}>sync</span>
+                <Button variant="outline" size="sm" onClick={fetchData} disabled={refreshing} icon={refreshing ? "sync" : "refresh"} className={refreshing ? "animate-spin-icon" : ""}>
                     Refresh
                 </Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Balance Card */}
-                <Card className="bg-gradient-to-br from-zinc-900 to-zinc-950 text-white border-zinc-800">
-                    <CardHeader>
-                        <CardTitle className="text-zinc-400 font-medium text-sm uppercase tracking-wider">Total Balance</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="flex items-baseline gap-2">
-                            <span className="text-5xl font-bold tracking-tight">{balance?.balance?.toFixed(4) || "0.0000"}</span>
-                            <span className="text-xl font-medium text-yellow-500">ZIP</span>
+                <Card
+                    title="Total Balance"
+                    className="bg-gradient-to-br from-zinc-900 to-zinc-950 text-white border-zinc-800"
+                >
+                    <div className="flex items-baseline gap-2">
+                        <span className="text-5xl font-bold tracking-tight">{balance?.balance?.toFixed(4) || "0.0000"}</span>
+                        <span className="text-xl font-medium text-yellow-500">ZIP</span>
+                    </div>
+                    <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/10 flex items-center justify-between">
+                        <div className="font-mono text-xs text-zinc-400 break-all mr-2">
+                            {balance?.address || "Loading address..."}
                         </div>
-                        <div className="mt-4 p-3 bg-white/5 rounded-lg border border-white/10 flex items-center justify-between">
-                            <div className="font-mono text-xs text-zinc-400 break-all mr-2">
-                                {balance?.address || "Loading address..."}
-                            </div>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 hover:bg-white/10 text-zinc-400"
-                                onClick={() => navigator.clipboard.writeText(balance?.address)}
-                            >
-                                <span className="material-symbols-outlined text-xs">content_copy</span>
-                            </Button>
-                        </div>
-                    </CardContent>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 hover:bg-white/10 text-zinc-400 p-0"
+                            onClick={() => navigator.clipboard.writeText(balance?.address)}
+                            icon="content_copy"
+                        />
+                    </div>
                 </Card>
 
                 {/* Send Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-purple-500">send</span>
-                            Send ZIP
-                        </CardTitle>
-                        <CardDescription>Transfer tokens to another ZippyMesh node.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <form onSubmit={handleSend} className="space-y-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="recipient">Recipient Address</Label>
-                                <Input
-                                    id="recipient"
-                                    placeholder="ZIP-..."
-                                    value={recipient}
-                                    onChange={(e) => setRecipient(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="amount">Amount (ZIP)</Label>
-                                <Input
-                                    id="amount"
-                                    type="number"
-                                    step="0.0001"
-                                    placeholder="0.00"
-                                    value={amount}
-                                    onChange={(e) => setAmount(e.target.value)}
-                                    required
-                                />
-                            </div>
-                            <Button type="submit" className="w-full bg-purple-600 hover:bg-purple-700" disabled={isSending}>
-                                {isSending ? (
-                                    <>
-                                        <span className="material-symbols-outlined animate-spin mr-2 text-sm">sync</span>
-                                        Sending...
-                                    </>
-                                ) : (
-                                    <>
-                                        <span className="material-symbols-outlined mr-2 text-sm">send</span>
-                                        Send Transaction
-                                    </>
-                                )}
-                            </Button>
-                        </form>
-                    </CardContent>
+                <Card
+                    title="Send ZIP"
+                    subtitle="Transfer tokens to another ZippyMesh node."
+                    icon="send"
+                >
+                    <form onSubmit={handleSend} className="space-y-4">
+                        <Input
+                            label="Recipient Address"
+                            placeholder="ZIP-..."
+                            value={recipient}
+                            onChange={(e) => setRecipient(e.target.value)}
+                            required
+                        />
+                        <Input
+                            label="Amount (ZIP)"
+                            type="number"
+                            step="0.0001"
+                            placeholder="0.00"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            required
+                        />
+                        <Button
+                            type="submit"
+                            fullWidth
+                            disabled={isSending}
+                            loading={isSending}
+                            icon="send"
+                        >
+                            Send Transaction
+                        </Button>
+                    </form>
                 </Card>
             </div>
 
             {/* Pricing Section */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-green-500">sell</span>
-                        Spot Pricing Configuration
-                    </CardTitle>
-                    <CardDescription>
-                        Set the price you charge for serving LLM requests.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div className="space-y-2">
-                            <Label>Base Price (ZIP/Token)</Label>
-                            <Input
-                                type="number" step="0.00001"
-                                value={pricing.base_price_per_token}
-                                onChange={(e) => setPricing({ ...pricing, base_price_per_token: parseFloat(e.target.value) })}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Min Price (ZIP/Token)</Label>
-                            <Input
-                                type="number" step="0.00001"
-                                value={pricing.min_price_per_token}
-                                onChange={(e) => setPricing({ ...pricing, min_price_per_token: parseFloat(e.target.value) })}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label>Congestion Multiplier</Label>
-                            <Input
-                                type="number" step="0.1"
-                                value={pricing.congestion_multiplier}
-                                onChange={(e) => setPricing({ ...pricing, congestion_multiplier: parseFloat(e.target.value) })}
-                            />
-                        </div>
-                    </div>
-                    <div className="flex justify-end mt-4">
-                        <Button onClick={handleSavePricing} disabled={savingPricing} variant="secondary">
-                            {savingPricing ? "Saving..." : "Update Prices"}
-                        </Button>
-                    </div>
-                </CardContent>
+            <Card
+                title="Spot Pricing Configuration"
+                subtitle="Set the price you charge for serving LLM requests."
+                icon="sell"
+            >
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <Input
+                        label="Base Price (ZIP/Token)"
+                        type="number" step="0.00001"
+                        value={pricing.base_price_per_token}
+                        onChange={(e) => setPricing({ ...pricing, base_price_per_token: parseFloat(e.target.value) })}
+                    />
+                    <Input
+                        label="Min Price (ZIP/Token)"
+                        type="number" step="0.00001"
+                        value={pricing.min_price_per_token}
+                        onChange={(e) => setPricing({ ...pricing, min_price_per_token: parseFloat(e.target.value) })}
+                    />
+                    <Input
+                        label="Congestion Multiplier"
+                        type="number" step="0.1"
+                        value={pricing.congestion_multiplier}
+                        onChange={(e) => setPricing({ ...pricing, congestion_multiplier: parseFloat(e.target.value) })}
+                    />
+                </div>
+                <div className="flex justify-end mt-4">
+                    <Button onClick={handleSavePricing} disabled={savingPricing} variant="secondary" loading={savingPricing}>
+                        Update Prices
+                    </Button>
+                </div>
             </Card>
 
             {/* Transaction History */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-zinc-500">history</span>
-                        Recent Transactions
-                    </CardTitle>
-                </CardHeader>
-                <CardContent>
-                    {transactions.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground text-sm">
-                            <span className="material-symbols-outlined text-4xl mb-2 opacity-20 block">receipt_long</span>
-                            No recent transactions found.
-                        </div>
-                    ) : (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left text-zinc-400">
-                                <thead className="text-xs text-zinc-500 uppercase bg-zinc-900/50">
-                                    <tr>
-                                        <th className="px-4 py-3 rounded-l-lg">Time</th>
-                                        <th className="px-4 py-3">Type</th>
-                                        <th className="px-4 py-3">Description</th>
-                                        <th className="px-4 py-3 text-right rounded-r-lg">Amount</th>
+            <Card
+                title="Recent Transactions"
+                icon="history"
+                padding="none" // Use custom padding for table
+            >
+                {transactions.length === 0 ? (
+                    <div className="text-center py-8 text-text-muted text-sm">
+                        <span className="material-symbols-outlined text-4xl mb-2 opacity-20 block">receipt_long</span>
+                        No recent transactions found.
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left text-text-muted">
+                            <thead className="text-xs text-text-muted uppercase bg-black/5 dark:bg-white/5">
+                                <tr>
+                                    <th className="px-6 py-3">Time</th>
+                                    <th className="px-6 py-3">Type</th>
+                                    <th className="px-6 py-3">Description</th>
+                                    <th className="px-6 py-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {transactions.sort((a, b) => b.timestamp - a.timestamp).map((tx) => (
+                                    <tr key={tx.id} className="border-b border-black/5 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition">
+                                        <td className="px-6 py-4">
+                                            {new Date(tx.timestamp * 1000).toLocaleString()}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <Badge variant={tx.type === 'credit' ? 'success' : 'error'}>
+                                                {tx.type}
+                                            </Badge>
+                                        </td>
+                                        <td className="px-6 py-4 font-medium text-text-main">
+                                            {tx.description}
+                                        </td>
+                                        <td className={`px-6 py-4 text-right font-mono font-bold ${tx.amount > 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                            {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(4)} ZIP
+                                        </td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    {transactions.sort((a, b) => b.timestamp - a.timestamp).map((tx) => (
-                                        <tr key={tx.id} className="border-b border-zinc-800 last:border-0 hover:bg-zinc-800/10 transition">
-                                            <td className="px-4 py-3">
-                                                {new Date(tx.timestamp * 1000).toLocaleString()}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <Badge variant={tx.type === 'credit' ? 'default' : 'secondary'} className={tx.type === 'credit' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}>
-                                                    {tx.type}
-                                                </Badge>
-                                            </td>
-                                            <td className="px-4 py-3 font-medium text-zinc-300">
-                                                {tx.description}
-                                            </td>
-                                            <td className={`px-4 py-3 text-right font-mono font-bold ${tx.amount > 0 ? 'text-green-500' : 'text-red-500'}`}>
-                                                {tx.amount > 0 ? '+' : ''}{tx.amount.toFixed(4)} ZIP
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                </CardContent>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </Card>
         </div>
     );

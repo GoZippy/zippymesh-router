@@ -14,6 +14,7 @@ export default function CombosPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState([]);
+  const [totalConnections, setTotalConnections] = useState(0);
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
@@ -28,10 +29,12 @@ export default function CombosPage() {
       ]);
       const combosData = await combosRes.json();
       const providersData = await providersRes.json();
-      
+
       if (combosRes.ok) setCombos(combosData.combos || []);
       if (providersRes.ok) {
-        const active = (providersData.connections || []).filter(
+        const connections = providersData.connections || [];
+        setTotalConnections(connections.length);
+        const active = connections.filter(
           c => c.testStatus === "active" || c.testStatus === "success"
         );
         setActiveProviders(active);
@@ -102,37 +105,113 @@ export default function CombosPage() {
     );
   }
 
+  const hasActiveProviders = activeProviders.length > 0;
+
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Combos</h1>
+          <h1 className="text-2xl font-semibold">Model Combos</h1>
           <p className="text-sm text-text-muted mt-1">
-            Create model combos with fallback support
+            Named failover groups — if the first model fails, the next one is tried automatically
           </p>
         </div>
-        <Button icon="add" onClick={() => setShowCreateModal(true)}>
+        <Button icon="add" onClick={() => setShowCreateModal(true)} disabled={!hasActiveProviders}>
           Create Combo
         </Button>
       </div>
 
+      {/* What is a Combo? */}
+      <div className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 p-4 flex gap-3">
+        <span className="material-symbols-outlined text-blue-500 shrink-0 mt-0.5">info</span>
+        <div className="text-sm text-text-main flex flex-col gap-1">
+          <p className="font-semibold text-blue-700 dark:text-blue-300">What is a Combo?</p>
+          <p className="text-text-muted">
+            A <strong>Combo</strong> is a named, ordered list of models. When you send a request using the combo name,
+            ZippyMesh tries each model in order. If a model is rate-limited, unavailable, or errors,
+            it automatically falls through to the next one — with zero code changes on your side.
+          </p>
+          <p className="text-text-muted mt-1">
+            <strong>Example:</strong> Create a combo called <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">fast-fallback</code> with{" "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">groq/llama-3.3-70b</code>{" → "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">openai/gpt-4o-mini</code>{" → "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">anthropic/claude-haiku</code>.
+            Your app sends <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">model: "fast-fallback"</code> and never has to think about which provider is healthy.
+          </p>
+        </div>
+      </div>
+
+      {/* Prerequisite warning */}
+      {!hasActiveProviders && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20 p-4 flex gap-3">
+          <span className="material-symbols-outlined text-amber-500 shrink-0 mt-0.5">warning</span>
+          <div className="text-sm">
+            <p className="font-semibold text-amber-700 dark:text-amber-300 mb-1">No active provider connections</p>
+            <p className="text-text-muted mb-2">
+              Combos need at least one tested and active provider connection before you can add models.
+            </p>
+            <a
+              href="/dashboard/providers/new"
+              className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300 font-medium hover:underline text-xs"
+            >
+              <span className="material-symbols-outlined text-[14px]">add_circle</span>
+              Add a provider (Groq, Cerebras, GitHub Models — free options available)
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Combos List */}
       {combos.length === 0 ? (
         <Card>
-          <div className="text-center py-12">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
-              <span className="material-symbols-outlined text-[32px]">layers</span>
+          <div className="text-center py-10">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary/10 text-primary mb-4">
+              <span className="material-symbols-outlined text-[28px]">layers</span>
             </div>
-            <p className="text-text-main font-medium mb-1">No combos yet</p>
-            <p className="text-sm text-text-muted mb-4">Create model combos with fallback support</p>
-            <Button icon="add" onClick={() => setShowCreateModal(true)}>
-              Create Combo
+            <p className="text-text-main font-semibold mb-1">No combos yet</p>
+            <p className="text-sm text-text-muted mb-6 max-w-sm mx-auto">
+              Create your first combo to get automatic failover between models.
+            </p>
+
+            {/* Setup steps */}
+            <div className="text-left max-w-sm mx-auto mb-6 flex flex-col gap-3">
+              {[
+                { done: totalConnections > 0, step: "1", label: "Connect a provider", sub: "Go to Providers → Add a provider (Groq is free)", link: totalConnections === 0 ? "/dashboard/providers/new" : null },
+                { done: activeProviders.length > 0, step: "2", label: "Test the connection", sub: "Click \"Test\" on your provider card to activate it", link: (totalConnections > 0 && activeProviders.length === 0) ? "/dashboard/providers" : null },
+                { done: false, step: "3", label: "Create a combo", sub: "Add models in priority order — first = preferred" },
+                { done: false, step: "4", label: "Use it in your app", sub: 'Pass the combo name as `model` in your API call' },
+              ].map((item) => (
+                <div key={item.step} className="flex items-start gap-3">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold ${item.done ? "bg-green-500/20 text-green-500" : "bg-black/5 dark:bg-white/10 text-text-muted"
+                    }`}>
+                    {item.done ? <span className="material-symbols-outlined text-[14px]">check</span> : item.step}
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-sm font-medium ${item.done ? "line-through text-text-muted" : "text-text-main"}`}>{item.label}</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      {item.link ? (
+                        <a href={item.link} className="text-primary hover:underline">{item.sub}</a>
+                      ) : item.sub}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Button icon="add" onClick={() => setShowCreateModal(true)} disabled={!hasActiveProviders}>
+              Create First Combo
             </Button>
           </div>
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
+          {/* API usage tip */}
+          <div className="text-xs text-text-muted bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/5 rounded-lg px-3 py-2 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[14px] text-primary">lightbulb</span>
+            Use the combo name as your <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">model</code> in any OpenAI-compatible request.
+            Example: <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">{`{ "model": "${combos[0].name}" }`}</code>
+          </div>
           {combos.map((combo) => (
             <ComboCard
               key={combo.id}
@@ -298,14 +377,14 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders }) {
   const formatModelDisplay = useCallback((modelValue) => {
     const parts = modelValue.split('/');
     if (parts.length !== 2) return modelValue;
-    
+
     const [providerId, modelId] = parts;
     const matchedNode = providerNodes.find(node => node.id === providerId);
-    
+
     if (matchedNode) {
       return `${matchedNode.name}/${modelId}`;
     }
-    
+
     return modelValue;
   }, [providerNodes]);
 
@@ -356,7 +435,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders }) {
 
           {/* Models */}
           <div>
-            <label className="text-sm font-medium mb-1.5 block">Models</label>
+            <label className="text-sm font-medium mb-1.5 block">Models <span className="font-normal text-xs text-text-muted ml-1">(ordered by priority — #1 tried first)</span></label>
 
             {models.length === 0 ? (
               <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">

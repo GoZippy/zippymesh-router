@@ -1,18 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-// import { Copy, RefreshCw, Network, Server, Activity } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table";
+import Button from "@/shared/components/Button";
+import Card from "@/shared/components/Card";
+import Badge from "@/shared/components/Badge";
+import Modal from "@/shared/components/Modal";
+import Input from "@/shared/components/Input";
 
 export default function NetworkPage() {
     const [status, setStatus] = useState(null);
@@ -71,7 +64,7 @@ export default function NetworkPage() {
     }, []);
 
     if (loading && !status) {
-        return <div className="p-8 text-center text-zinc-500">Loading Network Status...</div>;
+        return <div className="p-8 text-center text-text-muted">Loading Network Status...</div>;
     }
 
     const nodeInfo = status?.info;
@@ -81,11 +74,11 @@ export default function NetworkPage() {
         <div className="p-6 space-y-6 max-w-6xl mx-auto">
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
+                    <h1 className="text-2xl font-bold flex items-center gap-2 text-text-main">
                         <span className="material-symbols-outlined text-primary text-2xl">hub</span>
                         ZippyMesh Network
                     </h1>
-                    <p className="text-muted-foreground mt-1">
+                    <p className="text-text-muted mt-1">
                         Decentralized AI Grid Status
                     </p>
                 </div>
@@ -93,12 +86,11 @@ export default function NetworkPage() {
                     <Button
                         className="bg-purple-600 hover:bg-purple-700 text-white"
                         onClick={() => setShowConnectModal(true)}
+                        icon="add_link"
                     >
-                        <span className="material-symbols-outlined text-sm mr-2">add_link</span>
                         Connect Peer
                     </Button>
-                    <Button variant="outline" size="sm" onClick={fetchStatus} disabled={refreshing}>
-                        <span className={`material-symbols-outlined text-sm mr-2 ${refreshing ? "animate-spin" : ""}`}>sync</span>
+                    <Button variant="outline" size="sm" onClick={fetchStatus} disabled={refreshing} icon={refreshing ? "sync" : "refresh"} className={refreshing ? "animate-spin-icon" : ""}>
                         Refresh
                     </Button>
                 </div>
@@ -106,171 +98,167 @@ export default function NetworkPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Node Identity Card */}
-                <Card className="md:col-span-2">
-                    <CardHeader>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                            <span className="material-symbols-outlined text-lg">dns</span>
-                            Your Identity
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="p-4 bg-muted/50 rounded-lg border border-border">
-                            <div className="text-sm font-medium text-muted-foreground mb-1">
+                <Card
+                    title="Your Identity"
+                    icon="dns"
+                    className="md:col-span-2"
+                >
+                    <div className="space-y-4">
+                        <div className="p-4 bg-muted/5 rounded-lg border border-black/5 dark:border-white/5">
+                            <div className="text-sm font-medium text-text-muted mb-1">
                                 Peer ID (Public Key)
                             </div>
-                            <div className="flex items-center gap-2 font-mono text-sm break-all">
+                            <div className="flex items-center gap-2 font-mono text-sm break-all text-text-main">
                                 {nodeInfo?.peer_id || "Offline / Not Connected"}
                                 {nodeInfo?.peer_id && (
                                     <Button
                                         variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6"
+                                        size="sm"
+                                        className="h-6 w-6 p-0"
                                         onClick={() => navigator.clipboard.writeText(nodeInfo.peer_id)}
-                                    >
-                                        <span className="material-symbols-outlined text-xs">content_copy</span>
-                                    </Button>
+                                        icon="content_copy"
+                                    />
                                 )}
                             </div>
                         </div>
                         <div className="flex gap-4">
                             <div className="flex items-center gap-2">
                                 <div className={`w-3 h-3 rounded-full ${nodeInfo ? "bg-green-500" : "bg-red-500"}`} />
-                                <span className="text-sm font-medium">
+                                <span className="text-sm font-medium text-text-main">
                                     {nodeInfo ? "Sidecar Online" : "Sidecar Offline"}
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className="material-symbols-outlined text-sm text-muted-foreground">activity_zone</span>
-                                <span className="text-sm">Service: {nodeInfo?.service_type || "N/A"}</span>
+                                <span className="material-symbols-outlined text-sm text-text-muted">activity_zone</span>
+                                <span className="text-sm text-text-main">Service: {nodeInfo?.service_type || "N/A"}</span>
                             </div>
                         </div>
-                    </CardContent>
+                    </div>
                 </Card>
 
                 {/* Stats Card */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="text-lg">Network Stats</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
+                <Card title="Network Stats">
+                    <div className="space-y-4">
                         <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Connected Peers</span>
-                            <span className="text-2xl font-bold">{peers.length}</span>
+                            <span className="text-text-muted">Connected Peers</span>
+                            <span className="text-2xl font-bold text-text-main">{peers.length}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Known Models</span>
-                            <span className="text-2xl font-bold">
+                            <span className="text-text-muted">Known Models</span>
+                            <span className="text-2xl font-bold text-text-main">
                                 {new Set(peers.flatMap(p => p.models.map(m => m.name))).size}
                             </span>
                         </div>
-                    </CardContent>
+                    </div>
                 </Card>
             </div>
 
             {/* Peers Table */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="text-lg">Discovered Peers</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    {peers.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                            <span className="material-symbols-outlined text-4xl mb-4 opacity-50">wifi_find</span>
-                            <p>No peers discovered yet.</p>
-                            <p className="text-sm mt-1">Scanning local network... (DHT Bootstrapping)</p>
-                            <Button
-                                variant="link"
-                                onClick={() => setShowConnectModal(true)}
-                                className="mt-2 text-purple-600"
-                            >
-                                Manually Connect to Peer
-                            </Button>
-                        </div>
-                    ) : (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Peer ID</TableHead>
-                                    <TableHead>Service</TableHead>
-                                    <TableHead>Pricing (ZIP/Token)</TableHead>
-                                    <TableHead>Models Offered</TableHead>
-                                    <TableHead>Last Seen</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
+            <Card title="Discovered Peers" padding="none">
+                {peers.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-text-muted">
+                        <span className="material-symbols-outlined text-4xl mb-4 opacity-50">wifi_find</span>
+                        <p>No peers discovered yet.</p>
+                        <p className="text-sm mt-1">Scanning local network... (DHT Bootstrapping)</p>
+                        <Button
+                            variant="ghost" // Changed to ghost to act like a link
+                            onClick={() => setShowConnectModal(true)}
+                            className="mt-2 text-purple-600 hover:text-purple-500 hover:bg-purple-500/10"
+                        >
+                            Manually Connect to Peer
+                        </Button>
+                    </div>
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left text-text-muted">
+                            <thead className="text-xs text-text-muted uppercase bg-black/5 dark:bg-white/5">
+                                <tr>
+                                    <th className="px-6 py-3">Peer ID</th>
+                                    <th className="px-6 py-3">Service</th>
+                                    <th className="px-6 py-3">Pricing (ZIP/Token)</th>
+                                    <th className="px-6 py-3">Models Offered</th>
+                                    <th className="px-6 py-3">Latency</th>
+                                </tr>
+                            </thead>
+                            <tbody>
                                 {peers.map((peer) => (
-                                    <TableRow key={peer.id || peer.peer_id}>
-                                        <TableCell className="font-mono text-xs text-muted-foreground">
-                                            {(peer.id || peer.peer_id || "").substring(0, 16)}...
-                                        </TableCell>
-                                        <TableCell>
-                                            <Badge variant="outline">{peer.service_type || "Compute"}</Badge>
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-col text-xs">
-                                                <span className="font-semibold text-green-500">
-                                                    {peer.price_config ? peer.price_config.base_price_per_token : "Unknown"}
-                                                </span>
-                                                <span className="text-muted-foreground scale-90 origin-left">
-                                                    Mult: x{peer.price_config ? peer.price_config.congestion_multiplier : "1.0"}
-                                                </span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex flex-wrap gap-1">
-                                                {peer.models.map((m) => (
-                                                    <Badge key={m.name} variant="secondary" className="text-xs">
-                                                        {m.name}
-                                                    </Badge>
-                                                ))}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-xs text-muted-foreground">
-                                            {peer.latency_ms}ms
-                                        </TableCell>
-                                    </TableRow>
+                                    <TableRow key={peer.id || peer.peer_id} peer={peer} />
                                 ))}
-                            </TableBody>
-                        </Table>
-                    )}
-                </CardContent>
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </Card>
 
             {/* Connect Peer Modal */}
-            {showConnectModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-background border border-border rounded-xl shadow-xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
-                        <h2 className="text-xl font-bold mb-4">Connect to Peer</h2>
-                        <p className="text-sm text-muted-foreground mb-4">
-                            Enter the Multiaddr of the peer you want to connect to.
-                            <br />Example: <code className="bg-muted px-1 rounded text-xs">/ip4/192.168.1.5/tcp/4001/p2p/12D3...</code>
-                        </p>
-                        <input
-                            type="text"
-                            className="w-full bg-background border border-input rounded-md px-3 py-2 mb-4 focus:outline-none focus:ring-2 focus:ring-purple-500 transition"
-                            placeholder="/ip4/..."
-                            value={connectAddress}
-                            onChange={(e) => setConnectAddress(e.target.value)}
-                        />
-                        <div className="flex justify-end gap-2">
-                            <Button
-                                variant="ghost"
-                                onClick={() => setShowConnectModal(false)}
-                            >
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleConnect}
-                                disabled={isConnecting}
-                                className="bg-purple-600 hover:bg-purple-700 text-white"
-                            >
-                                {isConnecting && <span className="animate-spin material-symbols-outlined text-sm mr-2">sync</span>}
-                                Connect
-                            </Button>
-                        </div>
-                    </div>
+            <Modal
+                isOpen={showConnectModal}
+                onClose={() => setShowConnectModal(false)}
+                title="Connect to Peer"
+                size="md"
+                footer={
+                    <>
+                        <Button variant="ghost" onClick={() => setShowConnectModal(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={handleConnect}
+                            disabled={isConnecting || !connectAddress}
+                            loading={isConnecting}
+                        >
+                            Connect
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <p className="text-sm text-text-muted">
+                        Enter the Multiaddr of the peer you want to connect to.
+                        <br />Example: <code className="bg-muted px-1 rounded text-xs">/ip4/192.168.1.5/tcp/4001/p2p/12D3...</code>
+                    </p>
+                    <Input
+                        placeholder="/ip4/..."
+                        value={connectAddress}
+                        onChange={(e) => setConnectAddress(e.target.value)}
+                        className="w-full"
+                    />
                 </div>
-            )}
+            </Modal>
         </div>
+    );
+}
+
+function TableRow({ peer }) {
+    return (
+        <tr className="border-b border-black/5 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition">
+            <td className="px-6 py-4 font-mono text-xs text-text-muted">
+                {(peer.id || peer.peer_id || "").substring(0, 16)}...
+            </td>
+            <td className="px-6 py-4">
+                <Badge variant="outline">{peer.service_type || "Compute"}</Badge>
+            </td>
+            <td className="px-6 py-4">
+                <div className="flex flex-col text-xs">
+                    <span className="font-semibold text-green-500">
+                        {peer.price_config ? peer.price_config.base_price_per_token : "Unknown"}
+                    </span>
+                    <span className="text-text-muted scale-90 origin-left">
+                        Mult: x{peer.price_config ? peer.price_config.congestion_multiplier : "1.0"}
+                    </span>
+                </div>
+            </td>
+            <td className="px-6 py-4">
+                <div className="flex flex-wrap gap-1">
+                    {peer.models.map((m) => (
+                        <Badge key={m.name} variant="secondary" size="sm">
+                            {m.name}
+                        </Badge>
+                    ))}
+                </div>
+            </td>
+            <td className="px-6 py-4 text-xs text-text-muted">
+                {peer.latency_ms}ms
+            </td>
+        </tr>
     );
 }

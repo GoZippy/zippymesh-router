@@ -134,8 +134,46 @@ export default function ProvidersPage() {
     );
   }
 
+  const hasAnyConnection = connections.length > 0;
+
   return (
     <div className="flex flex-col gap-6">
+      {/* Getting started callout - shown only when no connections exist */}
+      {!hasAnyConnection && (
+        <div className="rounded-xl border border-green-200 dark:border-green-900/50 bg-green-50/50 dark:bg-green-950/20 p-4 flex gap-3">
+          <span className="material-symbols-outlined text-green-600 shrink-0 mt-0.5">rocket_launch</span>
+          <div className="text-sm">
+            <p className="font-semibold text-green-700 dark:text-green-300 mb-1">Getting Started — Add your first provider</p>
+            <p className="text-text-muted mb-3">
+              ZippyMesh routes your LLM requests across multiple providers with automatic failover.
+              To get started, connect at least one provider. Here are the quickest free options:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { name: "Groq", url: "https://console.groq.com", desc: "Free — fastest inference, Llama & Mistral models" },
+                { name: "GitHub Models", url: "https://github.com/marketplace/models", desc: "Free — GPT-4o & Llama via your GitHub PAT" },
+                { name: "Cerebras", url: "https://cloud.cerebras.ai", desc: "Free — ultra-fast Llama inference" },
+              ].map((opt) => (
+                <a
+                  key={opt.name}
+                  href={opt.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-green-200 dark:border-green-800 bg-white dark:bg-green-950/30 text-xs font-medium text-green-700 dark:text-green-300 hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors"
+                  title={opt.desc}
+                >
+                  <span className="material-symbols-outlined text-[13px]">open_in_new</span>
+                  Get {opt.name} key
+                </a>
+              ))}
+            </div>
+            <p className="text-text-muted mt-3 text-xs">
+              Once you have a key, find the provider below in <strong>API Key Providers</strong>, click it, and paste your key.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* OAuth Providers */}
       <div className="flex flex-col gap-4">
         <h2 className="text-xl font-semibold">OAuth Providers</h2>
@@ -165,6 +203,7 @@ export default function ProvidersPage() {
           ))}
         </div>
       </div>
+
 
       {/* API Key Providers */}
       <div className="flex flex-col gap-4">
@@ -572,10 +611,10 @@ function AddAnthropicCompatibleModal({ isOpen, onClose, onCreated }) {
       const res = await fetch("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          baseUrl: formData.baseUrl, 
-          apiKey: checkKey, 
-          type: "anthropic-compatible" 
+        body: JSON.stringify({
+          baseUrl: formData.baseUrl,
+          apiKey: checkKey,
+          type: "anthropic-compatible"
         }),
       });
       const data = await res.json();

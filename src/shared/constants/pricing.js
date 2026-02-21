@@ -460,6 +460,40 @@ export const DEFAULT_PRICING = {
     }
   },
 
+  // Free-tier providers (zero/near-zero cost)
+  groq: {
+    "llama-3.1-8b-instant": { input: 0.05, output: 0.08, cached: 0.025, reasoning: 0, cache_creation: 0 },
+    "llama-3.3-70b-versatile": { input: 0.59, output: 0.79, cached: 0.29, reasoning: 0, cache_creation: 0 },
+    "llama-3.1-70b-versatile": { input: 0.59, output: 0.79, cached: 0.29, reasoning: 0, cache_creation: 0 },
+    "llama-3.2-3b-preview": { input: 0.06, output: 0.06, cached: 0.03, reasoning: 0, cache_creation: 0 },
+    "llama-3.2-11b-vision-preview": { input: 0.18, output: 0.18, cached: 0.09, reasoning: 0, cache_creation: 0 },
+    "gemma2-9b-it": { input: 0.20, output: 0.20, cached: 0.10, reasoning: 0, cache_creation: 0 },
+    "mixtral-8x7b-32768": { input: 0.24, output: 0.24, cached: 0.12, reasoning: 0, cache_creation: 0 },
+    "deepseek-r1-distill-llama-70b": { input: 0.75, output: 0.99, cached: 0.37, reasoning: 0.99, cache_creation: 0 },
+    "qwen-qwq-32b": { input: 0.29, output: 0.39, cached: 0.14, reasoning: 0.39, cache_creation: 0 },
+  },
+  cerebras: {
+    "llama3.1-8b": { input: 0.10, output: 0.10, cached: 0.05, reasoning: 0, cache_creation: 0 },
+    "llama-3.3-70b": { input: 0.85, output: 1.20, cached: 0.42, reasoning: 0, cache_creation: 0 },
+    "llama3.1-70b": { input: 0.85, output: 1.20, cached: 0.42, reasoning: 0, cache_creation: 0 },
+    "qwq-32b": { input: 0.50, output: 0.99, cached: 0.25, reasoning: 0.99, cache_creation: 0 },
+  },
+  github_models: {
+    "gpt-4o": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "gpt-4o-mini": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "o1-mini": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "llama-3.1-8b-instruct": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "llama-3.1-70b-instruct": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "mistral-nemo": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "phi-3.5-mini-instruct": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  cohere: {
+    "command-r": { input: 0.15, output: 0.60, cached: 0.075, reasoning: 0, cache_creation: 0 },
+    "command-r-plus": { input: 2.50, output: 10.00, cached: 1.25, reasoning: 0, cache_creation: 0 },
+    "command-a-03-2025": { input: 2.50, output: 10.00, cached: 1.25, reasoning: 0, cache_creation: 0 },
+    "command-light": { input: 0.15, output: 0.60, cached: 0.075, reasoning: 0, cache_creation: 0 },
+  },
+
   // OpenRouter
   openrouter: {
     "auto": {
