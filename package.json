@@ -6,13 +6,16 @@
   "scripts": {
     "dev": "next dev -p 20128 --webpack",
     "build": "next build --webpack",
-    "start": "next start -p 20128"
+    "start": "next start -p 20128",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.6.2",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "express": "^5.2.1",
     "fs": "^0.0.1-security",
     "http-proxy-middleware": "^3.0.5",
@@ -36,6 +39,7 @@
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "@tauri-apps/cli": "^2.10.0"
   }
 }

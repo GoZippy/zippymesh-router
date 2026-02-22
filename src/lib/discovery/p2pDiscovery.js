@@ -1,5 +1,5 @@
 import dgram from "node:dgram";
-import { createProviderNode, getProviderNodes } from "../localDb.js";
+import { createProviderNode, getProviderNodes, createProviderConnection } from "../localDb.js";
 import os from "node:os";
 
 /**
@@ -68,12 +68,24 @@ export class P2PDiscoveryService {
         const exists = existingNodes.find(n => n.baseUrl === baseUrl);
         if (!exists) {
             console.log(`[P2P] Discovered new peer node: ${data.name} (${ip})`);
-            await createProviderNode({
+            const node = await createProviderNode({
                 type: "peer",
                 name: `Peer: ${data.name}`,
                 baseUrl: baseUrl,
                 apiType: "openai",
                 prefix: "peer-"
+            });
+
+            // Auto-provision a connection for this peer
+            await createProviderConnection({
+                provider: "peer",
+                name: `Mesh: ${data.name}`,
+                apiKey: "p2p-mesh-token",
+                baseUrl: baseUrl,
+                isActive: true,
+                providerSpecificData: {
+                    nodeId: node.id
+                }
             });
         }
     }

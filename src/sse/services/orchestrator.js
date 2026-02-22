@@ -1,6 +1,6 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { appendRequestLog, updateProviderConnection } from "@/lib/localDb.js"; // Added updateProviderConnection
+import { appendRequestLog, updateProviderConnection, getP2pSubscriptions } from "@/lib/localDb.js"; // Added getP2pSubscriptions
 import { errorResponse } from "open-sse/utils/error.js";
 import { queueManager } from "@/lib/routing/queueManager.js"; // Added queueManager
 
@@ -80,10 +80,25 @@ async function _executeOrchestratedChat(params) {
         return errorResponse(404, `No available accounts for ${modelStr} or equivalents`);
     }
 
+    // Filter candidates by P2P Subscription if they are peer nodes
+    const subscriptions = await getP2pSubscriptions();
+    const authorizedCandidates = candidates.filter(cand => {
+        if (cand.provider !== "peer") return true;
+        const nodeId = cand.connection.providerSpecificData?.nodeId;
+        return subscriptions.some(s => s.offerId === nodeId && s.status === "active");
+    });
+
+    if (authorizedCandidates.length === 0 && candidates.some(c => c.provider === "peer")) {
+        return errorResponse(403, "Subscription required to access peer nodes. Visit the Marketplace.");
+    }
+
+    // Use authorized candidates if available, fallback to candidates (which might only have non-peer ones if any)
+    const finalCandidates = authorizedCandidates.length > 0 ? authorizedCandidates : candidates;
+
     let lastError = null;
     let lastStatus = 503;
 
-    for (const candidate of candidates) {
+    for (const candidate of finalCandidates) {
         const { connection, modelInfo } = candidate;
         const accountId = connection.id.slice(0, 8);
         const startTime = Date.now();

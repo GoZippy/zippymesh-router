@@ -482,7 +482,9 @@ const defaultData = {
   pricing: {}, // pricing configuration
   routingPlaybooks: [], // NEW: routing playbooks
   rateLimitConfigs: DEFAULT_RATE_LIMITS, // NEW: rate limit configurations
-  rateLimitState: {} // NEW: persisted rate limit state
+  rateLimitState: {}, // NEW: persisted rate limit state
+  p2pOffers: [], // NEW: marketplace offers from peers
+  p2pSubscriptions: [] // NEW: active node-to-node subscriptions
 };
 
 function cloneDefaultData() {
@@ -497,6 +499,8 @@ function cloneDefaultData() {
     routingPlaybooks: [...SMART_PLAYBOOKS],
     rateLimitConfigs: DEFAULT_RATE_LIMITS,
     rateLimitState: {},
+    p2pOffers: [],
+    p2pSubscriptions: []
   };
 }
 
@@ -543,6 +547,16 @@ function ensureDbShape(data) {
       next.routingPlaybooks.push({ ...defaultPb });
       changed = true;
     }
+  }
+
+  // Ensure P2P collections
+  if (!next.p2pOffers) {
+    next.p2pOffers = [];
+    changed = true;
+  }
+  if (!next.p2pSubscriptions) {
+    next.p2pSubscriptions = [];
+    changed = true;
   }
 
   return { data: next, changed };
@@ -1446,4 +1460,58 @@ export async function saveRateLimitState(state) {
   await db.read();
   db.data.rateLimitState = state;
   await db.write();
+}
+
+// ============ P2P Marketplace ============
+
+/**
+ * Get all P2P offers
+ */
+export async function getP2pOffers() {
+  const db = await getDb();
+  return db.data.p2pOffers || [];
+}
+
+/**
+ * Update P2P offers from discovered nodes
+ */
+export async function updateP2pOffers(nodes) {
+  const db = await getDb();
+  db.data.p2pOffers = nodes.map(node => ({
+    id: node.id,
+    name: node.name,
+    baseUrl: node.baseUrl,
+    provider: node.provider || node.name,
+    models: node.models || [],
+    latency: node.avgLatency || 0,
+    tps: node.avgTps || 0,
+    lastSeen: new Date().toISOString()
+  }));
+  await db.write();
+  return db.data.p2pOffers;
+}
+
+/**
+ * Get all active P2P subscriptions
+ */
+export async function getP2pSubscriptions() {
+  const db = await getDb();
+  return db.data.p2pSubscriptions || [];
+}
+
+/**
+ * Create a P2P subscription
+ */
+export async function createP2pSubscription(offerId, name) {
+  const db = await getDb();
+  const subscription = {
+    id: uuidv4(),
+    offerId,
+    name,
+    status: "active",
+    createdAt: new Date().toISOString()
+  };
+  db.data.p2pSubscriptions.push(subscription);
+  await db.write();
+  return subscription;
 }

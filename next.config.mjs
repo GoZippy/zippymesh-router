@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: process.env.IS_TAURI ? 'export' : undefined,
   images: {
     unoptimized: true
   },

@@ -1,5 +1,6 @@
 import "./globals.css";
 import { ThemeProvider } from "@/shared/components/ThemeProvider";
+import { TauriInitialization } from "@/shared/components/TauriInitialization";
 
 export const metadata = {
   title: "Zippy Mesh",
@@ -22,6 +23,7 @@ export default function RootLayout({ children }) {
       </head>
       <body className="font-sans antialiased">
         <ThemeProvider>
+          <TauriInitialization />
           {children}
         </ThemeProvider>
       </body>

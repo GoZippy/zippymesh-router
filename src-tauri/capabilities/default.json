@@ -6,6 +6,21 @@
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "args": [
+            {
+              "validator": ".*"
+            }
+          ],
+          "sidecar": true,
+          "name": "binaries/zippy-node"
+        }
+      ]
+    }
   ]
 }
