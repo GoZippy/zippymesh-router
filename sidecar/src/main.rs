@@ -55,7 +55,14 @@ struct AppState {
 
 #[get("/health")]
 async fn health_check() -> impl Responder {
-    "HEALTH_CHECK_V2"
+    "HEALTH_CHECK_V3"
+}
+
+#[get("/version")]
+async fn get_version() -> impl Responder {
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .body(r#"{"version": "1.0.0", "protocol": "1.0", "chain_id": 777}"#)
 }
 
 #[get("/node/info")]
@@ -213,8 +220,16 @@ async fn main() -> std::io::Result<()> {
     let mut port = 9480;
     let args: Vec<String> = std::env::args().collect();
     for i in 0..args.len() {
-        if args[i] == "--api-port" && i + 1 < args.len() {
-            if let Ok(p) = args[i + 1].parse::<u16>() {
+        if args[i].starts_with("--api-port") {
+            let p_str = if args[i].contains('=') {
+                args[i].split('=').nth(1).unwrap_or("")
+            } else if i + 1 < args.len() {
+                &args[i+1]
+            } else {
+                ""
+            };
+            
+            if let Ok(p) = p_str.parse::<u16>() {
                 port = p;
             }
         }
@@ -289,6 +304,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(app_state.clone())
             .service(health_check)
+            .service(get_version)
             .service(get_node_info)
             .service(get_peers)
             .service(get_routes)

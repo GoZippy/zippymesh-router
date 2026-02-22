@@ -18,6 +18,7 @@ const navItems = [
   { href: "/dashboard/routing", label: "Routing", icon: "alt_route" },
   { href: "/dashboard/pools", label: "Pools", icon: "groups" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
+  { href: "/dashboard/analytics", label: "Analytics", icon: "monitoring" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
   { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
 ];

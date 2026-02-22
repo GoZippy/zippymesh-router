@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getP2pOffers, getP2pSubscriptions, createP2pSubscription, updateP2pOffers, getProviderNodes } from "@/lib/localDb";
+import { getP2pOffers, getP2pSubscriptions, createP2pSubscription, updateP2pOffers, getProviderNodes, getP2pEarnings, getWalletBalance, getP2pTransactions } from "@/lib/localDb";
 
 /**
  * GET /api/marketplace
@@ -13,11 +13,17 @@ export async function GET() {
         // Refresh offers from discovered nodes
         const offers = await updateP2pOffers(peerNodes);
         const subscriptions = await getP2pSubscriptions();
+        const earnings = await getP2pEarnings();
+        const balance = await getWalletBalance();
+        const transactions = await getP2pTransactions();
 
         return NextResponse.json({
             success: true,
             offers,
-            subscriptions
+            subscriptions,
+            earnings,
+            balance,
+            transactions
         });
     } catch (error) {
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });

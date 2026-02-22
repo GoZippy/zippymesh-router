@@ -1,23 +1,20 @@
 import { NextResponse } from "next/server";
-
-const SIDE_CAR_URL = process.env.SIDE_CAR_URL || "http://localhost:8081";
+import { getP2pTransactions } from "@/lib/localDb.js";
 
 export async function GET() {
     try {
-        const res = await fetch(`${SIDE_CAR_URL}/wallet/transactions`, {
-            cache: "no-store",
-            next: { revalidate: 0 },
-        });
+        const transactions = await getP2pTransactions();
 
-        if (!res.ok) {
-            return NextResponse.json(
-                { error: "Failed to fetch transactions from Sidecar" },
-                { status: res.status }
-            );
-        }
+        // Format for the Wallet UI
+        const formatted = transactions.map(tx => ({
+            id: tx.id,
+            timestamp: Math.floor(new Date(tx.timestamp).getTime() / 1000),
+            type: tx.type === "earn" ? "credit" : "debit",
+            description: `${tx.type === 'earn' ? 'Earned from' : 'Paid to'} ${tx.offerId?.slice(0, 8)} (${tx.model})`,
+            amount: tx.type === "earn" ? tx.amount : -tx.amount
+        }));
 
-        const data = await res.json();
-        return NextResponse.json(data);
+        return NextResponse.json(formatted);
     } catch (error) {
         console.error("Transactions API Error:", error);
         return NextResponse.json(

@@ -484,7 +484,10 @@ const defaultData = {
   rateLimitConfigs: DEFAULT_RATE_LIMITS, // NEW: rate limit configurations
   rateLimitState: {}, // NEW: persisted rate limit state
   p2pOffers: [], // NEW: marketplace offers from peers
-  p2pSubscriptions: [] // NEW: active node-to-node subscriptions
+  p2pSubscriptions: [], // NEW: active node-to-node subscriptions
+  p2pEarnings: 0, // NEW: total ZIPc earned by this node
+  p2pTransactions: [], // NEW: history of ZIPc transfers
+  wallet: { balance: 1000 } // NEW: Initial mock balance in ZIPc
 };
 
 function cloneDefaultData() {
@@ -500,7 +503,10 @@ function cloneDefaultData() {
     rateLimitConfigs: DEFAULT_RATE_LIMITS,
     rateLimitState: {},
     p2pOffers: [],
-    p2pSubscriptions: []
+    p2pSubscriptions: [],
+    p2pEarnings: 0,
+    p2pTransactions: [],
+    wallet: { balance: 1000 }
   };
 }
 
@@ -1504,14 +1510,74 @@ export async function getP2pSubscriptions() {
  */
 export async function createP2pSubscription(offerId, name) {
   const db = await getDb();
-  const subscription = {
+  const sub = {
     id: uuidv4(),
     offerId,
     name,
     status: "active",
     createdAt: new Date().toISOString()
   };
-  db.data.p2pSubscriptions.push(subscription);
+  db.data.p2pSubscriptions.push(sub);
   await db.write();
-  return subscription;
+  return sub;
+}
+
+// ============ P2P Billing & Wallet ============
+
+/**
+ * Get node wallet balance
+ */
+export async function getWalletBalance() {
+  const db = await getDb();
+  return db.data.wallet?.balance || 0;
+}
+
+/**
+ * Record a P2P transaction
+ */
+export async function recordP2pTransaction(data) {
+  const db = await getDb();
+
+  // Ensure p2pTransactions and wallet exist
+  if (!db.data.p2pTransactions) db.data.p2pTransactions = [];
+  if (!db.data.wallet) db.data.wallet = { balance: 0 };
+
+  const transaction = {
+    id: uuidv4(),
+    type: data.type, // 'spend' or 'earn'
+    amount: data.amount, // in ZIPc
+    offerId: data.offerId,
+    model: data.model,
+    tokens: data.tokens,
+    timestamp: new Date().toISOString()
+  };
+
+  db.data.p2pTransactions.push(transaction);
+
+  // Update balance/earnings
+  if (data.type === "spend") {
+    db.data.wallet.balance = (db.data.wallet.balance || 0) - data.amount;
+  } else if (data.type === "earn") {
+    db.data.p2pEarnings = (db.data.p2pEarnings || 0) + data.amount;
+    db.data.wallet.balance = (db.data.wallet.balance || 0) + data.amount; // Earnings also increase wallet balance
+  }
+
+  await db.write();
+  return transaction;
+}
+
+/**
+ * Get total P2P earnings
+ */
+export async function getP2pEarnings() {
+  const db = await getDb();
+  return db.data.p2pEarnings || 0;
+}
+
+/**
+ * Get P2P transaction history
+ */
+export async function getP2pTransactions() {
+  const db = await getDb();
+  return db.data.p2pTransactions || [];
 }

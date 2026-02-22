@@ -26,8 +26,11 @@ class ZippyNodeManager extends EventEmitter {
             lastPoll: null
         };
         this.pollInterval = null;
+        const isWin = process.platform === 'win32';
+        const binaryName = isWin ? 'zippycoin-node.exe' : 'zippycoin-node';
+
         this.config = {
-            binaryPath: process.env.ZIPPY_NODE_BIN || path.join(__dirname, '../bin/zippycoin-node'),
+            binaryPath: process.env.ZIPPY_NODE_BIN || path.join(__dirname, '../bin', binaryName),
             mode: 'edge', // edge, relay, full, validator
             broadcast: false,
             apiPort: 9480,
@@ -63,6 +66,14 @@ class ZippyNodeManager extends EventEmitter {
         ];
 
         this._addLog(`Starting ZippyNode in ${mode} mode (broadcast: ${broadcast})...`, 'system');
+        this._addLog(`Binary path: ${this.config.binaryPath}`, 'system');
+
+        if (!fs.existsSync(this.config.binaryPath)) {
+            const errorMsg = `ZippyNode binary not found at ${this.config.binaryPath}. Please ensure the sidecar is built.`;
+            this._addLog(errorMsg, 'error');
+            this.status = 'idle';
+            throw new Error(errorMsg);
+        }
 
         try {
             this.nodeProcess = spawn(this.config.binaryPath, args, {

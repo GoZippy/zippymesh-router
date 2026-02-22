@@ -1,6 +1,7 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { appendRequestLog, updateProviderConnection, getP2pSubscriptions } from "@/lib/localDb.js"; // Added getP2pSubscriptions
+import { appendRequestLog, updateProviderConnection, getP2pSubscriptions, recordP2pTransaction, getPricingForModel } from "@/lib/localDb.js"; // Added recordP2pTransaction, getPricingForModel
+import { calculateCostFromTokens } from "@/shared/constants/pricing.js"; // Added calculateCostFromTokens
 import { errorResponse } from "open-sse/utils/error.js";
 import { queueManager } from "@/lib/routing/queueManager.js"; // Added queueManager
 
@@ -156,6 +157,29 @@ async function _executeOrchestratedChat(params) {
                 tokens: result.usage,
                 latency // Store latency in logs too
             });
+
+            // P2P Billing Integration
+            if (modelInfo.provider === "peer") {
+                try {
+                    const pricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
+                    if (pricing) {
+                        const costDollars = calculateCostFromTokens(result.usage, pricing);
+                        const amountZipc = Math.max(0.01, parseFloat((costDollars * 100).toFixed(4))); // 1c = 1 ZIPc, minimum 0.01
+
+                        await recordP2pTransaction({
+                            type: "spend",
+                            amount: amountZipc,
+                            offerId: connection.providerSpecificData?.nodeId,
+                            model: modelInfo.model,
+                            tokens: result.usage
+                        });
+                        log?.info?.("ORCHESTRATOR", `P2P Transaction Recorded: ${amountZipc} ZIPc spent`);
+                    }
+                } catch (billingErr) {
+                    log?.error?.("ORCHESTRATOR", `P2P Billing failed: ${billingErr.message}`);
+                }
+            }
+
             return result;
         }
 

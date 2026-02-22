@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
-
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:8081";
+import { getWalletBalance, getProviderNodes } from "@/lib/localDb.js";
 
 export async function GET() {
     try {
-        const res = await fetch(`${SIDECAR_URL}/wallet/balance`, {
-            cache: "no-store",
-            next: { revalidate: 0 },
+        const balance = await getWalletBalance();
+        const nodes = await getProviderNodes();
+        const localNode = nodes.find(n => n.type === "local") || { id: "0xx-node-local" };
+
+        return NextResponse.json({
+            balance,
+            address: `ZIP-${localNode.id.slice(0, 10).toUpperCase()}`,
+            symbol: "ZIPc"
         });
-
-        if (!res.ok) {
-            return NextResponse.json({ error: "Failed to fetch balance" }, { status: res.status });
-        }
-
-        const data = await res.json();
-        return NextResponse.json(data);
     } catch (error) {
         return NextResponse.json(
             { error: "Internal Server Error", details: error.message },

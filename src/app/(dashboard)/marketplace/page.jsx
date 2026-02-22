@@ -7,7 +7,8 @@ import { getSidecarInfo, getWalletBalance } from "@/lib/sidecar";
 export default function ZippyMeshMarketplace() {
     const [isProvider, setIsProvider] = useState(false);
     const [pricing, setPricing] = useState("0.05");
-    const [stats, setStats] = useState({ requests: 0, earned: 0 });
+    const [stats, setStats] = useState({ requests: 0, earned: 0, balance: 1000 });
+    const [transactions, setTransactions] = useState([]);
     const [nodeInfo, setNodeInfo] = useState(null);
     const [offers, setOffers] = useState([]);
     const [subscriptions, setSubscriptions] = useState([]);
@@ -23,6 +24,12 @@ export default function ZippyMeshMarketplace() {
             if (marketplaceRes.success) {
                 setOffers(marketplaceRes.offers);
                 setSubscriptions(marketplaceRes.subscriptions);
+                setStats(prev => ({
+                    ...prev,
+                    earned: marketplaceRes.earnings || 0,
+                    balance: marketplaceRes.balance || 0
+                }));
+                setTransactions(marketplaceRes.transactions || []);
             }
         } catch (error) {
             console.error("Failed to fetch marketplace data:", error);
@@ -74,9 +81,18 @@ export default function ZippyMeshMarketplace() {
                         Offer your LLM services to the ZippyMesh network and earn ZippyCoin tokens.
                     </p>
                 </div>
-                <Badge variant={isProvider ? "success" : "secondary"} className="py-1 px-3">
-                    {isProvider ? "Active Provider" : "Consumer Only"}
-                </Badge>
+                <div className="flex items-center gap-4">
+                    <Card className="py-1 px-4 border-primary/30 flex items-center gap-2 bg-primary/5">
+                        <span className="material-symbols-outlined text-primary text-sm">payments</span>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-text-muted uppercase font-bold leading-none">Wallet Balance</span>
+                            <span className="text-sm font-bold text-text-main leading-tight">{stats.balance.toFixed(2)} ZIPc</span>
+                        </div>
+                    </Card>
+                    <Badge variant={isProvider ? "success" : "secondary"} className="py-1 px-3">
+                        {isProvider ? "Active Provider" : "Consumer Only"}
+                    </Badge>
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -121,9 +137,25 @@ export default function ZippyMeshMarketplace() {
 
                     <div className="mt-4">
                         <h3 className="text-sm font-semibold text-text-main mb-2">Recent Mesh Transactions</h3>
-                        <div className="text-xs text-text-muted text-center py-8 border border-dashed border-black/10 dark:border-white/10 rounded-lg">
-                            No peer transactions recorded yet.
-                        </div>
+                        {transactions.length === 0 ? (
+                            <div className="text-xs text-text-muted text-center py-8 border border-dashed border-black/10 dark:border-white/10 rounded-lg">
+                                No peer transactions recorded yet.
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-2 max-h-[150px] overflow-y-auto pr-1 custom-scrollbar">
+                                {transactions.slice().reverse().map(tx => (
+                                    <div key={tx.id} className="flex items-center justify-between p-2 rounded bg-black/5 dark:bg-white/5 text-[10px]">
+                                        <div className="flex flex-col">
+                                            <span className="text-text-main font-medium">{tx.type === 'earn' ? 'Earned from' : 'Paid to'} {tx.offerId?.slice(0, 8) || 'Unknown'}</span>
+                                            <span className="text-text-muted">{new Date(tx.timestamp).toLocaleTimeString()}</span>
+                                        </div>
+                                        <span className={`font-bold ${tx.type === 'earn' ? 'text-green-500' : 'text-primary'}`}>
+                                            {tx.type === 'earn' ? '+' : '-'}{tx.amount.toFixed(2)} ZIPc
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </Card>
             </div>
