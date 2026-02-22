@@ -1,4 +1,6 @@
-import { createProviderNode, getProviderNodes } from "../localDb.js";
+import { createProviderNode, getProviderNodes, getNodeIdentity } from "../localDb.js";
+import { signPayload } from "../security.js";
+import os from "node:os";
 
 /**
  * LocalDiscoveryService
@@ -13,11 +15,18 @@ export class LocalDiscoveryService {
             { port: 8000, type: "vllm", name: "vLLM" }
         ];
 
+        this.jose = null;
+        this.importJose();
+
         this.scanTargets = ["127.0.0.1", "localhost"];
-        this.beaconPort = 20129; // Separate port for P2P discovery
-        this.beaconInterval = 30000; // 30 seconds
+        this.beaconPort = parseInt(process.env.ZIPPY_DISCOVERY_PORT || "20129", 10);
+        this.beaconInterval = parseInt(process.env.ZIPPY_BEACON_INTERVAL || "30000", 10);
         this.beaconTimer = null;
         this.udpSocket = null;
+    }
+
+    async importJose() {
+        this.jose = await import("jose");
     }
 
     /**
@@ -67,16 +76,65 @@ export class LocalDiscoveryService {
         const dgram = await import("node:dgram");
         this.udpSocket = dgram.createSocket({ type: "udp4", reuseAddr: true });
 
+        const { verifyPayload } = await import("../security.js");
+
+        this.udpSocket.on("message", async (msg, rinfo) => {
+            try {
+                // Ignore our own beacons if we wanted to, but simple verification handles all
+                const token = msg.toString();
+
+                // 1. Decode header to extract public key (or it's in the payload)
+                // In our case, the sender includes their publicKey in the payload
+                // but we need to verify the JWT *with* that key.
+                const decoded = jose.decodeJwt(token);
+                if (!decoded.publicKey) return;
+
+                const payload = await verifyPayload(token, decoded.publicKey);
+
+                if (payload.type === "zippymesh-node") {
+                    console.log(`[Discovery] Verified node: ${payload.name} at ${rinfo.address}`);
+
+                    const url = `http://${rinfo.address}:${payload.port}/api/v1`;
+                    const existingNodes = await getProviderNodes();
+                    const exists = existingNodes.find(n => n.baseUrl === url);
+
+                    if (!exists) {
+                        await createProviderNode({
+                            type: "peer",
+                            name: payload.name,
+                            baseUrl: url,
+                            apiType: "openai",
+                            prefix: "peer-",
+                            providerSpecificData: {
+                                publicKey: payload.publicKey,
+                                version: payload.version
+                            }
+                        });
+                        console.log(`[Discovery] Provisioned peer node: ${payload.name}`);
+                    }
+                }
+            } catch (err) {
+                // Verification failed - likely invalid signature or malformed token
+                // We ignore silently or log briefly
+            }
+        });
+
+        this.udpSocket.bind(this.beaconPort);
+
         this.beaconTimer = setInterval(() => {
             try {
-                const message = JSON.stringify({
+                const identity = await getNodeIdentity();
+                const payload = {
                     type: "zippymesh-node",
                     version: "1.0.0",
-                    port: 20128, // Main API port
-                    name: os.hostname()
-                });
+                    port: parseInt(process.env.ZIPPY_PORT || "20128", 10),
+                    name: process.env.ZIPPY_NODE_NAME || os.hostname(),
+                    publicKey: identity.publicKey
+                };
 
-                this.udpSocket.send(message, this.beaconPort, "255.255.255.255", (err) => {
+                const token = await signPayload(payload);
+
+                this.udpSocket.send(token, this.beaconPort, "255.255.255.255", (err) => {
                     if (err) console.error("[Discovery] Beacon send error:", err.message);
                 });
             } catch (err) {

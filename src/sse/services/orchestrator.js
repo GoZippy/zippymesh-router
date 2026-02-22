@@ -1,7 +1,8 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { appendRequestLog, updateProviderConnection, getP2pSubscriptions, recordP2pTransaction, getPricingForModel } from "@/lib/localDb.js"; // Added recordP2pTransaction, getPricingForModel
-import { calculateCostFromTokens } from "@/shared/constants/pricing.js"; // Added calculateCostFromTokens
+import { appendRequestLog, updateProviderConnection, getP2pSubscriptions, recordP2pTransaction, getPricingForModel, getNodeIdentity } from "@/lib/localDb.js";
+import { signPayload, verifyPayload } from "@/lib/security.js";
+import { calculateCostFromTokens } from "@/shared/constants/pricing.js";
 import { errorResponse } from "open-sse/utils/error.js";
 import { queueManager } from "@/lib/routing/queueManager.js"; // Added queueManager
 
@@ -76,6 +77,11 @@ async function _executeOrchestratedChat(params) {
 
     const candidates = await findBestCandidates(modelStr, routingContext);
 
+    // Check for batch strategy in candidates' metadata if available
+    // or if explicitly requested in body
+    const batchRule = body.routing?.rule === "batch" ? body.routing :
+        candidates.find(c => c.batchRule)?.batchRule;
+
     if (candidates.length === 0) {
         await appendRequestLog({ model: modelStr, status: 404 });
         return errorResponse(404, `No available accounts for ${modelStr} or equivalents`);
@@ -86,7 +92,22 @@ async function _executeOrchestratedChat(params) {
     const authorizedCandidates = candidates.filter(cand => {
         if (cand.provider !== "peer") return true;
         const nodeId = cand.connection.providerSpecificData?.nodeId;
-        return subscriptions.some(s => s.offerId === nodeId && s.status === "active");
+        const sub = subscriptions.find(s => s.offerId === nodeId && s.status === "active");
+        if (!sub) return false;
+
+        // Verify sub signature if it exists (Phase 12)
+        if (sub.signature) {
+            try {
+                const identity = await getNodeIdentity();
+                // We verify with OUR own public key because we signed it
+                await verifyPayload(sub.signature, identity.publicKey);
+                return true;
+            } catch (e) {
+                log?.error?.("ORCHESTRATOR", `Subscription signature verification failed for node ${nodeId}`);
+                return false;
+            }
+        }
+        return true;
     });
 
     if (authorizedCandidates.length === 0 && candidates.some(c => c.provider === "peer")) {
@@ -95,6 +116,11 @@ async function _executeOrchestratedChat(params) {
 
     // Use authorized candidates if available, fallback to candidates (which might only have non-peer ones if any)
     const finalCandidates = authorizedCandidates.length > 0 ? authorizedCandidates : candidates;
+
+    if (batchRule) {
+        log?.info?.("ORCHESTRATOR", `Entering Batch Mode: Strategy=${batchRule.strategy || 'race'}, Parallel=${batchRule.parallel || 2}`);
+        return await _executeBatchChat(params, finalCandidates, batchRule);
+    }
 
     let lastError = null;
     let lastStatus = 503;
@@ -112,6 +138,16 @@ async function _executeOrchestratedChat(params) {
             finalBody = params.prepareBody(finalBody, candidate);
         }
 
+        // For peer nodes, add a signed identity header (Phase 12)
+        let requestHeaders = {};
+        if (modelInfo.provider === "peer") {
+            const token = await signPayload({
+                timestamp: Date.now(),
+                targetNode: connection.id
+            });
+            requestHeaders["X-Zippy-Identity"] = token;
+        }
+
         const result = await handleChatCore({
             body: finalBody,
             modelInfo,
@@ -120,6 +156,7 @@ async function _executeOrchestratedChat(params) {
             clientRawRequest,
             connectionId: connection.id,
             userAgent,
+            headers: requestHeaders, // Pass the signed identity header
             onCredentialsRefreshed: async (newCreds) => {
                 if (params.callbacks?.onCredentialsRefreshed) {
                     await params.callbacks.onCredentialsRefreshed(newCreds, connection.id);
@@ -195,4 +232,118 @@ async function _executeOrchestratedChat(params) {
 
     await appendRequestLog({ model: modelStr, status: lastStatus });
     return errorResponse(lastStatus, lastError || "All candidates failed");
+}
+
+/**
+ * Execute multiple candidates in parallel
+ */
+async function _executeBatchChat(params, candidates, batchRule) {
+    const { handleChatCore, log, body, modelStr, clientRawRequest, userAgent } = params;
+    const parallelLimit = batchRule.parallel || 2;
+    const batchCandidates = candidates.slice(0, parallelLimit);
+
+    const abortController = new AbortController();
+    const startTime = Date.now();
+
+    const tasks = batchCandidates.map(async (candidate) => {
+        const { connection, modelInfo } = candidate;
+        const accountId = connection.id.slice(0, 8);
+
+        log?.info?.("ORCHESTRATOR", `[Batch] Starting ${modelInfo.provider}/${modelInfo.model} via ${accountId}`);
+
+        try {
+            let finalBody = { ...body, model: `${modelInfo.provider}/${modelInfo.model}` };
+            if (params.prepareBody) {
+                finalBody = params.prepareBody(finalBody, candidate);
+            }
+
+            // For peer nodes, add a signed identity header (Phase 12)
+            let requestHeaders = {};
+            if (modelInfo.provider === "peer") {
+                const token = await signPayload({
+                    timestamp: Date.now(),
+                    targetNode: connection.id
+                });
+                requestHeaders["X-Zippy-Identity"] = token;
+            }
+
+            const result = await handleChatCore({
+                body: finalBody,
+                modelInfo,
+                credentials: connection,
+                log,
+                clientRawRequest,
+                connectionId: connection.id,
+                userAgent,
+                headers: requestHeaders, // Pass the signed identity header
+                signal: abortController.signal, // Pass signal for cancellation
+                onCredentialsRefreshed: async (newCreds) => {
+                    if (params.callbacks?.onCredentialsRefreshed) {
+                        await params.callbacks.onCredentialsRefreshed(newCreds, connection.id);
+                    }
+                },
+                onRequestSuccess: async () => {
+                    if (params.callbacks?.onRequestSuccess) {
+                        await params.callbacks.onRequestSuccess(connection.id, connection);
+                    }
+                }
+            });
+
+            if (result.success) {
+                const latency = Date.now() - startTime;
+                log?.info?.("ORCHESTRATOR", `[Batch] Winner identified: ${modelInfo.provider}/${modelInfo.model} (${latency}ms)`);
+
+                // Cancel other pending requests in the batch
+                abortController.abort();
+
+                // Record metrics (same as sequential)
+                const tokens = result.usage?.total_tokens || 1;
+                const tps = parseFloat((tokens / (latency / 1000)).toFixed(2));
+                await updateProviderConnection(connection.id, { latency, tps, lastTested: new Date().toISOString() });
+                await routingEngine.recordUsage(modelInfo.provider, modelInfo.model, result.usage || { tokens: 0 }, result.providerHeaders);
+                await appendRequestLog({
+                    model: modelInfo.model,
+                    provider: modelInfo.provider,
+                    connectionId: connection.id,
+                    status: 200,
+                    tokens: result.usage,
+                    latency
+                });
+
+                // P2P Billing
+                if (modelInfo.provider === "peer") {
+                    try {
+                        const pricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
+                        if (pricing) {
+                            const costDollars = calculateCostFromTokens(result.usage, pricing);
+                            const amountZipc = Math.max(0.01, parseFloat((costDollars * 100).toFixed(4)));
+                            await recordP2pTransaction({
+                                type: "spend",
+                                amount: amountZipc,
+                                offerId: connection.providerSpecificData?.nodeId,
+                                model: modelInfo.model,
+                                tokens: result.usage
+                            });
+                        }
+                    } catch (e) { }
+                }
+
+                return result;
+            } else {
+                throw new Error(result.error || "Batch candidate failed");
+            }
+        } catch (err) {
+            if (err.name === 'AbortError') return { aborted: true };
+            log?.warn?.("ORCHESTRATOR", `[Batch] Candidate ${accountId} failed: ${err.message}`);
+            throw err;
+        }
+    });
+
+    try {
+        // Promise.any returns the first fulfilled promise (success)
+        return await Promise.any(tasks);
+    } catch (aggregateError) {
+        log?.error?.("ORCHESTRATOR", "All batch candidates failed");
+        return errorResponse(503, "All batch candidates failed");
+    }
 }

@@ -209,6 +209,12 @@ export class RoutingEngine {
             scored.push({ ...cand, score });
         }
 
+        // 3. Find if there is a batch rule defined in the playbook
+        const batchRule = playbook.rules?.find(r => r.type === "batch");
+        if (batchRule) {
+            scored.forEach(s => s.batchRule = batchRule);
+        }
+
         return scored.sort((a, b) => a.score - b.score);
     }
 

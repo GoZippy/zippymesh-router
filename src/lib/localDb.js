@@ -13,7 +13,7 @@ const isCloud = typeof process === 'undefined' || !process.versions || !process.
 
 // Get app name - fixed constant to avoid Windows path issues in standalone build
 function getAppName() {
-  return "zippy-mesh";
+  return process.env.ZIPPY_APP_NAME || "zippy-mesh";
 }
 
 // Get user data directory based on platform
@@ -1184,6 +1184,36 @@ export async function isCloudEnabled() {
   return settings.cloudEnabled === true;
 }
 
+/**
+ * Get node identity keys (generate if not existing)
+ */
+export async function getNodeIdentity() {
+  const db = await getDb();
+  if (db.data.settings?.nodeIdentity) {
+    return db.data.settings.nodeIdentity;
+  }
+
+  // Generate new key pair
+  const { generateKeyPair } = await import("node:crypto");
+  const { promisify } = await import("node:util");
+  const generate = promisify(generateKeyPair);
+
+  const { publicKey, privateKey } = await generate("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+
+  const identity = {
+    publicKey,
+    privateKey,
+    createdAt: new Date().toISOString()
+  };
+
+  db.data.settings.nodeIdentity = identity;
+  await db.write();
+  return identity;
+}
+
 // ============ Pricing ============
 
 /**
@@ -1510,6 +1540,7 @@ export async function getP2pSubscriptions() {
  */
 export async function createP2pSubscription(offerId, name) {
   const db = await getDb();
+  const { signPayload } = await import("./security.js");
   const sub = {
     id: uuidv4(),
     offerId,
@@ -1517,6 +1548,10 @@ export async function createP2pSubscription(offerId, name) {
     status: "active",
     createdAt: new Date().toISOString()
   };
+
+  // Sign the subscription to prevent tampering
+  sub.signature = await signPayload(sub);
+
   db.data.p2pSubscriptions.push(sub);
   await db.write();
   return sub;
