@@ -1,6 +1,6 @@
 
 import { RateLimiter } from "./rateLimiter.js";
-import { getRoutingPlaybooks, getProviderConnections, getPricingForModel } from "../localDb.js";
+import { getRoutingPlaybooks, getProviderConnections, getPricingForModel, getSettings } from "../localDb.js";
 import { resolveProviderId } from "../../shared/constants/providers.js";
 
 /**
@@ -25,7 +25,8 @@ export class RoutingEngine {
 
         // 1. Identify applicable Playbook
         const playbooks = await getRoutingPlaybooks();
-        const activePlaybook = this.selectPlaybook(playbooks, requestContext);
+        const settings = await getSettings();
+        const activePlaybook = await this.selectPlaybook(playbooks, requestContext, settings);
 
 
 
@@ -99,7 +100,7 @@ export class RoutingEngine {
         return results;
     }
 
-    selectPlaybook(playbooks, context) {
+    async selectPlaybook(playbooks, context, settings) {
         // Sort playbooks by priority
         const sorted = playbooks.filter(p => p.isActive).sort((a, b) => b.priority - a.priority);
 
@@ -119,10 +120,16 @@ export class RoutingEngine {
                 continue;
             }
 
-            // If no trigger, it's a "global" playbook (fallback)
-            // But we should probably only have one global active, or the first one wins.
-            return pb;
+            // If no trigger, it's a candidate for "global" playbook if it was manually set
+            // but we'll prioritize the one defined in settings if none of the triggered ones match.
         }
+
+        // Fallback to default playbook from settings
+        if (settings?.defaultPlaybookId) {
+            const defaultPb = playbooks.find(p => p.id === settings.defaultPlaybookId && p.isActive);
+            if (defaultPb) return defaultPb;
+        }
+
         return null;
     }
 
@@ -181,11 +188,20 @@ export class RoutingEngine {
                 if (isMatch) {
                     if (rule.type === "boost") {
                         // Reduce score (lower is better)
-                        // rule.value should be a fast-track amount, e.g. 5000
                         score -= (rule.value || 1000);
                     } else if (rule.type === "penalty") {
                         // Increase score
                         score += (rule.value || 1000);
+                    } else if (rule.type === "stack") {
+                        // Value is an array or comma-separated string of preferred order
+                        const order = Array.isArray(rule.value) ? rule.value : (typeof rule.value === "string" ? rule.value.split(",") : []);
+                        const index = order.indexOf(cand.provider) !== -1 ? order.indexOf(cand.provider) : order.indexOf(cand.model);
+
+                        if (index !== -1) {
+                            // Boost based on position in stack (position 0 gets biggest boost)
+                            const stackBoost = (order.length - index) * 10000;
+                            score -= stackBoost;
+                        }
                     }
                 }
             }

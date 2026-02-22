@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { SMART_PLAYBOOKS, INITIAL_SETTINGS } from "../shared/constants/defaults.js";
 
 // Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
 // Checking 'caches' is unreliable in Node 18+ as it's often polyfilled
@@ -491,13 +492,9 @@ function cloneDefaultData() {
     modelAliases: {},
     combos: [],
     apiKeys: [],
-    settings: {
-      cloudEnabled: false,
-      stickyRoundRobinLimit: 3,
-      requireLogin: true,
-    },
+    settings: { ...INITIAL_SETTINGS },
     pricing: {},
-    routingPlaybooks: [],
+    routingPlaybooks: [...SMART_PLAYBOOKS],
     rateLimitConfigs: DEFAULT_RATE_LIMITS,
     rateLimitState: {},
   };
@@ -535,6 +532,16 @@ function ensureDbShape(data) {
           changed = true;
         }
       }
+    }
+  }
+
+  // Ensure default playbooks exist
+  if (!next.routingPlaybooks) next.routingPlaybooks = [];
+
+  for (const defaultPb of SMART_PLAYBOOKS) {
+    if (!next.routingPlaybooks.find(p => p.id === defaultPb.id)) {
+      next.routingPlaybooks.push({ ...defaultPb });
+      changed = true;
     }
   }
 
@@ -809,7 +816,7 @@ export async function createProviderConnection(data) {
     "accessToken", "refreshToken", "expiresAt", "tokenType",
     "scope", "idToken", "projectId", "apiKey", "testStatus",
     "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
-    "consecutiveUseCount"
+    "consecutiveUseCount", "latency", "tps"
   ];
 
   for (const field of optionalFields) {

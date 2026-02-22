@@ -3,9 +3,11 @@
 import { useState } from "react";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
+import ZippyDevTools from "../ZippyDevTools";
+import { DevModeProvider, useDevMode } from "../DevModeContext";
 
-export default function DashboardLayout({ children }) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+function DashboardLayoutContent({ children, sidebarOpen, setSidebarOpen }) {
+  const { isDevOpen, closeDevMode } = useDevMode();
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">
@@ -24,9 +26,8 @@ export default function DashboardLayout({ children }) {
 
       {/* Sidebar - Mobile */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 transform lg:hidden transition-transform duration-300 ease-in-out ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-50 transform lg:hidden transition-transform duration-300 ease-in-out ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
       >
         <Sidebar onClose={() => setSidebarOpen(false)} />
       </div>
@@ -38,6 +39,23 @@ export default function DashboardLayout({ children }) {
           <div className="max-w-7xl mx-auto">{children}</div>
         </div>
       </main>
+
+      {/* Global DevTools Overlay */}
+      <ZippyDevTools isOpen={isDevOpen} onClose={closeDevMode} />
     </div>
+  );
+}
+
+export default function DashboardLayout({ children }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  return (
+    <DevModeProvider>
+      <DashboardLayoutContent
+        children={children}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+      />
+    </DevModeProvider>
   );
 }

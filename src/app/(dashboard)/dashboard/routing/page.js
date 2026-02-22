@@ -424,7 +424,8 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
     const typeOptions = [
         { label: "Intent (e.g. code)", value: "intent" },
         { label: "Prefix (e.g. gpt-4)", value: "prefix" },
-        { label: "Model ID Match", value: "model" }
+        { label: "Model ID Match", value: "model" },
+        { label: "Stack Order (Failover)", value: "stack" }
     ];
 
     return (
@@ -446,7 +447,7 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                                 <div key={idx} className="flex items-center justify-between p-3 bg-white dark:bg-white/5 border rounded-lg group">
                                     <div className="flex items-center gap-3">
                                         <Badge variant="secondary" size="sm">{rule.type}</Badge>
-                                        <span className="text-sm font-mono text-purple-600 dark:text-purple-400">"{rule.value}"</span>
+                                        <span className="text-sm font-mono text-purple-600 dark:text-purple-400">"{Array.isArray(rule.value) ? rule.value.join(", ") : rule.value}"</span>
                                         <span className="material-symbols-outlined text-xs text-text-muted">arrow_forward</span>
                                         <span className="text-sm font-medium">{rule.target}</span>
                                     </div>
@@ -476,17 +477,28 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                             onChange={e => setNewType(e.target.value)}
                         />
                         <Input
-                            label="Value"
-                            placeholder={newType === "intent" ? "code" : "gpt-4"}
+                            label={newType === "stack" ? "Target Scope (e.g. 'all' or model prefix)" : "Value"}
+                            placeholder={newType === "intent" ? "code" : (newType === "stack" ? "all" : "gpt-4")}
                             value={newValue}
                             onChange={e => setNewValue(e.target.value)}
                         />
                         <Select
-                            label="Target"
+                            label={newType === "stack" ? "Add to Stack" : "Target"}
                             options={targetOptions}
-                            value={newTarget}
-                            placeholder={loadingTargets ? "Loading..." : "Select target"}
-                            onChange={e => setNewTarget(e.target.value)}
+                            value={newType === "stack" ? "" : newTarget}
+                            placeholder={loadingTargets ? "Loading..." : (newType === "stack" ? "Select models in order..." : "Select target")}
+                            onChange={e => {
+                                if (newType === "stack") {
+                                    const val = e.target.value;
+                                    if (!val) return;
+                                    const currentValues = Array.isArray(newValue) ? newValue : (newValue ? newValue.split(",") : []);
+                                    if (!currentValues.includes(val)) {
+                                        setNewValue([...currentValues, val].join(","));
+                                    }
+                                } else {
+                                    setNewTarget(e.target.value);
+                                }
+                            }}
                             disabled={loadingTargets}
                         />
                     </div>

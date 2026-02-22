@@ -39,6 +39,8 @@ export default function ProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [discoveredCount, setDiscoveredCount] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -60,6 +62,26 @@ export default function ProvidersPage() {
     fetchData();
   }, []);
 
+  const handleScan = async () => {
+    setScanning(true);
+    setDiscoveredCount(null);
+    try {
+      const res = await fetch("/api/discovery", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setDiscoveredCount(data.count);
+        // Refresh nodes
+        const nodesRes = await fetch("/api/provider-nodes");
+        const nodesData = await nodesRes.json();
+        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+      }
+    } catch (err) {
+      console.error("Discovery failed:", err);
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const getProviderStats = (providerId, authType) => {
     const providerConnections = connections.filter(
       c => c.provider === providerId && c.authType === authType
@@ -71,10 +93,12 @@ export default function ProvidersPage() {
       return (conn.testStatus === "unavailable" && !isCooldown) ? "active" : conn.testStatus;
     };
 
-    const connected = providerConnections.filter(c => {
+    const activeConns = providerConnections.filter(c => {
       const status = getEffectiveStatus(c);
       return status === "active" || status === "success";
-    }).length;
+    });
+
+    const connected = activeConns.length;
 
     const errorConns = providerConnections.filter(c => {
       const status = getEffectiveStatus(c);
@@ -84,6 +108,15 @@ export default function ProvidersPage() {
     const error = errorConns.length;
     const total = providerConnections.length;
 
+    // Calculate health metrics (average of active connections)
+    const activeWithMetrics = activeConns.filter(c => c.latency || c.tps);
+    const avgLatency = activeWithMetrics.length > 0
+      ? Math.round(activeWithMetrics.reduce((sum, c) => sum + (c.latency || 0), 0) / activeWithMetrics.length)
+      : null;
+    const avgTps = activeWithMetrics.length > 0
+      ? (activeWithMetrics.reduce((sum, c) => sum + (c.tps || 0), 0) / activeWithMetrics.length).toFixed(1)
+      : null;
+
     // Get latest error info
     const latestError = errorConns.sort((a, b) =>
       new Date(b.lastErrorAt || 0) - new Date(a.lastErrorAt || 0)
@@ -91,7 +124,7 @@ export default function ProvidersPage() {
     const errorCode = latestError ? getErrorCode(latestError.lastError) : null;
     const errorTime = latestError?.lastErrorAt ? getRelativeTime(latestError.lastErrorAt) : null;
 
-    return { connected, error, total, errorCode, errorTime };
+    return { connected, error, total, errorCode, errorTime, avgLatency, avgTps };
   };
 
   const compatibleProviders = providerNodes
@@ -138,6 +171,17 @@ export default function ProvidersPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {discoveredCount !== null && (
+        <div className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/20 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="material-symbols-outlined text-blue-500">check_circle</span>
+            <span className="text-sm font-medium">Scan complete: {discoveredCount} new local providers discovered.</span>
+          </div>
+          <button onClick={() => setDiscoveredCount(null)} className="text-text-muted hover:text-text">
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
+        </div>
+      )}
       {/* Getting started callout - shown only when no connections exist */}
       {!hasAnyConnection && (
         <div className="rounded-xl border border-green-200 dark:border-green-900/50 bg-green-50/50 dark:bg-green-950/20 p-4 flex gap-3">
@@ -210,6 +254,16 @@ export default function ProvidersPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold">API Key Providers</h2>
           <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={scanning ? "sync" : "travel_explore"}
+              onClick={handleScan}
+              disabled={scanning}
+              className={scanning ? "animate-spin-slow" : ""}
+            >
+              {scanning ? "Scanning..." : "Scan Local Network"}
+            </Button>
             <Button size="sm" icon="add" onClick={() => setShowAddAnthropicCompatibleModal(true)}>
               Add Anthropic Compatible
             </Button>
@@ -256,7 +310,7 @@ export default function ProvidersPage() {
 }
 
 function ProviderCard({ providerId, provider, stats }) {
-  const { connected, error, errorCode, errorTime } = stats;
+  const { connected, error, errorCode, errorTime, avgLatency, avgTps } = stats;
   const [imgError, setImgError] = useState(false);
 
   return (
@@ -291,6 +345,18 @@ function ProviderCard({ providerId, provider, stats }) {
               <h3 className="font-semibold">{provider.name}</h3>
               <div className="flex items-center gap-2 text-xs flex-wrap">
                 {getStatusDisplay(connected, error, errorCode)}
+                {avgLatency && (
+                  <span className="text-text-muted flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">timer</span>
+                    {avgLatency}ms
+                  </span>
+                )}
+                {avgTps && (
+                  <span className="text-text-muted flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">speed</span>
+                    {avgTps} t/s
+                  </span>
+                )}
                 {errorTime && <span className="text-text-muted">• {errorTime}</span>}
               </div>
             </div>
@@ -322,7 +388,7 @@ ProviderCard.propTypes = {
 
 // API Key providers - use image with textIcon fallback (same as OAuth providers)
 function ApiKeyProviderCard({ providerId, provider, stats }) {
-  const { connected, error, errorCode, errorTime } = stats;
+  const { connected, error, errorCode, errorTime, avgLatency, avgTps } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
   const [imgError, setImgError] = useState(false);
@@ -370,6 +436,18 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
               <h3 className="font-semibold">{provider.name}</h3>
               <div className="flex items-center gap-2 text-xs flex-wrap">
                 {getStatusDisplay(connected, error, errorCode)}
+                {avgLatency && (
+                  <span className="text-text-muted flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">timer</span>
+                    {avgLatency}ms
+                  </span>
+                )}
+                {avgTps && (
+                  <span className="text-text-muted flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">speed</span>
+                    {avgTps} t/s
+                  </span>
+                )}
                 {isCompatible && (
                   <Badge variant="default" size="sm">
                     {provider.apiType === "responses" ? "Responses" : "Chat"}

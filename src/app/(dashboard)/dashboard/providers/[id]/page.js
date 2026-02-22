@@ -1012,6 +1012,20 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <div className="flex flex-col items-end mr-2">
+          {connection.latency && (
+            <div className="flex items-center gap-1 text-[10px] text-text-muted">
+              <span className="material-symbols-outlined text-[12px]">timer</span>
+              {connection.latency}ms
+            </div>
+          )}
+          {connection.tps && (
+            <div className="flex items-center gap-1 text-[10px] text-text-muted">
+              <span className="material-symbols-outlined text-[12px]">speed</span>
+              {connection.tps} t/s
+            </div>
+          )}
+        </div>
         <Toggle
           size="sm"
           checked={connection.isActive ?? true}

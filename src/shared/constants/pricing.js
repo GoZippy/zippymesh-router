@@ -630,3 +630,26 @@ export function calculateCostFromTokens(tokens, pricing) {
 
   return cost;
 }
+
+/**
+ * Calculate bid price (resale price)
+ * @param {object} basePricing - Internal cost pricing
+ * @param {number} marginPercent - Carrier markup percentage (e.g., 20 for 20%)
+ * @returns {object} Bid price object
+ */
+export function calculateBidPrice(basePricing, marginPercent = 20) {
+  if (!basePricing) return null;
+
+  const factor = 1 + (marginPercent / 100);
+  const bid = {};
+
+  for (const [key, val] of Object.entries(basePricing)) {
+    if (typeof val === "number") {
+      bid[key] = parseFloat((val * factor).toFixed(4));
+    } else {
+      bid[key] = val;
+    }
+  }
+
+  return bid;
+}

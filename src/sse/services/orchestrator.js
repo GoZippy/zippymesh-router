@@ -1,7 +1,8 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { appendRequestLog } from "@/lib/usageDb.js";
-import { errorResponse } from "open-sse/utils/error.js"; // re-import errorResponse if needed or keep existing
+import { appendRequestLog, updateProviderConnection } from "@/lib/localDb.js"; // Added updateProviderConnection
+import { errorResponse } from "open-sse/utils/error.js";
+import { queueManager } from "@/lib/routing/queueManager.js"; // Added queueManager
 
 // Instantiate RoutingEngine (Singleton-like)
 const routingEngine = new RoutingEngine();
@@ -41,6 +42,21 @@ export async function findBestCandidates(requestedModel, context = {}) {
 export async function handleOrchestratedChat(params) {
     const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent } = params;
 
+    // Wrap in Queue
+    return await queueManager.enqueue(async () => {
+        return await _executeOrchestratedChat(params);
+    }, {
+        group: params.user?.group || "default",
+        intent: body.intent || params.intent || null
+    });
+}
+
+/**
+ * Internal execution after queueing
+ */
+async function _executeOrchestratedChat(params) {
+    const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent } = params;
+
     // Extract Context for Routing
     let estimatedTokens = 100;
     if (body.messages) {
@@ -70,6 +86,7 @@ export async function handleOrchestratedChat(params) {
     for (const candidate of candidates) {
         const { connection, modelInfo } = candidate;
         const accountId = connection.id.slice(0, 8);
+        const startTime = Date.now();
 
         log?.info?.("ORCHESTRATOR", `Trying ${modelInfo.provider}/${modelInfo.model} via account ${accountId}... (Score: ${candidate.score})`);
 
@@ -100,11 +117,20 @@ export async function handleOrchestratedChat(params) {
         });
 
         if (result.success) {
-            log?.info?.("ORCHESTRATOR", `Success via ${modelInfo.provider}/${modelInfo.model}`);
+            const latency = Date.now() - startTime;
+            log?.info?.("ORCHESTRATOR", `Success via ${modelInfo.provider}/${modelInfo.model} in ${latency}ms`);
+
+            // Update health metrics
+            const tokens = result.usage?.total_tokens || 1;
+            const tps = parseFloat((tokens / (latency / 1000)).toFixed(2));
+
+            await updateProviderConnection(connection.id, {
+                latency,
+                tps,
+                lastTested: new Date().toISOString()
+            });
 
             // Track Usage in Rate Limiter
-            // usage object should ideally contain { tokens: val, requests: 1 }
-            // context can include headers for syncing
             await routingEngine.recordUsage(modelInfo.provider, modelInfo.model, result.usage || { tokens: 0 }, result.providerHeaders);
 
             await appendRequestLog({
@@ -112,7 +138,8 @@ export async function handleOrchestratedChat(params) {
                 provider: modelInfo.provider,
                 connectionId: connection.id,
                 status: result.status || 200,
-                tokens: result.usage // Assuming handleChatCore returns usage in result
+                tokens: result.usage,
+                latency // Store latency in logs too
             });
             return result;
         }

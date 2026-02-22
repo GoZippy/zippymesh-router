@@ -1,4 +1,4 @@
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:8081";
+const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
 
 /**
  * Fetch all discovered peers from the Sidecar.

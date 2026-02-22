@@ -29,6 +29,13 @@ export const API_ENDPOINTS = {
   auth: "/api/auth",
 };
 
+// Sidecar configuration
+export const SIDECAR_CONFIG = {
+  defaultApiPort: 9480,
+  defaultRpcPort: 8545,
+  baseUrl: process.env.NEXT_PUBLIC_SIDECAR_URL || "http://localhost:9480",
+};
+
 // Provider API endpoints (for display only)
 export const PROVIDER_ENDPOINTS = {
   openrouter: "https://openrouter.ai/api/v1/chat/completions",

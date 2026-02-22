@@ -4,12 +4,12 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import PropTypes from "prop-types";
-import { ThemeToggle } from "@/shared/components";
+import { ThemeToggle, ZippyStatusBar } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 
 const getPageInfo = (pathname) => {
   if (!pathname) return { title: "", description: "", breadcrumbs: [] };
-  
+
   // Provider detail page: /dashboard/providers/[id]
   const providerMatch = pathname.match(/\/providers\/([^/]+)$/);
   if (providerMatch) {
@@ -26,7 +26,7 @@ const getPageInfo = (pathname) => {
       };
     }
   }
-  
+
   if (pathname.includes("/providers")) return { title: "Providers", description: "Manage your AI provider connections", breadcrumbs: [] };
   if (pathname.includes("/combos")) return { title: "Combos", description: "Model combos with fallback", breadcrumbs: [] };
   if (pathname.includes("/usage")) return { title: "Usage & Analytics", description: "Monitor your API usage, token consumption, and request logs", breadcrumbs: [] };
@@ -118,18 +118,22 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
       </div>
 
       {/* Right actions */}
-      <div className="flex items-center gap-3 ml-auto">
-        {/* Theme toggle */}
-        <ThemeToggle />
+      <div className="flex items-center gap-6 ml-auto">
+        <ZippyStatusBar />
 
-        {/* Logout button */}
-        <button
-          onClick={handleLogout}
-          className="flex items-center justify-center p-2 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
-          title="Logout"
-        >
-          <span className="material-symbols-outlined">logout</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Theme toggle */}
+          <ThemeToggle />
+
+          {/* Logout button */}
+          <button
+            onClick={handleLogout}
+            className="flex items-center justify-center p-2 rounded-lg text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-all"
+            title="Logout"
+          >
+            <span className="material-symbols-outlined">logout</span>
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -139,4 +143,3 @@ Header.propTypes = {
   onMenuClick: PropTypes.func,
   showMenuButton: PropTypes.bool,
 };
-
