@@ -59,5 +59,7 @@ export const INITIAL_SETTINGS = {
     stickyRoundRobinLimit: 3,
     requireLogin: true,
     defaultPlaybookId: "pb-balanced-default",
-    autoDiscovery: true
+    autoDiscovery: true,
+    isDemoMode: false
 };
+

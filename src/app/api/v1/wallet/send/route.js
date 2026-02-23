@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { recordP2pTransaction } from "@/lib/localDb.js";
+import { openPaymentChannel } from "@/lib/sidecar.js";
 
 export async function POST(req) {
     try {
@@ -10,13 +10,7 @@ export async function POST(req) {
             return NextResponse.json({ error: "Missing 'to' or 'amount'" }, { status: 400 });
         }
 
-        const transaction = await recordP2pTransaction({
-            type: "spend",
-            amount: parseFloat(amount),
-            offerId: to,
-            model: "direct-transfer",
-            tokens: { total_tokens: 0 }
-        });
+        const transaction = await openPaymentChannel(to, parseFloat(amount));
 
         return NextResponse.json({ success: true, transaction });
     } catch (error) {

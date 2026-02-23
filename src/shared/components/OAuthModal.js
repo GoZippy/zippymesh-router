@@ -10,7 +10,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
  * - Localhost: Auto callback via popup message
  * - Remote: Manual paste callback URL
  */
-export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose }) {
+export default function OAuthModal({ isOpen, provider, providerInfo, connectionId, onSuccess, onClose }) {
   const [step, setStep] = useState("waiting"); // waiting | input | success | error
   const [authData, setAuthData] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState("");
@@ -57,6 +57,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
           state,
+          connectionId,
         }),
       });
 
@@ -86,7 +87,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         const res = await fetch(`/api/oauth/${provider}/poll`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deviceCode, codeVerifier, extraData }),
+          body: JSON.stringify({ deviceCode, codeVerifier, extraData, connectionId }),
         });
 
         const data = await res.json();

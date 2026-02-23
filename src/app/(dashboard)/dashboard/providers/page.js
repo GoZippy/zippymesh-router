@@ -41,18 +41,24 @@ export default function ProvidersPage() {
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [discoveredCount, setDiscoveredCount] = useState(null);
+  const [presets, setPresets] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
+        const [connectionsRes, nodesRes, presetsRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/provider-nodes"),
+          fetch("/api/presets/provider-nodes"),
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
         if (connectionsRes.ok) setConnections(connectionsData.connections || []);
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        if (presetsRes.ok) {
+          const presetsData = await presetsRes.json();
+          setPresets(presetsData.presets || []);
+        }
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
@@ -276,6 +282,38 @@ export default function ProvidersPage() {
             >
               Add OpenAI Compatible
             </Button>
+            <Link href="/dashboard/providers/new">
+              <Button size="sm" variant="primary" icon="add">
+                Add Provider
+              </Button>
+            </Link>
+            {presets.length > 0 && (
+              <div className="relative group">
+                <Button size="sm" variant="secondary" icon="keyboard_arrow_down" iconPosition="right">
+                  Add Preset
+                </Button>
+                <div className="absolute right-0 top-full mt-1 w-64 bg-background border border-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 py-1">
+                  {presets.map(preset => (
+                    <button
+                      key={preset.id}
+                      onClick={() => {
+                        // Open appropriate modal with prefilled data using custom event dispatch pattern or state handling
+                        if (preset.apiType === "openai-compatible") {
+                          // Signal AddOpenAICompatibleModal to prefill data.
+                          const event = new CustomEvent('prefill-openai-compatible-modal', { detail: preset });
+                          window.dispatchEvent(event);
+                          setShowAddCompatibleModal(true);
+                        }
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-sidebar text-sm flex flex-col gap-0.5"
+                    >
+                      <span className="font-medium">{preset.name}</span>
+                      <span className="text-xs text-text-muted">{preset.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -506,11 +544,29 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
   ];
 
   useEffect(() => {
-    const defaultBaseUrl = "https://api.openai.com/v1";
-    setFormData((prev) => ({
-      ...prev,
-      baseUrl: defaultBaseUrl,
-    }));
+    // Listen for preset triggers
+    const handlePrefill = (e) => {
+      const preset = e.detail;
+      setFormData(prev => ({
+        ...prev,
+        name: preset.name.split(" ")[0], // e.g. "Kilo"
+        prefix: preset.id.split("-")[0], // e.g. "kilo"
+        baseUrl: preset.baseUrl,
+      }));
+    };
+    window.addEventListener('prefill-openai-compatible-modal', handlePrefill);
+    return () => window.removeEventListener('prefill-openai-compatible-modal', handlePrefill);
+  }, []);
+
+  useEffect(() => {
+    // Only reset baseUrl if we didn't just load a preset
+    if (formData.name === "") {
+      const defaultBaseUrl = "https://api.openai.com/v1";
+      setFormData((prev) => ({
+        ...prev,
+        baseUrl: defaultBaseUrl,
+      }));
+    }
   }, [formData.apiType]);
 
   const handleSubmit = async () => {

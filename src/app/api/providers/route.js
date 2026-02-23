@@ -64,11 +64,6 @@ export async function POST(request) {
         return NextResponse.json({ error: "OpenAI Compatible node not found" }, { status: 404 });
       }
 
-      const existingConnections = await getProviderConnections({ provider });
-      if (existingConnections.length > 0) {
-        return NextResponse.json({ error: "Only one connection is allowed for this OpenAI Compatible node" }, { status: 400 });
-      }
-
       providerSpecificData = {
         prefix: node.prefix,
         apiType: node.apiType,
@@ -79,11 +74,6 @@ export async function POST(request) {
       const node = await getProviderNodeById(provider);
       if (!node) {
         return NextResponse.json({ error: "Anthropic Compatible node not found" }, { status: 404 });
-      }
-
-      const existingConnections = await getProviderConnections({ provider });
-      if (existingConnections.length > 0) {
-        return NextResponse.json({ error: "Only one connection is allowed for this Anthropic Compatible node" }, { status: 400 });
       }
 
       providerSpecificData = {

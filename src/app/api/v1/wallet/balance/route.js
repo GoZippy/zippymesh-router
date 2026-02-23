@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getWalletBalance, getProviderNodes } from "@/lib/localDb.js";
+import { getProviderNodes } from "@/lib/localDb.js";
+import { getWalletBalance } from "@/lib/sidecar.js";
 
 export async function GET() {
     try {

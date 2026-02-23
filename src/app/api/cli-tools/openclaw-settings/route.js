@@ -1,16 +1,15 @@
-"use server";
+
 
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
-import path from "path";
 import os from "os";
 
 const execAsync = promisify(exec);
 
-const getOpenClawDir = () => path.join(os.homedir(), ".openclaw");
-const getOpenClawSettingsPath = () => path.join(getOpenClawDir(), "openclaw.json");
+const getOpenClawDir = () => `${os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]()}/.openclaw`;
+const getOpenClawSettingsPath = () => `${getOpenClawDir()}/openclaw.json`;
 
 // Check if openclaw CLI is installed
 const checkOpenClawInstalled = async () => {
@@ -46,7 +45,7 @@ const hasZippyMeshConfig = (settings) => {
 export async function GET() {
   try {
     const isInstalled = await checkOpenClawInstalled();
-    
+
     if (!isInstalled) {
       return NextResponse.json({
         installed: false,
@@ -203,7 +202,7 @@ export async function DELETE() {
     // Remove ZippyMesh from models.providers
     if (settings.models && settings.models.providers) {
       delete settings.models.providers["zippymesh"];
-      
+
       // Remove providers object if empty
       if (Object.keys(settings.models.providers).length === 0) {
         delete settings.models.providers;

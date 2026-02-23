@@ -1,3 +1,5 @@
+import { encode } from 'gpt-tokenizer';
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -12,7 +14,7 @@ export async function OPTIONS() {
 }
 
 /**
- * POST /v1/messages/count_tokens - Mock token count response
+ * POST /v1/messages/count_tokens - Standard OpenAI Token count response
  */
 export async function POST(request) {
   let body;
@@ -25,23 +27,24 @@ export async function POST(request) {
     });
   }
 
-  // Estimate token count based on content length
+  // Estimate token count based on content string
   const messages = body.messages || [];
-  let totalChars = 0;
+  let combinedText = "";
   for (const msg of messages) {
     if (typeof msg.content === "string") {
-      totalChars += msg.content.length;
+      combinedText += msg.content + "\n";
     } else if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (part.type === "text" && part.text) {
-          totalChars += part.text.length;
+          combinedText += part.text + "\n";
         }
       }
     }
   }
 
-  // Rough estimate: ~4 chars per token
-  const inputTokens = Math.ceil(totalChars / 4);
+  // Perform true BPE token encoding
+  const tokens = encode(combinedText);
+  const inputTokens = tokens.length;
 
   return new Response(JSON.stringify({
     input_tokens: inputTokens

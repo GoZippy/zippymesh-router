@@ -1,5 +1,5 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
-import { getProviderConnections, getCombos } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getDb } from "@/lib/localDb";
 import { getSidecarPeers } from "@/lib/sidecar";
 
 /**
@@ -96,6 +96,26 @@ export async function GET() {
             });
           }
         }
+      }
+    }
+
+    // Add cached Kilo models
+    const db = await getDb();
+    const cached = db.data.cachedModels?.kilo || {};
+    for (const [baseUrl, entry] of Object.entries(cached)) {
+      for (const m of entry.list || []) {
+        if (!m?.id) continue;
+        const id = `kilo/${m.id}`;
+        models.push({
+          id,
+          object: "model",
+          created: timestamp,
+          owned_by: "kilo",
+          permission: [],
+          root: m.id,
+          parent: null,
+          zippy: { source: "kilo-cache", baseUrl, fetchedAt: entry.fetchedAt, raw: m },
+        });
       }
     }
 

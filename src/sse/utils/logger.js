@@ -9,6 +9,21 @@ const LOG_LEVELS = {
 
 const LEVEL = LOG_LEVELS.DEBUG;
 
+let zippyNodeManager = null;
+try {
+  if (typeof require !== 'undefined') {
+    zippyNodeManager = require("../../../sidecar/zippy-node-manager.js");
+  }
+} catch (e) { }
+
+function pushToDevTools(type, tag, message, dataStr) {
+  if (zippyNodeManager && typeof zippyNodeManager._addLog === 'function') {
+    try {
+      zippyNodeManager._addLog(`[${tag}] ${message}${dataStr}`, type);
+    } catch (e) { }
+  }
+}
+
 function formatTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false });
 }
@@ -26,14 +41,18 @@ function formatData(data) {
 export function debug(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.DEBUG) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`);
+    const logStr = `[${formatTime()}] 🔍 [${tag}] ${message}${dataStr}`;
+    console.log(logStr);
+    pushToDevTools('system', tag, message, dataStr);
   }
 }
 
 export function info(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.INFO) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`);
+    const logStr = `[${formatTime()}] ℹ️  [${tag}] ${message}${dataStr}`;
+    console.log(logStr);
+    pushToDevTools('system', tag, message, dataStr);
   }
 }
 
@@ -41,13 +60,16 @@ export function warn(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.WARN) {
     const dataStr = data ? ` ${formatData(data)}` : "";
     // console.warn(`[${formatTime()}] ⚠️  [${tag}] ${message}${dataStr}`);
+    pushToDevTools('system', tag, `⚠️ ${message}`, dataStr);
   }
 }
 
 export function error(tag, message, data) {
   if (LEVEL <= LOG_LEVELS.ERROR) {
     const dataStr = data ? ` ${formatData(data)}` : "";
-    console.log(`[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`);
+    const logStr = `[${formatTime()}] ❌ [${tag}] ${message}${dataStr}`;
+    console.log(logStr);
+    pushToDevTools('error', tag, message, dataStr);
   }
 }
 

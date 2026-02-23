@@ -68,7 +68,7 @@ export async function POST(request, { params }) {
     console.log(`[OAuth] POST /api/oauth/${provider}/${action}`, { bodyKeys: Object.keys(body) });
 
     if (action === "exchange") {
-      const { code, redirectUri, codeVerifier, state } = body;
+      const { code, redirectUri, codeVerifier, state, connectionId } = body;
       console.log(`[OAuth] Exchanging code for ${provider}`, { code: code?.substring(0, 10) + "...", redirectUri });
 
       if (!code || !redirectUri || !codeVerifier) {
@@ -79,14 +79,26 @@ export async function POST(request, { params }) {
       const tokenData = await exchangeTokens(provider, code, redirectUri, codeVerifier, state);
 
       // Save to database
+      console.log(`[OAuth] Saving connection for ${provider} (${tokenData.email || 'no email'})`);
       const connection = await createProviderConnection({
         provider,
         authType: "oauth",
+        connectionId,
         ...tokenData,
         expiresAt: tokenData.expiresIn
           ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
           : null,
         testStatus: "active",
+        // Explicitly clear any existing errors/cooldowns
+        lastError: null,
+        lastErrorAt: null,
+        rateLimitedUntil: null,
+      });
+
+      console.log(`[OAuth] Connection successfully ${connection.updatedAt === connection.createdAt ? 'created' : 'updated'} for ${provider}`, {
+        id: connection.id,
+        email: connection.email,
+        status: connection.testStatus
       });
 
       // Auto sync to Cloud if enabled
@@ -106,7 +118,7 @@ export async function POST(request, { params }) {
     }
 
     if (action === "poll") {
-      const { deviceCode, codeVerifier, extraData } = body;
+      const { deviceCode, codeVerifier, extraData, connectionId } = body;
 
       if (!deviceCode) {
         return NextResponse.json({ error: "Missing device code" }, { status: 400 });
@@ -129,14 +141,25 @@ export async function POST(request, { params }) {
 
       if (result.success) {
         // Save to database
+        console.log(`[OAuth] Saving device code connection for ${provider}`);
         const connection = await createProviderConnection({
           provider,
           authType: "oauth",
+          connectionId,
           ...result.tokens,
           expiresAt: result.tokens.expiresIn
             ? new Date(Date.now() + result.tokens.expiresIn * 1000).toISOString()
             : null,
           testStatus: "active",
+          // Explicitly clear any existing errors/cooldowns
+          lastError: null,
+          lastErrorAt: null,
+          rateLimitedUntil: null,
+        });
+
+        console.log(`[OAuth] Device code connection successfully synced for ${provider}`, {
+          id: connection.id,
+          status: connection.testStatus
         });
 
         // Auto sync to Cloud if enabled

@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Card } from '@/shared/components/ui/card';
-import { Button } from '@/shared/components/ui/button';
-import { Input } from '@/shared/components/ui/input';
+import { Card } from '@/shared/components/Card';
+import { Button } from '@/shared/components/Button';
+import { Input } from '@/shared/components/Input';
 import { getWalletBalance, getPricingConfig, setPricingConfig } from '@/lib/sidecar';
 
 export default function MonetizationPage() {

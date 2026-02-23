@@ -105,3 +105,32 @@ export async function getWalletBalance() {
         return { balance: 0, currency: 'ZIP' };
     }
 }
+
+/**
+ * Get Wallet Transactions.
+ */
+export async function getWalletTransactions() {
+    try {
+        const res = await fetch(`${SIDECAR_URL}/wallet/transactions`);
+        if (!res.ok) return [];
+        return await res.json();
+    } catch (error) {
+        console.error("Error fetching transactions:", error);
+        return [];
+    }
+}
+
+/**
+ * Get Wallet Earnings.
+ */
+export async function getWalletEarnings() {
+    try {
+        const res = await fetch(`${SIDECAR_URL}/wallet/earnings`);
+        if (!res.ok) return 0;
+        const data = await res.json();
+        return data.earnings || 0;
+    } catch (error) {
+        console.error("Error fetching earnings:", error);
+        return 0;
+    }
+}

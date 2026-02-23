@@ -121,7 +121,7 @@ export class LocalDiscoveryService {
 
         this.udpSocket.bind(this.beaconPort);
 
-        this.beaconTimer = setInterval(() => {
+        this.beaconTimer = setInterval(async () => {
             try {
                 const identity = await getNodeIdentity();
                 const payload = {

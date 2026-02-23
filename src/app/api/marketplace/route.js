@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getP2pOffers, getP2pSubscriptions, createP2pSubscription, updateP2pOffers, getProviderNodes, getP2pEarnings, getWalletBalance, getP2pTransactions } from "@/lib/localDb";
+import { getP2pOffers, getP2pSubscriptions, createP2pSubscription, updateP2pOffers, getProviderNodes } from "@/lib/localDb";
+import { getWalletBalance, getWalletEarnings, getWalletTransactions } from "@/lib/sidecar";
 
 /**
  * GET /api/marketplace
@@ -13,9 +14,9 @@ export async function GET() {
         // Refresh offers from discovered nodes
         const offers = await updateP2pOffers(peerNodes);
         const subscriptions = await getP2pSubscriptions();
-        const earnings = await getP2pEarnings();
+        const earnings = await getWalletEarnings();
         const balance = await getWalletBalance();
-        const transactions = await getP2pTransactions();
+        const transactions = await getWalletTransactions();
 
         return NextResponse.json({
             success: true,

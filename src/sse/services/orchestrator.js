@@ -1,6 +1,7 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
-import { appendRequestLog, updateProviderConnection, getP2pSubscriptions, recordP2pTransaction, getPricingForModel, getNodeIdentity } from "@/lib/localDb.js";
+import { updateProviderConnection, getP2pSubscriptions, getPricingForModel, getNodeIdentity } from "@/lib/localDb.js";
+import { appendRequestLog } from "@/lib/usageDb.js";
 import { signPayload, verifyPayload } from "@/lib/security.js";
 import { calculateCostFromTokens } from "@/shared/constants/pricing.js";
 import { errorResponse } from "open-sse/utils/error.js";
@@ -89,11 +90,15 @@ async function _executeOrchestratedChat(params) {
 
     // Filter candidates by P2P Subscription if they are peer nodes
     const subscriptions = await getP2pSubscriptions();
-    const authorizedCandidates = candidates.filter(cand => {
-        if (cand.provider !== "peer") return true;
+    const authorizedCandidates = [];
+    for (const cand of candidates) {
+        if (cand.provider !== "peer") {
+            authorizedCandidates.push(cand);
+            continue;
+        }
         const nodeId = cand.connection.providerSpecificData?.nodeId;
         const sub = subscriptions.find(s => s.offerId === nodeId && s.status === "active");
-        if (!sub) return false;
+        if (!sub) continue;
 
         // Verify sub signature if it exists (Phase 12)
         if (sub.signature) {
@@ -101,14 +106,14 @@ async function _executeOrchestratedChat(params) {
                 const identity = await getNodeIdentity();
                 // We verify with OUR own public key because we signed it
                 await verifyPayload(sub.signature, identity.publicKey);
-                return true;
+                authorizedCandidates.push(cand);
             } catch (e) {
                 log?.error?.("ORCHESTRATOR", `Subscription signature verification failed for node ${nodeId}`);
-                return false;
             }
+        } else {
+            authorizedCandidates.push(cand);
         }
-        return true;
-    });
+    }
 
     if (authorizedCandidates.length === 0 && candidates.some(c => c.provider === "peer")) {
         return errorResponse(403, "Subscription required to access peer nodes. Visit the Marketplace.");

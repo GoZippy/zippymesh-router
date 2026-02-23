@@ -1,16 +1,15 @@
-"use server";
+
 
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
-import path from "path";
 import os from "os";
 
 const execAsync = promisify(exec);
 
-const getDroidDir = () => path.join(os.homedir(), ".factory");
-const getDroidSettingsPath = () => path.join(getDroidDir(), "settings.json");
+const getDroidDir = () => `${os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]()}/.factory`;
+const getDroidSettingsPath = () => `${getDroidDir()}/settings.json`;
 
 // Check if droid CLI is installed
 const checkDroidInstalled = async () => {
@@ -46,7 +45,7 @@ const hasZippyMeshConfig = (settings) => {
 export async function GET() {
   try {
     const isInstalled = await checkDroidInstalled();
-    
+
     if (!isInstalled) {
       return NextResponse.json({
         installed: false,
@@ -73,7 +72,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, model } = await request.json();
-    
+
     if (!baseUrl || !model) {
       return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
     }
@@ -154,7 +153,7 @@ export async function DELETE() {
     // Remove ZippyMesh customModels
     if (settings.customModels) {
       settings.customModels = settings.customModels.filter(m => m.id !== "custom:ZippyMesh-0");
-      
+
       // Remove customModels array if empty
       if (settings.customModels.length === 0) {
         delete settings.customModels;

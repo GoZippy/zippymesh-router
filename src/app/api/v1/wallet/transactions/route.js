@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getP2pTransactions } from "@/lib/localDb.js";
+import { getWalletTransactions } from "@/lib/sidecar.js";
 
 export async function GET() {
     try {
-        const transactions = await getP2pTransactions();
+        const transactions = await getWalletTransactions();
 
         // Format for the Wallet UI
         const formatted = transactions.map(tx => ({

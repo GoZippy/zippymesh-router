@@ -92,8 +92,12 @@ export default function OverviewStats() {
                         <div className={`w-2 h-2 rounded-full ${statusColor} animate-pulse`} />
                         <span className="text-xs font-medium text-text-muted uppercase tracking-wide">{statusText}</span>
                     </div>
+                    {stats.isDemo && (
+                        <Badge variant="warning" className="font-black animate-bounce px-2">DEMO DATA ACTIVE</Badge>
+                    )}
                 </div>
                 <div className="text-sm text-text-muted">Last 24 Hours</div>
+
             </div>
 
             {/* KPI Cards */}

@@ -4,9 +4,13 @@ import { useState, useEffect } from "react";
 import { Badge, Toggle } from "@/shared/components";
 import { getSidecarHealth, getSidecarInfo, getWalletBalance } from "@/lib/sidecar";
 import { useDevMode } from "./DevModeContext";
+import { useSettings } from "@/shared/hooks";
 
 export default function ZippyStatusBar() {
     const { isDevOpen, toggleDevMode } = useDevMode();
+    const { settings, updateSettings } = useSettings();
+    const isDemoMode = settings?.isDemoMode || false;
+
     const [isConnected, setIsConnected] = useState(false);
     const [nodeInfo, setNodeInfo] = useState(null);
     const [walletInfo, setWalletInfo] = useState({ balance: 0, currency: 'ZIP' });
@@ -18,28 +22,51 @@ export default function ZippyStatusBar() {
 
     useEffect(() => {
         const checkStatus = async () => {
-            const healthy = await getSidecarHealth();
-            setIsConnected(healthy);
+            try {
+                const res = await fetch("/api/zippy/node");
+                if (res.ok) {
+                    const data = await res.json();
 
-            if (healthy) {
-                const info = await getSidecarInfo();
-                setNodeInfo(info);
-                if (info.stats) setNetworkStats(info.stats);
+                    // If in demo mode, override status
+                    if (isDemoMode) {
+                        setIsConnected(true);
+                        setNodeInfo({ node_id: "demo_node_123456789", status: "running" });
+                        setNetworkStats({ peerCount: 42, health: 98 });
+                        return;
+                    }
 
-                const balance = await getWalletBalance();
-                setWalletInfo(balance);
-            } else {
-                setNodeInfo(null);
+                    const running = data.status === "running";
+                    setIsConnected(running);
+                    setNodeInfo(data);
+
+                    if (data.stats) {
+                        setNetworkStats(data.stats);
+                    }
+                } else {
+                    if (isDemoMode) {
+                        setIsConnected(true);
+                        setNodeInfo({ node_id: "demo_node_123456789", status: "running" });
+                        setNetworkStats({ peerCount: 42, health: 98 });
+                    } else {
+                        setIsConnected(false);
+                        setNodeInfo(null);
+                    }
+                }
+            } catch (error) {
+                console.error("Status check failed:", error);
+                if (!isDemoMode) setIsConnected(false);
+            } finally {
+                setIsLoading(false);
             }
-            setIsLoading(false);
         };
 
         checkStatus();
         const interval = setInterval(checkStatus, 5000);
         return () => clearInterval(interval);
-    }, []);
+    }, [isDemoMode]);
 
     const handleToggle = async (enabled) => {
+        if (isDemoMode) return; // Disable node control in demo mode
         setIsLoading(true);
         try {
             const res = await fetch("/api/zippy/node", {
@@ -64,6 +91,14 @@ export default function ZippyStatusBar() {
         }
     };
 
+    const handleDemoToggle = async () => {
+        try {
+            await updateSettings({ isDemoMode: !isDemoMode });
+        } catch (error) {
+            console.error("Failed to toggle demo mode:", error);
+        }
+    };
+
     const protocolVersion = "1.0";
     const walletAddress = nodeInfo?.node_id ? `${nodeInfo.node_id.substring(0, 6)}...${nodeInfo.node_id.substring(nodeInfo.node_id.length - 4)}` : "Not connected";
 
@@ -77,6 +112,9 @@ export default function ZippyStatusBar() {
                 <Badge variant={isConnected ? "success" : "secondary"} className="scale-90">
                     {isConnected ? "Connected" : "Offline"}
                 </Badge>
+                {isDemoMode && (
+                    <Badge variant="warning" className="scale-75 font-black px-1 py-0! opacity-80">DEMO</Badge>
+                )}
             </div>
 
             <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
@@ -115,13 +153,24 @@ export default function ZippyStatusBar() {
             <div className="h-4 w-px bg-black/10 dark:bg-white/10" />
 
             <div className="flex items-center gap-4 ml-2">
-                <button
-                    onClick={toggleDevMode}
-                    className={`flex flex-col items-center gap-0.5 group px-2 py-0.5 rounded-md transition-all ${isDevOpen ? 'bg-orange-500/20 text-orange-500' : 'hover:bg-white/5 text-text-muted'}`}
-                >
-                    <span className="material-symbols-outlined text-sm">terminal</span>
-                    <span className={`text-[8px] uppercase font-black ${isDevOpen ? 'text-orange-500' : 'text-text-muted group-hover:text-primary'}`}>Dev Mode</span>
-                </button>
+                <div className="flex items-center gap-1 bg-black/5 dark:bg-white/5 p-0.5 rounded-lg border border-border/50">
+                    <button
+                        onClick={toggleDevMode}
+                        title="Toggle Developer Tools"
+                        className={`flex flex-col items-center gap-0 group px-2 py-0.5 rounded transition-all ${isDevOpen ? 'bg-primary/20 text-primary' : 'hover:bg-white/5 text-text-muted'}`}
+                    >
+                        <span className="material-symbols-outlined text-[14px]">terminal</span>
+                        <span className={`text-[7px] uppercase font-black ${isDevOpen ? 'text-primary' : 'text-text-muted group-hover:text-primary'}`}>Dev</span>
+                    </button>
+                    <button
+                        onClick={handleDemoToggle}
+                        title="Toggle Demo Mode (Simulated Data)"
+                        className={`flex flex-col items-center gap-0 group px-2 py-0.5 rounded transition-all ${isDemoMode ? 'bg-orange-500/20 text-orange-500' : 'hover:bg-white/5 text-text-muted'}`}
+                    >
+                        <span className="material-symbols-outlined text-[14px]">visibility</span>
+                        <span className={`text-[7px] uppercase font-black ${isDemoMode ? 'text-orange-500' : 'text-text-muted group-hover:text-primary'}`}>Demo</span>
+                    </button>
+                </div>
 
                 <div className="flex flex-col items-center gap-0.5">
                     <span className="opacity-50 scale-75 uppercase font-bold tracking-widest leading-none">Node</span>
@@ -129,6 +178,7 @@ export default function ZippyStatusBar() {
                         enabled={isConnected}
                         onChange={handleToggle}
                         size="sm"
+                        disabled={isDemoMode}
                     />
                 </div>
 
@@ -140,11 +190,12 @@ export default function ZippyStatusBar() {
                         </div>
                         <div className="flex flex-col items-end">
                             <span className="opacity-50 scale-75 origin-right uppercase font-bold tracking-widest">Balance</span>
-                            <span className="font-bold text-primary">{walletInfo.balance} {walletInfo.currency}</span>
+                            <span className="font-bold text-primary">{isDemoMode ? "10,240.0" : walletInfo.balance} {walletInfo.currency}</span>
                         </div>
                     </div>
                 )}
             </div>
+
 
         </div>
     );

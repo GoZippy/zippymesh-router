@@ -18,6 +18,7 @@ export default function ProviderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [providerNode, setProviderNode] = useState(null);
   const [showOAuthModal, setShowOAuthModal] = useState(false);
+  const [reauthConnectionId, setReauthConnectionId] = useState(null);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
@@ -124,7 +125,17 @@ export default function ProviderDetailPage() {
   useEffect(() => {
     fetchConnections();
     fetchAliases();
-  }, [fetchConnections, fetchAliases]);
+
+    // Listen for re-auth requests from edit modal
+    const handleReauth = (e) => {
+      if (e.detail?.provider === providerId) {
+        setReauthConnectionId(e.detail?.connectionId || null);
+        setShowOAuthModal(true);
+      }
+    };
+    window.addEventListener("trigger-oauth-flow", handleReauth);
+    return () => window.removeEventListener("trigger-oauth-flow", handleReauth);
+  }, [fetchConnections, fetchAliases, providerId]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
@@ -170,10 +181,10 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleOAuthSuccess = () => {
+  const handleOAuthSuccess = useCallback(() => {
     fetchConnections();
     setShowOAuthModal(false);
-  };
+  }, [fetchConnections]);
 
   const handleSaveApiKey = async (formData) => {
     try {
@@ -204,6 +215,49 @@ export default function ProviderDetailPage() {
       }
     } catch (error) {
       console.log("Error updating connection:", error);
+    }
+  };
+
+  const handleSwapPriority = async (conn1, conn2) => {
+    if (!conn1 || !conn2) return;
+
+    // If priorities are identical, derive them from their sorted positions
+    let p1 = conn1.priority || 1;
+    let p2 = conn2.priority || 1;
+    if (p1 === p2) {
+      const sorted = [...connections].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+      const i1 = sorted.findIndex(c => c.id === conn1.id);
+      const i2 = sorted.findIndex(c => c.id === conn2.id);
+      p1 = i1 + 1;
+      p2 = i2 + 1;
+    }
+
+    // Optimistic UI update
+    setConnections(prev => {
+      return prev.map(c => {
+        if (c.id === conn1.id) return { ...c, priority: p2 };
+        if (c.id === conn2.id) return { ...c, priority: p1 };
+        return c;
+      });
+    });
+
+    try {
+      await Promise.all([
+        fetch(`/api/providers/${conn1.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priority: p2 }),
+        }),
+        fetch(`/api/providers/${conn2.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priority: p1 }),
+        })
+      ]);
+      await fetchConnections();
+    } catch (error) {
+      console.log("Error swapping priority:", error);
+      await fetchConnections();
     }
   };
 
@@ -250,42 +304,7 @@ export default function ProviderDetailPage() {
     return false;
   };
 
-  const handleSwapPriority = async (conn1, conn2) => {
-    if (!conn1 || !conn2) return;
-    try {
-      // If they have the same priority, we need to ensure the one moving up
-      // gets a lower value than the one moving down.
-      // We use a small offset which the backend re-indexing will fix.
-      let p1 = conn2.priority;
-      let p2 = conn1.priority;
 
-      if (p1 === p2) {
-        // If moving conn1 "up" (index decreases)
-        const isConn1MovingUp = connections.indexOf(conn1) > connections.indexOf(conn2);
-        if (isConn1MovingUp) {
-          p1 = conn2.priority - 0.5;
-        } else {
-          p1 = conn2.priority + 0.5;
-        }
-      }
-
-      await Promise.all([
-        fetch(`/api/providers/${conn1.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: p1 }),
-        }),
-        fetch(`/api/providers/${conn2.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: p2 }),
-        }),
-      ]);
-      await fetchConnections();
-    } catch (error) {
-      console.log("Error swapping priority:", error);
-    }
-  };
 
   const renderModelsSection = () => {
     if (isCompatible) {
@@ -300,6 +319,7 @@ export default function ProviderDetailPage() {
           onDeleteAlias={handleDeleteAlias}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
+          node={providerNode}
         />
       );
     }
@@ -516,22 +536,34 @@ export default function ProviderDetailPage() {
         <KiroOAuthWrapper
           isOpen={showOAuthModal}
           providerInfo={providerInfo}
+          connectionId={reauthConnectionId}
           onSuccess={handleOAuthSuccess}
-          onClose={() => setShowOAuthModal(false)}
+          onClose={() => {
+            setShowOAuthModal(false);
+            setReauthConnectionId(null);
+          }}
         />
       ) : providerId === "cursor" ? (
         <CursorAuthModal
           isOpen={showOAuthModal}
+          connectionId={reauthConnectionId}
           onSuccess={handleOAuthSuccess}
-          onClose={() => setShowOAuthModal(false)}
+          onClose={() => {
+            setShowOAuthModal(false);
+            setReauthConnectionId(null);
+          }}
         />
       ) : (
         <OAuthModal
           isOpen={showOAuthModal}
           provider={providerId}
           providerInfo={providerInfo}
+          connectionId={reauthConnectionId}
           onSuccess={handleOAuthSuccess}
-          onClose={() => setShowOAuthModal(false)}
+          onClose={() => {
+            setShowOAuthModal(false);
+            setReauthConnectionId(null);
+          }}
         />
       )}
       <AddApiKeyModal
@@ -720,18 +752,25 @@ function PassthroughModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias
   );
 }
 
-PassthroughModelRow.propTypes = {
-  modelId: PropTypes.string.isRequired,
-  fullModel: PropTypes.string.isRequired,
+CompatibleModelsSection.propTypes = {
+  providerStorageAlias: PropTypes.string.isRequired,
+  providerDisplayAlias: PropTypes.string.isRequired,
+  modelAliases: PropTypes.object.isRequired,
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
+  onSetAlias: PropTypes.func.isRequired,
   onDeleteAlias: PropTypes.func.isRequired,
+  connections: PropTypes.array.isRequired,
+  isAnthropic: PropTypes.bool.isRequired,
+  node: PropTypes.object,
 };
 
-function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias, connections, isAnthropic }) {
+function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias, connections, isAnthropic, node }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [syncingKilo, setSyncingKilo] = useState(false);
+  const [kiloSyncStats, setKiloSyncStats] = useState(null);
 
   const providerAliases = Object.entries(modelAliases).filter(
     ([, model]) => model.startsWith(`${providerStorageAlias}/`)
@@ -813,10 +852,58 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
     }
   };
 
+  const handleSyncKilo = async () => {
+    if (syncingKilo || !node) return;
+    setSyncingKilo(true);
+    setKiloSyncStats(null);
+    try {
+      const activeConn = connections.find(c => c.isActive !== false) || connections[0];
+      const apiKey = activeConn?.apiKey || "";
+      const res = await fetch("/api/providers/kilo/sync-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodeId: node.id, apiKey }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setKiloSyncStats(`Synced ${data.count} models at ${new Date(data.fetchedAt).toLocaleTimeString()}`);
+      } else {
+        setKiloSyncStats(`Sync failed: ${data.error}`);
+      }
+    } catch (error) {
+      setKiloSyncStats("Failed to sync models");
+    } finally {
+      setSyncingKilo(false);
+    }
+  };
+
   const canImport = connections.some((conn) => conn.isActive !== false);
+  const isKiloNode = node?.baseUrl?.includes("kilo.ai");
 
   return (
     <div className="flex flex-col gap-4">
+      {isKiloNode && (
+        <div className="flex items-center gap-4 bg-primary/5 border border-primary/20 p-4 rounded-xl">
+          <div className="flex-1">
+            <h3 className="font-semibold mb-1">Kilo Auto-Sync</h3>
+            <p className="text-sm text-text-muted">
+              Automatically fetch and merge the latest Kilo/OpenRouter generic models into the global `/v1/models` route. Add an API key connection above if you want to sync premium models.
+            </p>
+            {kiloSyncStats && (
+              <p className="text-xs text-primary mt-2 font-medium">{kiloSyncStats}</p>
+            )}
+          </div>
+          <Button
+            onClick={handleSyncKilo}
+            disabled={syncingKilo || connections.length === 0}
+            icon={syncingKilo ? "sync" : "cloud_download"}
+            className={syncingKilo ? "animate-spin-slow" : ""}
+          >
+            {syncingKilo ? "Syncing..." : "Sync Models from Kilo"}
+          </Button>
+        </div>
+      )}
+
       <p className="text-sm text-text-muted">
         Add {isAnthropic ? "Anthropic" : "OpenAI"}-compatible models manually or import them from the /models endpoint.
       </p>
@@ -1325,10 +1412,25 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder={isOAuth ? "Account name" : "Production Key"}
         />
-        {isOAuth && connection.email && (
-          <div className="bg-sidebar/50 p-3 rounded-lg">
-            <p className="text-sm text-text-muted mb-1">Email</p>
-            <p className="font-medium">{connection.email}</p>
+        {isOAuth && (
+          <div className="bg-sidebar/50 p-3 rounded-lg flex items-center justify-between">
+            <div>
+              <p className="text-sm text-text-muted mb-1">{connection.email ? "Email" : "Account Type"}</p>
+              <p className="font-medium">{connection.email || "Local OAuth Connection"}</p>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="refresh"
+              onClick={() => {
+                onClose(); // Close edit modal
+                // Detail page has the OAuthModal and we can trigger it
+                // We assume there's a global way or we need to pass a callback
+                window.dispatchEvent(new CustomEvent("trigger-oauth-flow", { detail: { provider: connection.provider } }));
+              }}
+            >
+              Re-authenticate
+            </Button>
           </div>
         )}
         <Input

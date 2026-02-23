@@ -23,7 +23,8 @@ export const APIKEY_PROVIDERS = {
   cerebras: { id: "cerebras", alias: "cerebras", name: "Cerebras", icon: "memory", color: "#FF6B00", textIcon: "CB", freeTier: true, helpText: "Free tier available at cloud.cerebras.ai. World's fastest inference." },
   github_models: { id: "github_models", alias: "github_models", name: "GitHub Models", icon: "hub", color: "#238636", textIcon: "GM", freeTier: true, helpText: "Free via GitHub account at github.com/marketplace/models. Uses your GitHub Personal Access Token." },
   cohere: { id: "cohere", alias: "cohere", name: "Cohere", icon: "psychology", color: "#D18EE2", textIcon: "CO", freeTier: true, helpText: "Free trial tier available at cohere.com. Command and Embed models." },
-  // Paid API key providers
+  // Paid / Standard API key providers
+  kilo: { id: "kilo", alias: "kilo", name: "Kilo", icon: "bolt", color: "#FF6B35", textIcon: "KL", passthroughModels: true, freeTier: true, helpText: "Free generic models and premium capabilities. OpenRouter compatible." },
   openrouter: { id: "openrouter", alias: "openrouter", name: "OpenRouter", icon: "router", color: "#6366F1", textIcon: "OR", passthroughModels: true },
   glm: { id: "glm", alias: "glm", name: "GLM Coding", icon: "code", color: "#2563EB", textIcon: "GL" },
   kimi: { id: "kimi", alias: "kimi", name: "Kimi Coding", icon: "psychology", color: "#1E3A8A", textIcon: "KM" },

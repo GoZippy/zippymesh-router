@@ -28,7 +28,7 @@ export class ConnectionTester {
         };
 
         try {
-            // Use a mock/real request to verify the connection
+            // Send a real minimal request to verify the live connection
             const result = await handleChatCore({
                 body: testPayload,
                 modelInfo: { provider, model: testModel },

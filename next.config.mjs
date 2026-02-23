@@ -4,6 +4,14 @@ const nextConfig = {
   images: {
     unoptimized: true
   },
+  outputFileTracingExcludes: {
+    '*': [
+      '**/*/AppData/**',
+      '**/AppData/**',
+      '**/.config/**'
+    ],
+  },
+  outputFileTracingRoot: process.cwd(),
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle
     if (!isServer) {

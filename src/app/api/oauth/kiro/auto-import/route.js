@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import { readFile, readdir } from "fs/promises";
-import { homedir } from "os";
-import { join } from "path";
 
 /**
  * GET /api/oauth/kiro/auto-import
@@ -9,7 +7,9 @@ import { join } from "path";
  */
 export async function GET() {
   try {
-    const cachePath = join(homedir(), ".aws/sso/cache");
+    const getHome = () => require('os')[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]();
+    // Use string construction to evade Next.js NFT path tracing
+    const cachePath = `${getHome()}/.aws/sso/cache`;
 
     // Try to read cache directory
     let files;

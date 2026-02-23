@@ -23,14 +23,19 @@ class ZippyNodeManager extends EventEmitter {
             trustScore: 0,
             latency: 0,
             health: 0,
-            lastPoll: null
+            lastPoll: null,
+            monitorData: {
+                network: null,
+                peers: null,
+                metrics: null
+            }
         };
         this.pollInterval = null;
         const isWin = process.platform === 'win32';
         const binaryName = isWin ? 'zippycoin-node.exe' : 'zippycoin-node';
 
         this.config = {
-            binaryPath: process.env.ZIPPY_NODE_BIN || path.join(__dirname, '../bin', binaryName),
+            binaryPath: process.env.ZIPPY_NODE_BIN || path.join(process.cwd(), 'bin', binaryName),
             mode: 'edge', // edge, relay, full, validator
             broadcast: false,
             apiPort: 9480,
@@ -184,18 +189,37 @@ class ZippyNodeManager extends EventEmitter {
         try {
             // Standard eth calls
             const [blockHex, peerHex, trustData] = await Promise.all([
-                this._rpcRequest(rpcUrl, 'eth_blockNumber'),
-                this._rpcRequest(rpcUrl, 'net_peerCount'),
+                this._rpcRequest(rpcUrl, 'eth_blockNumber').catch(() => "0x0"),
+                this._rpcRequest(rpcUrl, 'net_peerCount').catch(() => "0x0"),
                 this._rpcRequest(rpcUrl, 'zippycoin_getTrustScore').catch(() => ({ score: 95 }))
             ]);
 
+            // Try fetching monitor data
+            let monitorData = { network: null, peers: null, metrics: null };
+            try {
+                const monitorUrl = `http://localhost:39474`;
+                const [networkRes, peersRes, metricsRes] = await Promise.all([
+                    axios.get(`${monitorUrl}/zippy/network`, { timeout: 2000 }).catch(() => null),
+                    axios.get(`${monitorUrl}/zippy/peers`, { timeout: 2000 }).catch(() => null),
+                    axios.get(`${monitorUrl}/zippy/metrics`, { timeout: 2000 }).catch(() => null)
+                ]);
+                monitorData = {
+                    network: networkRes?.data?.network || null,
+                    peers: peersRes?.data?.peers || null,
+                    metrics: metricsRes?.data?.metrics || null
+                };
+            } catch (e) {
+                // Monitor might not be available
+            }
+
             this.networkStats = {
-                blockHeight: parseInt(blockHex, 16),
-                peerCount: parseInt(peerHex, 16),
-                trustScore: trustData.score || 95,
+                blockHeight: blockHex ? parseInt(blockHex, 16) : 0,
+                peerCount: peerHex ? parseInt(peerHex, 16) : 0,
+                trustScore: trustData?.score || 95,
                 latency: Date.now() - startTime,
-                health: this._calculateHealth(parseInt(peerHex, 16), trustData.score || 95),
-                lastPoll: new Date().toISOString()
+                health: this._calculateHealth(peerHex ? parseInt(peerHex, 16) : 0, trustData?.score || 95),
+                lastPoll: new Date().toISOString(),
+                monitorData
             };
 
             this.emit('stats-update', this.networkStats);
