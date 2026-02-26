@@ -139,6 +139,14 @@ export const PROVIDER_MODELS = {
   minimax: [
     { id: "MiniMax-M2.1", name: "MiniMax M2.1" },
   ],
+  kilo: [
+    { id: "kilo/auto", name: "Kilo Auto (Best for Task)" },
+    { id: "minimax/minimax-m2.1:free", name: "MiniMax M2.1 (Free)" },
+    { id: "z-ai/glm-5:free", name: "GLM 5 (Free)" },
+    { id: "mistralai/mistral-7b-instruct:free", name: "Mistral 7B (Free)" },
+    { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet (Kilo)" },
+    { id: "openai/gpt-4o", name: "GPT-4o (Kilo)" },
+  ],
 };
 
 // Helper functions
@@ -182,6 +190,8 @@ export const PROVIDER_ID_TO_ALIAS = {
   antigravity: "ag",
   github: "gh",
   kiro: "kr",
+  kiro_api: "kiro",
+  kilo: "kilo",
   cursor: "cu",
   openai: "openai",
   anthropic: "anthropic",

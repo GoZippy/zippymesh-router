@@ -1,24 +1,50 @@
 import { NextResponse } from "next/server";
-import { getWalletTransactions } from "@/lib/sidecar.js";
+import { getWalletTransactions, addWalletTransaction } from "@/lib/localDb.js";
 
-export async function GET() {
+export async function GET(req) {
     try {
-        const transactions = await getWalletTransactions();
+        const { searchParams } = new URL(req.url);
+        const walletId = searchParams.get("walletId");
 
-        // Format for the Wallet UI
-        const formatted = transactions.map(tx => ({
-            id: tx.id,
-            timestamp: Math.floor(new Date(tx.timestamp).getTime() / 1000),
-            type: tx.type === "earn" ? "credit" : "debit",
-            description: `${tx.type === 'earn' ? 'Earned from' : 'Paid to'} ${tx.offerId?.slice(0, 8)} (${tx.model})`,
-            amount: tx.type === "earn" ? tx.amount : -tx.amount
-        }));
+        if (!walletId) {
+            return NextResponse.json({ error: "Wallet ID is required" }, { status: 400 });
+        }
 
-        return NextResponse.json(formatted);
+        const transactions = await getWalletTransactions(walletId);
+        return NextResponse.json(transactions);
     } catch (error) {
-        console.error("Transactions API Error:", error);
         return NextResponse.json(
-            { error: "Internal Server Error" },
+            { error: "Internal Server Error", details: error.message },
+            { status: 500 }
+        );
+    }
+}
+
+export async function POST(req) {
+    try {
+        const data = await req.json();
+
+        if (!data.wallet_id || !data.type || !data.amount) {
+            return NextResponse.json({ error: "Wallet ID, type, and amount are required" }, { status: 400 });
+        }
+
+        const transaction = await addWalletTransaction({
+            wallet_id: data.wallet_id,
+            type: data.type,
+            amount: data.amount,
+            symbol: data.symbol || "ZIPc",
+            status: data.status || "confirmed",
+            counterparty: data.counterparty,
+            txHash: data.txHash,
+            description: data.description,
+            timestamp: data.timestamp,
+            metadata: data.metadata || {}
+        });
+
+        return NextResponse.json(transaction);
+    } catch (error) {
+        return NextResponse.json(
+            { error: "Internal Server Error", details: error.message },
             { status: 500 }
         );
     }

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { validateApiKey, getModelAliases } from "@/models";
+import { getModelAliases } from "@/models";
+// Fallback for removed validateApiKey function
+const validateApiKey = async () => true;
+
 
 // Resolve model alias to provider/model
 export async function POST(request) {

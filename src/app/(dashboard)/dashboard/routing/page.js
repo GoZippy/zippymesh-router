@@ -425,6 +425,8 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
         { label: "Intent (e.g. code)", value: "intent" },
         { label: "Prefix (e.g. gpt-4)", value: "prefix" },
         { label: "Model ID Match", value: "model" },
+        { label: "Sort: Cheapest", value: "sort-by-cheapest" },
+        { label: "Sort: Fastest", value: "sort-by-fastest" },
         { label: "Stack Order (Failover)", value: "stack" }
     ];
 
@@ -477,14 +479,14 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                             onChange={e => setNewType(e.target.value)}
                         />
                         <Input
-                            label={newType === "stack" ? "Target Scope (e.g. 'all' or model prefix)" : "Value"}
-                            placeholder={newType === "intent" ? "code" : (newType === "stack" ? "all" : "gpt-4")}
+                            label={newType === "stack" ? "Target Scope (e.g. 'all' or model prefix)" : (newType.startsWith("sort-") ? "Scope (e.g. '*')" : "Value")}
+                            placeholder={newType === "intent" ? "code" : (newType === "stack" ? "all" : (newType.startsWith("sort-") ? "*" : "gpt-4"))}
                             value={newValue}
                             onChange={e => setNewValue(e.target.value)}
                         />
                         <Select
-                            label={newType === "stack" ? "Add to Stack" : "Target"}
-                            options={targetOptions}
+                            label={newType === "stack" ? "Add to Stack" : (newType.startsWith("sort-") ? "Target (Optional)" : "Target")}
+                            options={[{ label: "Any (*)", value: "*" }, ...targetOptions]}
                             value={newType === "stack" ? "" : newTarget}
                             placeholder={loadingTargets ? "Loading..." : (newType === "stack" ? "Select models in order..." : "Select target")}
                             onChange={e => {

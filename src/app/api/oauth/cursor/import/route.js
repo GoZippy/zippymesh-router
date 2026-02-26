@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { CursorService } from "@/lib/oauth/services/cursor";
-import { createProviderConnection, isCloudEnabled } from "@/models";
+import { createProviderConnection } from "@/models";
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 

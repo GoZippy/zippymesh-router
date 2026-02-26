@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
     try {
-        const sidecarUrl = process.env.SIDE_CAR_URL || 'http://localhost:9000';
+        const sidecarUrl = process.env.SIDE_CAR_URL || 'http://localhost:9480';
         const res = await fetch(`${sidecarUrl}/health`, {
             method: "GET",
             // Short timeout to avoid blocking UI

@@ -30,38 +30,80 @@ export class LocalDiscoveryService {
     }
 
     /**
-     * Scan for local services
+     * Scan for local services including subnet-wide discovery
      */
     async scan() {
+        console.log("[Discovery] Starting local network scan...");
         const results = [];
+        const targets = [...this.scanTargets];
         const existingNodes = await getProviderNodes();
 
-        for (const target of this.scanTargets) {
-            for (const { port, type, name } of this.commonPorts) {
-                const url = `http://${target}:${port}`;
-                const isFound = await this.probe(url, type);
+        // Discover local subnet
+        try {
+            const interfaces = os.networkInterfaces();
+            for (const name of Object.keys(interfaces)) {
+                for (const iface of interfaces[name]) {
+                    // Skip internal and non-IPv4 addresses
+                    if (iface.internal || iface.family !== 'IPv4') continue;
 
-                if (isFound) {
-                    // Check if already exists
-                    const exists = existingNodes.find(n => n.baseUrl === url || n.baseUrl === `${url}/v1`);
-                    if (!exists) {
-                        results.push({
-                            type: "local",
-                            name: `${name} (${target})`,
-                            baseUrl: type === "ollama" ? url : `${url}/v1`,
-                            apiType: type === "ollama" ? "ollama" : "openai",
-                            prefix: `local-${type}-`
-                        });
+                    // Get first 3 octets
+                    const subnet = iface.address.split('.').slice(0, 3).join('.');
+                    console.log(`[Discovery] Detected subnet from ${iface.address}: ${subnet}.0/24`);
+
+                    // Add all IPs in subnet (1-254)
+                    for (let i = 1; i <= 254; i++) {
+                        const ip = `${subnet}.${i}`;
+                        if (!targets.includes(ip)) targets.push(ip);
                     }
                 }
             }
+        } catch (err) {
+            console.error("[Discovery] Failed to detect subnet:", err);
         }
+
+        const uniqueTargets = [...new Set(targets)];
+        console.log(`[Discovery] Probing ${uniqueTargets.length} potential targets...`);
+
+        // Scan in batches to avoid overwhelming the network/system
+        const batchSize = 15;
+        for (let i = 0; i < uniqueTargets.length; i += batchSize) {
+            const batch = uniqueTargets.slice(i, i + batchSize);
+            const batchPromises = batch.flatMap(target =>
+                this.commonPorts.map(async ({ port, type, name }) => {
+                    const url = `http://${target}:${port}`;
+                    const isFound = await this.probe(url, type);
+
+                    if (isFound) {
+                        // Check if already exists
+                        const exists = existingNodes.find(n => n.baseUrl === url || n.baseUrl === `${url}/v1`);
+                        if (!exists) {
+                            results.push({
+                                type: "local",
+                                name: `${name} (${target})`,
+                                baseUrl: type === "ollama" ? url : `${url}/v1`,
+                                apiType: type === "ollama" ? "ollama" : "openai",
+                                prefix: `local-${type}-`,
+                                target,
+                                port
+                            });
+                        }
+                    }
+                })
+            );
+            await Promise.all(batchPromises);
+        }
+
+        console.log(`[Discovery] Scan complete. Found ${results.length} new nodes.`);
 
         // Auto-provision discovered nodes
         const provisioned = [];
         for (const res of results) {
-            const node = await createProviderNode(res);
-            provisioned.push(node);
+            try {
+                const node = await createProviderNode(res);
+                provisioned.push(node);
+            } catch (err) {
+                // Ignore duplicates or DB errors
+            }
         }
 
         return provisioned;

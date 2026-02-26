@@ -23,9 +23,13 @@ export default function ZippyStatusBar() {
     useEffect(() => {
         const checkStatus = async () => {
             try {
-                const res = await fetch("/api/zippy/node");
-                if (res.ok) {
-                    const data = await res.json();
+                const [nodeRes, balRes] = await Promise.all([
+                    fetch("/api/zippy/node"),
+                    fetch("/api/v1/wallet/balance")
+                ]);
+
+                if (nodeRes.ok) {
+                    const data = await nodeRes.json();
 
                     // If in demo mode, override status
                     if (isDemoMode) {
@@ -51,6 +55,16 @@ export default function ZippyStatusBar() {
                         setIsConnected(false);
                         setNodeInfo(null);
                     }
+                }
+
+                if (balRes.ok && !isDemoMode) {
+                    const balData = await balRes.json();
+                    setWalletInfo({
+                        balance: balData.balance,
+                        currency: balData.currency || "ZIP",
+                        address: balData.address,
+                        name: balData.name
+                    });
                 }
             } catch (error) {
                 console.error("Status check failed:", error);
@@ -100,7 +114,11 @@ export default function ZippyStatusBar() {
     };
 
     const protocolVersion = "1.0";
-    const walletAddress = nodeInfo?.node_id ? `${nodeInfo.node_id.substring(0, 6)}...${nodeInfo.node_id.substring(nodeInfo.node_id.length - 4)}` : "Not connected";
+    const displayAddress = walletInfo.address
+        ? `${walletInfo.address.substring(0, 10)}...${walletInfo.address.substring(walletInfo.address.length - 4)}`
+        : nodeInfo?.node_id
+            ? `${nodeInfo.node_id.substring(0, 6)}...${nodeInfo.node_id.substring(nodeInfo.node_id.length - 4)}`
+            : "Not connected";
 
     return (
         <div className="flex items-center gap-4 bg-black/5 dark:bg-white/5 rounded-full px-4 py-1.5 border border-black/10 dark:border-white/10 text-xs backdrop-blur-md">
@@ -175,7 +193,7 @@ export default function ZippyStatusBar() {
                 <div className="flex flex-col items-center gap-0.5">
                     <span className="opacity-50 scale-75 uppercase font-bold tracking-widest leading-none">Node</span>
                     <Toggle
-                        enabled={isConnected}
+                        checked={isConnected}
                         onChange={handleToggle}
                         size="sm"
                         disabled={isDemoMode}
@@ -185,8 +203,10 @@ export default function ZippyStatusBar() {
                 {isConnected && (
                     <div className="flex items-center gap-3 border-l border-white/10 pl-4">
                         <div className="flex flex-col">
-                            <span className="opacity-50 scale-75 origin-left uppercase font-bold tracking-widest">Wallet</span>
-                            <span className="font-mono text-[10px]">{walletAddress}</span>
+                            <span className="opacity-50 scale-75 origin-left uppercase font-bold tracking-widest">
+                                {walletInfo.name || "Wallet"}
+                            </span>
+                            <span className="font-mono text-[10px]">{displayAddress}</span>
                         </div>
                         <div className="flex flex-col items-end">
                             <span className="opacity-50 scale-75 origin-right uppercase font-bold tracking-widest">Balance</span>

@@ -6,9 +6,23 @@ import {
   requestDeviceCode,
   pollForToken
 } from "@/lib/oauth/providers";
-import { createProviderConnection, isCloudEnabled } from "@/models";
+import { createProviderConnection } from "@/models";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
+
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
+async function syncToCloudIfEnabled() {
+  const cloudEnabled = typeof isCloudEnabled === "function" ? await isCloudEnabled() : false;
+  if (cloudEnabled) {
+    try {
+      await syncToCloud();
+    } catch (err) {
+      console.log("Auto-sync to cloud failed:", err.message);
+    }
+  }
+}
 
 /**
  * Dynamic OAuth API Route
@@ -192,17 +206,4 @@ export async function POST(request, { params }) {
   }
 }
 
-/**
- * Sync to Cloud if enabled
- */
-async function syncToCloudIfEnabled() {
-  try {
-    const cloudEnabled = await isCloudEnabled();
-    if (!cloudEnabled) return;
 
-    const machineId = await getConsistentMachineId();
-    await syncToCloud(machineId);
-  } catch (error) {
-    console.log("Error syncing to cloud after OAuth:", error);
-  }
-}

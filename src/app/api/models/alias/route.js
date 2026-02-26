@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getModelAliases, setModelAlias, deleteModelAlias, isCloudEnabled } from "@/models";
+import { getModelAliases, setModelAlias, deleteModelAlias } from "@/models";
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 
@@ -25,12 +28,12 @@ export async function PUT(request) {
     }
 
     const aliases = await getModelAliases();
-    
+
     // Check if alias already used by different model
     const existingModel = aliases[alias];
     if (existingModel && existingModel !== model) {
-      return NextResponse.json({ 
-        error: `Alias '${alias}' already in use for model '${existingModel}'` 
+      return NextResponse.json({
+        error: `Alias '${alias}' already in use for model '${existingModel}'`
       }, { status: 400 });
     }
 

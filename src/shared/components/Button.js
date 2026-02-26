@@ -22,12 +22,17 @@ export default function Button({
   size = "md",
   icon,
   iconRight,
+  iconPosition = "left",
   disabled = false,
   loading = false,
   fullWidth = false,
   className,
   ...props
 }) {
+  const showIconLeft = (icon || iconRight) && iconPosition === "left";
+  const showIconRight = (iconRight || (icon && iconPosition === "right"));
+  const iconName = iconPosition === "left" ? icon : (icon || iconRight);
+
   return (
     <button
       className={cn(
@@ -43,14 +48,15 @@ export default function Button({
     >
       {loading ? (
         <span className="material-symbols-outlined animate-spin text-[18px]">progress_activity</span>
-      ) : icon ? (
+      ) : showIconLeft && icon ? (
         <span className="material-symbols-outlined text-[18px]">{icon}</span>
       ) : null}
       {children}
-      {iconRight && !loading && (
-        <span className="material-symbols-outlined text-[18px]">{iconRight}</span>
+      {showIconRight && !loading && (
+        <span className="material-symbols-outlined text-[18px]">{iconPosition === "right" ? icon : iconRight}</span>
       )}
     </button>
   );
 }
+
 

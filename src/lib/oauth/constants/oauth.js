@@ -166,6 +166,14 @@ export const CURSOR_CONFIG = {
   },
 };
 
+// Kilo.ai Configuration
+export const KILO_CONFIG = {
+  apiEndpoint: "https://api.kilo.ai/api/gateway",
+  chatEndpoint: "/chat/completions",
+  modelsEndpoint: "/list-providers",
+  authUrl: "https://app.kilo.ai/profile", // For getting API key
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -181,4 +189,5 @@ export const PROVIDERS = {
   GITHUB: "github",
   KIRO: "kiro",
   CURSOR: "cursor",
+  KILO: "kilo",
 };

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getProviderConnectionById, updateProviderConnection, isCloudEnabled } from "@/lib/localDb";
+import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
@@ -8,13 +11,16 @@ import {
   ANTIGRAVITY_CONFIG,
   CODEX_CONFIG,
   KIRO_CONFIG,
+  CLAUDE_CONFIG,
 } from "@/lib/oauth/constants/oauth";
+import { refreshOAuthToken, isTokenExpired } from "@/lib/oauth/utils/refresh";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
   claude: {
     // Claude doesn't have userinfo, we verify token exists and not expired
     checkExpiry: true,
+    refreshable: true,
   },
   codex: {
     url: "https://api.openai.com/v1/models",
@@ -36,6 +42,8 @@ const OAUTH_TEST_CONFIG = {
     authHeader: "Authorization",
     authPrefix: "Bearer ",
     refreshable: true,
+    // Add health check for Antigravity-specific inference engine
+    inferenceProbe: true
   },
   github: {
     url: "https://api.github.com/user",
@@ -61,133 +69,6 @@ const OAUTH_TEST_CONFIG = {
     refreshable: true,
   },
 };
-
-/**
- * Refresh OAuth token using refresh_token
- * @returns {object} { accessToken, expiresIn, refreshToken } or null if failed
- */
-async function refreshOAuthToken(connection) {
-  const provider = connection.provider;
-  const refreshToken = connection.refreshToken;
-
-  if (!refreshToken) return null;
-
-  try {
-    // Google-based providers (gemini-cli, antigravity)
-    if (provider === "gemini-cli" || provider === "antigravity") {
-      const config = provider === "gemini-cli" ? GEMINI_CONFIG : ANTIGRAVITY_CONFIG;
-      const response = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-        }),
-      });
-
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      return {
-        accessToken: data.access_token,
-        expiresIn: data.expires_in,
-        refreshToken: data.refresh_token || refreshToken,
-      };
-    }
-
-    // OpenAI/Codex
-    if (provider === "codex") {
-      const response = await fetch(CODEX_CONFIG.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          client_id: CODEX_CONFIG.clientId,
-          refresh_token: refreshToken,
-        }),
-      });
-
-      if (!response.ok) return null;
-
-      const data = await response.json();
-      return {
-        accessToken: data.access_token,
-        expiresIn: data.expires_in,
-        refreshToken: data.refresh_token || refreshToken,
-      };
-    }
-
-    // Kiro (AWS SSO or Social auth)
-    if (provider === "kiro") {
-      const { clientId, clientSecret, region } = connection;
-
-      // AWS SSO OIDC refresh (Builder ID or IDC)
-      if (clientId && clientSecret) {
-        const endpoint = `https://oidc.${region || "us-east-1"}.amazonaws.com/token`;
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            clientId,
-            clientSecret,
-            refreshToken,
-            grantType: "refresh_token",
-          }),
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          console.log(`Kiro AWS SSO refresh failed: ${response.status} - ${errText}`);
-          return null;
-        }
-
-        const data = await response.json();
-        return {
-          accessToken: data.accessToken,
-          expiresIn: data.expiresIn || 3600,
-          refreshToken: data.refreshToken || refreshToken,
-        };
-      }
-
-      // Social auth refresh (Google/GitHub)
-      const response = await fetch(KIRO_CONFIG.socialRefreshUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.log(`Kiro social refresh failed: ${response.status} - ${errText}`);
-        return null;
-      }
-
-      const data = await response.json();
-      return {
-        accessToken: data.accessToken,
-        expiresIn: data.expiresIn || 3600,
-        refreshToken: data.refreshToken || refreshToken,
-      };
-    }
-
-    return null;
-  } catch (err) {
-    console.log(`Error refreshing ${provider} token:`, err.message);
-    return null;
-  }
-}
-
-/**
- * Check if token is expired or about to expire (within 5 minutes)
- */
-function isTokenExpired(connection) {
-  if (!connection.expiresAt) return false;
-  const expiresAt = new Date(connection.expiresAt).getTime();
-  const buffer = 5 * 60 * 1000; // 5 minutes
-  return expiresAt <= Date.now() + buffer;
-}
 
 /**
  * Sync to cloud if enabled
@@ -228,11 +109,10 @@ async function testOAuthConnection(connection) {
   // Auto-refresh if token is expired and provider supports refresh
   const tokenExpired = isTokenExpired(connection);
   if (config.refreshable && tokenExpired && connection.refreshToken) {
-    const tokens = await refreshOAuthToken(connection);
-    if (tokens) {
-      accessToken = tokens.accessToken;
+    const newAccessToken = await refreshOAuthToken(connection);
+    if (newAccessToken) {
+      accessToken = newAccessToken;
       refreshed = true;
-      newTokens = tokens;
     } else {
       // Refresh failed
       return { valid: false, error: "Token expired and refresh failed", refreshed: false };
@@ -265,24 +145,49 @@ async function testOAuthConnection(connection) {
     });
 
     if (res.ok) {
+      // If we have an inference probe, check that too
+      if (config.inferenceProbe) {
+        try {
+          const { AntigravityExecutor } = await import("open-sse/executors/antigravity.js");
+          const executor = new AntigravityExecutor();
+          const testBody = {
+            model: "gemini-1.5-flash", // Use a light model
+            messages: [{ role: "user", content: "hi" }],
+            max_tokens: 1,
+            stream: false
+          };
+          const probeResult = await executor.execute({
+            model: testBody.model,
+            body: { request: testBody },
+            stream: false,
+            credentials: { ...connection, accessToken },
+            log: console
+          });
+          if (!probeResult.response.ok) {
+            return { valid: false, error: `Inference probe failed: ${probeResult.response.status}`, refreshed };
+          }
+        } catch (probeErr) {
+          return { valid: false, error: `Inference probe error: ${probeErr.message}`, refreshed };
+        }
+      }
       return { valid: true, error: null, refreshed, newTokens };
     }
 
     // If 401 and we haven't tried refresh yet, try refresh now
     if (res.status === 401 && config.refreshable && !refreshed && connection.refreshToken) {
-      const tokens = await refreshOAuthToken(connection);
-      if (tokens) {
+      const newAccessToken = await refreshOAuthToken(connection);
+      if (newAccessToken) {
         // Retry with new token
         const retryRes = await fetch(config.url, {
           method: config.method,
           headers: {
-            [config.authHeader]: `${config.authPrefix}${tokens.accessToken}`,
+            [config.authHeader]: `${config.authPrefix}${newAccessToken}`,
             ...config.extraHeaders,
           },
         });
 
         if (retryRes.ok) {
-          return { valid: true, error: null, refreshed: true, newTokens: tokens };
+          return { valid: true, error: null, refreshed: true };
         }
       }
       return { valid: false, error: "Token invalid or revoked", refreshed: false };
@@ -333,10 +238,10 @@ async function testApiKeyConnection(connection) {
       if (modelsBase.endsWith("/messages")) {
         modelsBase = modelsBase.slice(0, -9);
       }
-      
+
       const modelsUrl = `${modelsBase}/models`;
       const res = await fetch(modelsUrl, {
-        headers: { 
+        headers: {
           "x-api-key": connection.apiKey,
           "anthropic-version": "2023-06-01",
           "Authorization": `Bearer ${connection.apiKey}`
@@ -509,17 +414,6 @@ export async function POST(request, { params }) {
       lastError: result.valid ? null : result.error,
       lastErrorAt: result.valid ? null : new Date().toISOString(),
     };
-
-    // If token was refreshed, update tokens in DB
-    if (result.refreshed && result.newTokens) {
-      updateData.accessToken = result.newTokens.accessToken;
-      if (result.newTokens.refreshToken) {
-        updateData.refreshToken = result.newTokens.refreshToken;
-      }
-      if (result.newTokens.expiresIn) {
-        updateData.expiresAt = new Date(Date.now() + result.newTokens.expiresIn * 1000).toISOString();
-      }
-    }
 
     // Update status in db
     await updateProviderConnection(id, updateData);

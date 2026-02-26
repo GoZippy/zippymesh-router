@@ -19,6 +19,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
   const [deviceData, setDeviceData] = useState(null);
   const [polling, setPolling] = useState(false);
   const popupRef = useRef(null);
+  const flowStartedRef = useRef(null); // Tracks provider for which flow started
+  const isMountedRef = useRef(true);
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
@@ -81,7 +83,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     const maxAttempts = 60;
 
     for (let i = 0; i < maxAttempts; i++) {
+      if (!isMountedRef.current) return;
       await new Promise((r) => setTimeout(r, interval * 1000));
+      if (!isMountedRef.current) return;
 
       try {
         const res = await fetch(`/api/oauth/${provider}/poll`, {
@@ -92,6 +96,10 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 
         const data = await res.json();
 
+        if (!res.ok) {
+          throw new Error(data.errorDescription || data.error || "Failed to poll for token");
+        }
+
         if (data.success) {
           setStep("success");
           setPolling(false);
@@ -99,7 +107,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
           return;
         }
 
-        if (data.error === "expired_token" || data.error === "access_denied") {
+        if (data.error === "expired_token" || data.error === "access_denied" || (!data.pending && data.error && data.error !== "slow_down")) {
           throw new Error(data.errorDescription || data.error);
         }
 
@@ -178,14 +186,25 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         }
       }
     } catch (err) {
-      setError(err.message);
-      setStep("error");
+      if (isMountedRef.current) {
+        setError(err.message);
+        setStep("error");
+      }
     }
   }, [provider, isLocalhost, startPolling]);
 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
+    isMountedRef.current = true;
     if (isOpen && provider) {
+      // Only start if not already started for this provider
+      if (flowStartedRef.current === provider) {
+        console.log("[OAuthModal] Flow already started for provider:", provider);
+        return;
+      }
+
+      console.log("[OAuthModal] Starting flow for provider:", provider);
+      flowStartedRef.current = provider;
       setAuthData(null);
       setCallbackUrl("");
       setError(null);
@@ -195,6 +214,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
       // Auto start OAuth
       startOAuthFlow();
     }
+
+    return () => {
+      if (!isOpen) {
+        flowStartedRef.current = null;
+        isMountedRef.current = false;
+      }
+    };
   }, [isOpen, provider, startOAuthFlow]);
 
   // Listen for OAuth callback via multiple methods

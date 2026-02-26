@@ -16,18 +16,19 @@ export default function ZippyMeshMarketplace() {
 
     const fetchData = async () => {
         try {
-            const [info, marketplaceRes] = await Promise.all([
-                getSidecarInfo(),
+            const [nodeRes, marketplaceRes] = await Promise.all([
+                fetch("/api/zippy/node").then(res => res.json()),
                 fetch("/api/marketplace").then(res => res.json())
             ]);
-            setNodeInfo(info);
+            setNodeInfo(nodeRes);
             if (marketplaceRes.success) {
-                setOffers(marketplaceRes.offers);
-                setSubscriptions(marketplaceRes.subscriptions);
+                setOffers(marketplaceRes.offers || []);
+                setSubscriptions(marketplaceRes.subscriptions || []);
                 setStats(prev => ({
                     ...prev,
+                    requests: marketplaceRes.stats?.requests || 0,
                     earned: marketplaceRes.earnings || 0,
-                    balance: marketplaceRes.balance || 0
+                    balance: typeof marketplaceRes.balance === 'number' ? marketplaceRes.balance : 0
                 }));
                 setTransactions(marketplaceRes.transactions || []);
             }
@@ -37,6 +38,7 @@ export default function ZippyMeshMarketplace() {
             setLoading(false);
         }
     };
+
 
     useEffect(() => {
         fetchData();
@@ -86,7 +88,7 @@ export default function ZippyMeshMarketplace() {
                         <span className="material-symbols-outlined text-primary text-sm">payments</span>
                         <div className="flex flex-col">
                             <span className="text-[10px] text-text-muted uppercase font-bold leading-none">Wallet Balance</span>
-                            <span className="text-sm font-bold text-text-main leading-tight">{stats.balance.toFixed(2)} ZIPc</span>
+                            <span className="text-sm font-bold text-text-main leading-tight">{(typeof stats.balance === 'number' ? stats.balance : 0).toFixed(2)} ZIPc</span>
                         </div>
                     </Card>
                     <Badge variant={isProvider ? "success" : "secondary"} className="py-1 px-3">

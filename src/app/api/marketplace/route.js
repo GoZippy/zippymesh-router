@@ -14,18 +14,22 @@ export async function GET() {
         // Refresh offers from discovered nodes
         const offers = await updateP2pOffers(peerNodes);
         const subscriptions = await getP2pSubscriptions();
-        const earnings = await getWalletEarnings();
-        const balance = await getWalletBalance();
-        const transactions = await getWalletTransactions();
+
+        const [earnings, balanceData, transactions] = await Promise.all([
+            getWalletEarnings(),
+            getWalletBalance(),
+            getWalletTransactions()
+        ]);
 
         return NextResponse.json({
             success: true,
-            offers,
-            subscriptions,
-            earnings,
-            balance,
-            transactions
+            offers: offers || [],
+            subscriptions: subscriptions || [],
+            earnings: typeof earnings === 'number' ? earnings : 0,
+            balance: typeof balanceData?.balance === 'number' ? balanceData.balance : 0,
+            transactions: Array.isArray(transactions) ? transactions : []
         });
+
     } catch (error) {
         return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }

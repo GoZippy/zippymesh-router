@@ -1,7 +1,8 @@
 
 import { RateLimiter } from "./rateLimiter.js";
-import { getRoutingPlaybooks, getProviderConnections, getPricingForModel, getSettings } from "../localDb.js";
+import { getRoutingPlaybooks, getProviderConnections, getSettings } from "../localDb.js";
 import { resolveProviderId } from "../../shared/constants/providers.js";
+import { getRegistryModel } from "../modelRegistry.js";
 
 /**
  * Routing Engine
@@ -28,15 +29,12 @@ export class RoutingEngine {
         const settings = await getSettings();
         const activePlaybook = await this.selectPlaybook(playbooks, requestContext, settings);
 
-
-
         // 2. Get all potential connections
         const equivalentModels = requestContext.equivalentModels || [model];
         let candidates = [];
 
         // Gather all candidates
         for (const modelStr of equivalentModels) {
-            // Support both provider/model and provider:model
             const separator = modelStr.includes("/") ? "/" : (modelStr.includes(":") ? ":" : null);
 
             if (separator) {
@@ -45,7 +43,7 @@ export class RoutingEngine {
                 const providerId = resolveProviderId(providerAlias);
                 const modelName = parts.slice(1).join(separator);
 
-                const connections = await getProviderConnections({ provider: providerId, isActive: true });
+                const connections = await getProviderConnections({ provider: providerId, isActive: true, isEnabled: true });
 
                 for (const conn of connections) {
                     candidates.push({
@@ -57,8 +55,7 @@ export class RoutingEngine {
                     });
                 }
             } else {
-                // If no provider specified, check ALL active connections
-                const allConnections = await getProviderConnections({ isActive: true });
+                const allConnections = await getProviderConnections({ isActive: true, isEnabled: true });
                 for (const conn of allConnections) {
                     candidates.push({
                         connection: conn,
@@ -70,8 +67,6 @@ export class RoutingEngine {
                 }
             }
         }
-
-
 
         // 3. Filter by Rate Limits
         const availableCandidates = [];
@@ -85,8 +80,6 @@ export class RoutingEngine {
             }
         }
 
-
-
         // 4. Score/Sort based on Playbook or Default Strategy
         let results;
         if (activePlaybook) {
@@ -95,36 +88,24 @@ export class RoutingEngine {
             results = await this.defaultStrategy(availableCandidates, requestContext);
         }
 
-
-
         return results;
     }
 
     async selectPlaybook(playbooks, context, settings) {
-        // Sort playbooks by priority
         const sorted = playbooks.filter(p => p.isActive).sort((a, b) => b.priority - a.priority);
 
         for (const pb of sorted) {
-            // Check triggers if they exist
             if (pb.trigger) {
-                // Intent Trigger
                 if (pb.trigger.type === "intent") {
-                    // Context must have matching intent
                     if (context.intent === pb.trigger.value) return pb;
                 }
-                // Group Trigger
                 else if (pb.trigger.type === "group") {
                     if (context.userGroup === pb.trigger.value) return pb;
                 }
-                // If trigger doesn't match, skip this playbook
                 continue;
             }
-
-            // If no trigger, it's a candidate for "global" playbook if it was manually set
-            // but we'll prioritize the one defined in settings if none of the triggered ones match.
         }
 
-        // Fallback to default playbook from settings
         if (settings?.defaultPlaybookId) {
             const defaultPb = playbooks.find(p => p.id === settings.defaultPlaybookId && p.isActive);
             if (defaultPb) return defaultPb;
@@ -134,25 +115,31 @@ export class RoutingEngine {
     }
 
     async defaultStrategy(candidates, context) {
-        // Re-implement the existing "Group > Priority > Cost" logic
         const scored = [];
-
         const GROUP_PRIORITY = { personal: 10, work: 20, team: 30, default: 40 };
 
         for (const cand of candidates) {
             const groupScore = GROUP_PRIORITY[cand.connection.group || "default"] || 99;
             const priority = cand.connection.priority || 999;
 
-            // Pricing
-            const pricing = await getPricingForModel(cand.provider, cand.model) || { input: 0, output: 0 };
-            const costScore = (pricing.input * 1000) + (pricing.output * 1000);
+            // Fetch from Model Registry
+            const registryModel = await getRegistryModel(cand.provider, cand.model);
+            const inputPrice = registryModel?.inputPrice || 0;
+            const outputPrice = registryModel?.outputPrice || 0;
+            const avgLatency = registryModel?.avgLatency || 0;
 
-            const finalScore = (groupScore * 10000) + (priority * 10) + costScore;
+            const costScore = (inputPrice * 1000) + (outputPrice * 1000);
+
+            // Base score favors: Group > Manual Priority > Low Cost > Low Latency
+            const finalScore = (groupScore * 1000000) + (priority * 10000) + (costScore * 100) + (avgLatency / 100);
 
             scored.push({
                 ...cand,
                 score: finalScore,
-                costPer1k: costScore
+                costPer1k: costScore,
+                avgLatency,
+                isFree: registryModel?.isFree || false,
+                isPremium: registryModel?.isPremium || false
             });
         }
 
@@ -163,56 +150,62 @@ export class RoutingEngine {
         let filtered = [...candidates];
         const scored = [];
 
-        // 1. Apply Filtering Rules first
+        // 1. Apply Rules (Filtering)
         for (const rule of playbook.rules || []) {
             if (rule.type === "filter-in") {
-                // Only keep matching providers
-                filtered = filtered.filter(c => c.provider === rule.value);
+                filtered = filtered.filter(c => c.provider === rule.value || c.model.includes(rule.value));
             } else if (rule.type === "filter-out") {
-                // Remove matching providers
-                filtered = filtered.filter(c => c.provider !== rule.value);
+                filtered = filtered.filter(c => c.provider !== rule.value && !c.model.includes(rule.value));
+            } else if (rule.type === "cost-threshold") {
+                // value is max allowed cost per 1k (input+output)
+                const registryModel = await getRegistryModel(c.provider, c.model);
+                const cost = (registryModel?.inputPrice || 0) * 1000 + (registryModel?.outputPrice || 0) * 1000;
+                filtered = filtered.filter(() => cost <= (rule.value || Infinity));
             }
         }
 
-        // 2. Score remaining using Default Strategy as base, then apply modifiers
-        // We reuse defaultStrategy logic for base scoring to keep consistency
+        // 2. Base Scoring
         const baseScored = await this.defaultStrategy(filtered, context);
 
         for (const cand of baseScored) {
-            let score = cand.score; // Lower is better in default strategy
+            let score = cand.score;
 
-            // Apply Boost/Penalty Rules
+            // 3. Apply Modifier Rules
             for (const rule of playbook.rules || []) {
-                const isMatch = cand.provider === rule.target || cand.model.includes(rule.target);
+                const isMatch = cand.provider === rule.target || cand.model.includes(rule.target) || rule.target === "*";
 
                 if (isMatch) {
                     if (rule.type === "boost") {
-                        // Reduce score (lower is better)
                         score -= (rule.value || 1000);
                     } else if (rule.type === "penalty") {
-                        // Increase score
                         score += (rule.value || 1000);
+                    } else if (rule.type === "sort-by-cheapest") {
+                        // Heavily boost based on inverted cost
+                        const costBoost = (1 / (cand.costPer1k + 0.000001)) * 10000;
+                        score -= costBoost;
+                    } else if (rule.type === "sort-by-fastest") {
+                        // Boost based on inverted latency
+                        const speedBoost = (1 / (cand.avgLatency + 1)) * 50000;
+                        score -= speedBoost;
                     } else if (rule.type === "stack") {
-                        // Value is an array or comma-separated string of preferred order
                         const order = Array.isArray(rule.value) ? rule.value : (typeof rule.value === "string" ? rule.value.split(",") : []);
                         const index = order.indexOf(cand.provider) !== -1 ? order.indexOf(cand.provider) : order.indexOf(cand.model);
 
                         if (index !== -1) {
-                            // Boost based on position in stack (position 0 gets biggest boost)
-                            const stackBoost = (order.length - index) * 10000;
+                            const stackBoost = (order.length - index) * 50000;
                             score -= stackBoost;
                         }
                     }
                 }
             }
 
-            scored.push({ ...cand, score });
-        }
+            // Context-Aware Routing override:
+            // If the connection group matches the context userGroup, give it a massive boost
+            if (context.userGroup && cand.connection.group === context.userGroup) {
+                score -= 2000000;
+            }
 
-        // 3. Find if there is a batch rule defined in the playbook
-        const batchRule = playbook.rules?.find(r => r.type === "batch");
-        if (batchRule) {
-            scored.forEach(s => s.batchRule = batchRule);
+            scored.push({ ...cand, score });
         }
 
         return scored.sort((a, b) => a.score - b.score);
@@ -220,10 +213,6 @@ export class RoutingEngine {
 
     /**
      * Record usage for a successful request
-     * @param {string} provider
-     * @param {string} model
-     * @param {object} usage
-     * @param {object} headers
      */
     async recordUsage(provider, model, usage, headers) {
         return this.rateLimiter.recordUsage(provider, model, usage, headers);

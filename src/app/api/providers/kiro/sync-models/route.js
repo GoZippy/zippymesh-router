@@ -7,11 +7,11 @@ function normalizeBaseUrl(input) {
     return trimmed;
 }
 
-async function fetchKiloModels({ baseUrl, apiKey }) {
+async function fetchKiroModels({ baseUrl, apiKey }) {
     const url = `${baseUrl}/models`;
     const headers = { Accept: "application/json" };
 
-    // Kilo’s gateway supports both Bearer token and anonymous (per their gateway code)
+    // Kiro’s gateway supports both Bearer token and anonymous (per their gateway code)
     if (apiKey) {
         // OpenRouter-compatible endpoints generally accept Bearer token
         headers["Authorization"] = `Bearer ${apiKey}`;
@@ -20,7 +20,7 @@ async function fetchKiloModels({ baseUrl, apiKey }) {
     const res = await fetch(url, { headers });
     if (!res.ok) {
         const text = await res.text().catch(() => "");
-        throw new Error(`Kilo models fetch failed: ${res.status} ${res.statusText} ${text}`);
+        throw new Error(`Kiro models fetch failed: ${res.status} ${res.statusText} ${text}`);
     }
 
     const json = await res.json();
@@ -47,7 +47,7 @@ export async function POST(req) {
 
         const db = await getDb();
 
-        // Find Kilo node by id or by matching baseUrl if you want auto-discovery
+        // Find Kiro node by id or by matching baseUrl if you want auto-discovery
         let node = null;
         if (nodeId && Array.isArray(db.data.providerNodes)) {
             node = db.data.providerNodes.find((n) => n.id === nodeId);
@@ -56,20 +56,20 @@ export async function POST(req) {
         const baseUrl =
             normalizeBaseUrl(baseUrlIn) ||
             normalizeBaseUrl(node?.baseUrl) ||
-            "https://api.kilo.ai/api/openrouter";
+            "https://api.kiro.ai/api/openrouter";
 
         // Prefer explicit apiKey; otherwise see if node/provider connection stores it
         const apiKey =
             (apiKeyIn || "").trim() ||
             (node?.apiKey || "").trim() ||
-            ""; // allow empty if Kilo permits unauthenticated; if not, you’ll get 401
+            ""; // allow empty if Kiro permits unauthenticated; if not, you’ll get 401
 
-        const models = await fetchKiloModels({ baseUrl, apiKey });
+        const models = await fetchKiroModels({ baseUrl, apiKey });
 
         // Store in DB under a dedicated key. This avoids interfering with existing pricing/aliases.
         db.data.cachedModels ??= {};
-        db.data.cachedModels.kilo ??= {};
-        db.data.cachedModels.kilo[baseUrl] = {
+        db.data.cachedModels.kiro ??= {};
+        db.data.cachedModels.kiro[baseUrl] = {
             fetchedAt: new Date().toISOString(),
             count: models.list.length,
             list: models.list,
@@ -81,7 +81,7 @@ export async function POST(req) {
         return NextResponse.json({
             ok: true,
             baseUrl,
-            fetchedAt: db.data.cachedModels.kilo[baseUrl].fetchedAt,
+            fetchedAt: db.data.cachedModels.kiro[baseUrl].fetchedAt,
             count: models.list.length,
         });
     } catch (err) {

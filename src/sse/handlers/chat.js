@@ -6,6 +6,7 @@ import { handleComboChat } from "open-sse/services/combo.js";
 import { HTTP_STATUS } from "open-sse/config/constants.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { checkSafety } from "../utils/guardrails.js";
 
 /**
  * Handle chat completion request
@@ -19,6 +20,13 @@ export async function handleChat(request, clientRawRequest = null) {
   } catch {
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+  }
+
+  // Guardrailing
+  const safety = checkSafety(body);
+  if (!safety.safe) {
+    log.warn("SAFETY", safety.reason);
+    return errorResponse(HTTP_STATUS.FORBIDDEN, safety.reason);
   }
 
   // Build clientRawRequest for logging (if not provided)

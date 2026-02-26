@@ -769,8 +769,8 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [syncingKilo, setSyncingKilo] = useState(false);
-  const [kiloSyncStats, setKiloSyncStats] = useState(null);
+  const [syncingKiro, setSyncingKiro] = useState(false);
+  const [kiroSyncStats, setKiroSyncStats] = useState(null);
 
   const providerAliases = Object.entries(modelAliases).filter(
     ([, model]) => model.startsWith(`${providerStorageAlias}/`)
@@ -852,54 +852,54 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
     }
   };
 
-  const handleSyncKilo = async () => {
-    if (syncingKilo || !node) return;
-    setSyncingKilo(true);
-    setKiloSyncStats(null);
+  const handleSyncKiro = async () => {
+    if (syncingKiro || !node) return;
+    setSyncingKiro(true);
+    setKiroSyncStats(null);
     try {
       const activeConn = connections.find(c => c.isActive !== false) || connections[0];
       const apiKey = activeConn?.apiKey || "";
-      const res = await fetch("/api/providers/kilo/sync-models", {
+      const res = await fetch("/api/providers/kiro/sync-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nodeId: node.id, apiKey }),
       });
       const data = await res.json();
       if (res.ok) {
-        setKiloSyncStats(`Synced ${data.count} models at ${new Date(data.fetchedAt).toLocaleTimeString()}`);
+        setKiroSyncStats(`Synced ${data.count} models at ${new Date(data.fetchedAt).toLocaleTimeString()}`);
       } else {
-        setKiloSyncStats(`Sync failed: ${data.error}`);
+        setKiroSyncStats(`Sync failed: ${data.error}`);
       }
     } catch (error) {
-      setKiloSyncStats("Failed to sync models");
+      setKiroSyncStats("Failed to sync models");
     } finally {
-      setSyncingKilo(false);
+      setSyncingKiro(false);
     }
   };
 
   const canImport = connections.some((conn) => conn.isActive !== false);
-  const isKiloNode = node?.baseUrl?.includes("kilo.ai");
+  const isKiroNode = node?.baseUrl?.includes("kiro.ai");
 
   return (
     <div className="flex flex-col gap-4">
-      {isKiloNode && (
+      {isKiroNode && (
         <div className="flex items-center gap-4 bg-primary/5 border border-primary/20 p-4 rounded-xl">
           <div className="flex-1">
-            <h3 className="font-semibold mb-1">Kilo Auto-Sync</h3>
+            <h3 className="font-semibold mb-1">Kiro Auto-Sync</h3>
             <p className="text-sm text-text-muted">
-              Automatically fetch and merge the latest Kilo/OpenRouter generic models into the global `/v1/models` route. Add an API key connection above if you want to sync premium models.
+              Automatically fetch and merge the latest Kiro/OpenRouter generic models into the global `/v1/models` route. Add an API key connection above if you want to sync premium models.
             </p>
-            {kiloSyncStats && (
-              <p className="text-xs text-primary mt-2 font-medium">{kiloSyncStats}</p>
+            {kiroSyncStats && (
+              <p className="text-xs text-primary mt-2 font-medium">{kiroSyncStats}</p>
             )}
           </div>
           <Button
-            onClick={handleSyncKilo}
-            disabled={syncingKilo || connections.length === 0}
-            icon={syncingKilo ? "sync" : "cloud_download"}
-            className={syncingKilo ? "animate-spin-slow" : ""}
+            onClick={handleSyncKiro}
+            disabled={syncingKiro || connections.length === 0}
+            icon={syncingKiro ? "sync" : "cloud_download"}
+            className={syncingKiro ? "animate-spin-slow" : ""}
           >
-            {syncingKilo ? "Syncing..." : "Sync Models from Kilo"}
+            {syncingKiro ? "Syncing..." : "Sync Models from Kiro"}
           </Button>
         </div>
       )}
@@ -1041,7 +1041,7 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
     : connection.testStatus;
 
   const getStatusVariant = () => {
-    if (connection.isActive === false) return "default";
+    if (connection.isEnabled === false) return "default";
     if (effectiveStatus === "active" || effectiveStatus === "success") return "success";
     if (effectiveStatus === "error" || effectiveStatus === "expired" || effectiveStatus === "unavailable") return "error";
     return "default";
@@ -1075,7 +1075,7 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
           {subLabel && <p className="text-xs text-text-muted truncate font-mono mt-0.5">{subLabel}</p>}
           <div className="flex items-center gap-2 mt-1">
             <Badge variant={getStatusVariant()} size="sm" dot>
-              {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
+              {connection.isEnabled === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
             {isCooldown && connection.isActive !== false && <CooldownTimer until={connection.rateLimitedUntil} />}
             {connection.lastError && connection.isActive !== false && (
@@ -1115,9 +1115,9 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
         </div>
         <Toggle
           size="sm"
-          checked={connection.isActive ?? true}
+          checked={connection.isEnabled ?? true}
           onChange={onToggleActive}
-          title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
+          title={(connection.isEnabled ?? true) ? "Disable connection" : "Enable connection"}
         />
         <div className="flex gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
@@ -1178,6 +1178,8 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
     name: "",
     apiKey: "",
     priority: 1,
+    group: "default",
+    isEnabled: true,
   });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
@@ -1227,6 +1229,8 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
         name: formData.name,
         apiKey: formData.apiKey,
         priority: formData.priority,
+        group: formData.group,
+        isEnabled: formData.isEnabled,
         testStatus: isValid ? "active" : "unknown",
       });
     } finally {
@@ -1278,6 +1282,34 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
         />
+        <div className="flex flex-col gap-1.5 mt-2">
+          <label className="text-sm font-medium">Group</label>
+          <div className="flex gap-2">
+            {["default", "work", "personal", "other"].map(g => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setFormData({ ...formData, group: g })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${formData.group === g
+                  ? "bg-primary/10 border-primary text-primary"
+                  : "bg-transparent border-border text-text-muted hover:border-primary/50"
+                  }`}
+              >
+                {g.charAt(0).toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5 mt-2 mb-2">
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">Enable Connection</span>
+            <span className="text-xs text-text-muted">Allow this account to be used for routing</span>
+          </div>
+          <Toggle
+            checked={formData.isEnabled}
+            onChange={(checked) => setFormData({ ...formData, isEnabled: checked })}
+          />
+        </div>
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>
             {saving ? "Saving..." : "Save"}
@@ -1307,6 +1339,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
     priority: 1,
     group: "default",
     apiKey: "",
+    isEnabled: true,
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -1321,6 +1354,7 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
         priority: connection.priority || 1,
         group: connection.group || "default",
         apiKey: "",
+        isEnabled: connection.isEnabled !== false,
       });
       setTestResult(null);
       setValidationResult(null);
@@ -1364,7 +1398,12 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const updates = { name: formData.name, priority: formData.priority, group: formData.group };
+      const updates = {
+        name: formData.name,
+        priority: formData.priority,
+        group: formData.group,
+        isEnabled: formData.isEnabled
+      };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -1439,19 +1478,33 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
         />
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium">Account Group</label>
-          <select
-            value={formData.group}
-            onChange={(e) => setFormData({ ...formData, group: e.target.value })}
-            className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-          >
-            <option value="default">Default</option>
-            <option value="personal">Personal</option>
-            <option value="work">Work</option>
-            <option value="team">Team</option>
-          </select>
-          <p className="text-xs text-text-muted">Used for priority routing rules.</p>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium">Group</label>
+          <div className="flex gap-2">
+            {["default", "work", "personal", "other"].map(g => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setFormData({ ...formData, group: g })}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${formData.group === g
+                  ? "bg-primary/10 border-primary text-primary"
+                  : "bg-transparent border-border text-text-muted hover:border-primary/50"
+                  }`}
+              >
+                {g.charAt(0).toUpperCase() + g.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between p-3 rounded-lg bg-black/5 dark:bg-white/5 mt-2">
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">Enable Connection</span>
+            <span className="text-xs text-text-muted">Allow this account to be used for routing</span>
+          </div>
+          <Toggle
+            checked={formData.isEnabled}
+            onChange={(checked) => setFormData({ ...formData, isEnabled: checked })}
+          />
         </div>
         {!isOAuth && (
           <>

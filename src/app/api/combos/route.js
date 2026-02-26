@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getCombos, createCombo, getComboByName, isCloudEnabled } from "@/lib/localDb";
+import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 

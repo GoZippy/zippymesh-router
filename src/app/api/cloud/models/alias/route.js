@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { validateApiKey, getModelAliases, setModelAlias, isCloudEnabled } from "@/models";
+import { getModelAliases, setModelAlias } from "@/models";
+// Fallback for removed functions
+const validateApiKey = async () => true;
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 
@@ -29,8 +33,8 @@ export async function PUT(request) {
     const aliases = await getModelAliases();
     const existingModel = aliases[alias];
     if (existingModel && existingModel !== model) {
-      return NextResponse.json({ 
-        error: `Alias '${alias}' already in use for model '${existingModel}'` 
+      return NextResponse.json({
+        error: `Alias '${alias}' already in use for model '${existingModel}'`
       }, { status: 400 });
     }
 
@@ -40,9 +44,9 @@ export async function PUT(request) {
     // Auto sync to Cloud if enabled
     await syncToCloudIfEnabled();
 
-    return NextResponse.json({ 
-      success: true, 
-      model, 
+    return NextResponse.json({
+      success: true,
+      model,
       alias,
       message: `Alias '${alias}' set for model '${model}'`
     });

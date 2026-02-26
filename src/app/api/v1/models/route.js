@@ -99,25 +99,26 @@ export async function GET() {
       }
     }
 
-    // Add cached Kilo models
+    // Add cached Kiro models
     const db = await getDb();
-    const cached = db.data.cachedModels?.kilo || {};
+    const cached = db.data.cachedModels?.kiro || {};
     for (const [baseUrl, entry] of Object.entries(cached)) {
       for (const m of entry.list || []) {
         if (!m?.id) continue;
-        const id = `kilo/${m.id}`;
+        const id = `kiro/${m.id}`;
         models.push({
           id,
           object: "model",
           created: timestamp,
-          owned_by: "kilo",
+          owned_by: "kiro",
           permission: [],
           root: m.id,
           parent: null,
-          zippy: { source: "kilo-cache", baseUrl, fetchedAt: entry.fetchedAt, raw: m },
+          zippy: { source: "kiro-cache", baseUrl, fetchedAt: entry.fetchedAt, raw: m },
         });
       }
     }
+
 
     // Add provider models
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {

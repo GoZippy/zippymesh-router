@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { getProviderConnections, createProviderConnection, getProviderNodeById, isCloudEnabled } from "@/models";
+import { getProviderConnections, createProviderConnection, getProviderNodeById } from "@/models";
+// Fallback for removed isCloudEnabled function
+const isCloudEnabled = async () => false;
+
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { getConsistentMachineId } from "@/shared/utils/machineId";

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import Database from "better-sqlite3";
 import { SMART_PLAYBOOKS, INITIAL_SETTINGS } from "../shared/constants/defaults.js";
 
 // Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
@@ -44,10 +45,114 @@ function getUserDataDir() {
 // Data file path - stored in user home directory
 const DATA_DIR = getUserDataDir();
 const DB_FILE = isCloud ? null : path.join(DATA_DIR, "db.json");
+const SQLITE_DB_FILE = isCloud ? null : path.join(DATA_DIR, "zippymesh.db");
 
 // Ensure data directory exists
 if (!isCloud && !fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// ============ SQLite Initializer ============
+
+let sqliteDb = null;
+
+export function getSqliteDb() {
+  if (isCloud) return null;
+  if (sqliteDb) return sqliteDb;
+
+  sqliteDb = new Database(SQLITE_DB_FILE);
+  sqliteDb.pragma('journal_mode = WAL'); // Better concurrency
+
+  // Initialize tables
+  sqliteDb.exec(`
+    CREATE TABLE IF NOT EXISTS provider_connections (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      authType TEXT NOT NULL,
+      name TEXT,
+      wallet_id TEXT, -- Associated ZippyCoin wallet
+      group_name TEXT DEFAULT 'default',
+      priority INTEGER DEFAULT 1,
+      isActive BOOLEAN DEFAULT 1,
+      isEnabled BOOLEAN DEFAULT 1,
+      email TEXT,
+      accessToken TEXT,
+      refreshToken TEXT,
+      expiresAt TEXT,
+      apiKey TEXT,
+      testStatus TEXT DEFAULT 'unknown',
+      lastTested TEXT,
+      lastError TEXT,
+      lastErrorAt TEXT,
+      rateLimitedUntil TEXT,
+      metadata TEXT, -- JSON blob for provider-specific data
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS provider_nodes (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      name TEXT,
+      wallet_id TEXT, -- Associated ZippyCoin wallet
+      baseUrl TEXT,
+      apiType TEXT,
+      prefix TEXT,
+      metadata TEXT, -- JSON blob
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS model_registry (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      name TEXT,
+      description TEXT,
+      input_price REAL DEFAULT 0,
+      output_price REAL DEFAULT 0,
+      request_price REAL DEFAULT 0,
+      context_window INTEGER,
+      is_free BOOLEAN DEFAULT 0,
+      is_preview BOOLEAN DEFAULT 0,
+      is_premium BOOLEAN DEFAULT 0,
+      avg_latency REAL DEFAULT 0,
+      avg_tps REAL DEFAULT 0,
+      last_sync TEXT,
+      metadata TEXT,
+      UNIQUE(provider, model_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS wallets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      address TEXT UNIQUE NOT NULL,
+      encryptedPrivateKey TEXT,
+      type TEXT NOT NULL, -- 'imported', 'created', 'derived'
+      balance REAL DEFAULT 0,
+      isDefault BOOLEAN DEFAULT 0,
+      metadata TEXT, -- JSON blob
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id TEXT PRIMARY KEY,
+      wallet_id TEXT NOT NULL,
+      type TEXT NOT NULL, -- 'send', 'receive'
+      amount REAL NOT NULL,
+      symbol TEXT DEFAULT 'ZIPc',
+      status TEXT DEFAULT 'confirmed',
+      counterparty TEXT,
+      txHash TEXT,
+      description TEXT,
+      timestamp TEXT,
+      metadata TEXT,
+      FOREIGN KEY(wallet_id) REFERENCES wallets(id)
+    );
+  `);
+
+  return sqliteDb;
 }
 
 // Default data structure
@@ -623,29 +728,124 @@ export async function getDb() {
   return dbInstance;
 }
 
+/**
+ * Ensure SQLite is in sync with LowDB legacy data
+ */
+export async function ensureSqliteSync() {
+  if (isCloud) return;
+  const db = await getDb();
+  const sqlite = getSqliteDb();
+
+  // Check if we've already migrated
+  const migratedKey = "sqlite_migrated_v1";
+  if (db.data.settings[migratedKey]) return;
+
+  console.log("[DB] Migrating Provider Connections to SQLite...");
+  const insertConn = sqlite.prepare(`
+    INSERT OR REPLACE INTO provider_connections (
+      id, provider, authType, name, group_name, priority, isActive, isEnabled,
+      email, accessToken, refreshToken, expiresAt, apiKey, testStatus,
+      lastTested, lastError, lastErrorAt, rateLimitedUntil, metadata, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const transaction = sqlite.transaction((conns) => {
+    for (const c of conns) {
+      insertConn.run(
+        c.id, c.provider, c.authType, c.name, c.group || 'default', c.priority || 1,
+        c.isActive === false ? 0 : 1, c.isEnabled === false ? 0 : 1,
+        c.email || null, c.accessToken || null, c.refreshToken || null, c.expiresAt || null,
+        c.apiKey || null, c.testStatus || 'unknown', c.lastTested || null,
+        c.lastError || null, c.lastErrorAt || null, c.rateLimitedUntil || null,
+        c.metadata ? JSON.stringify(c.metadata) : (c.providerSpecificData ? JSON.stringify(c.providerSpecificData) : null),
+        c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()
+      );
+    }
+  });
+
+  if (db.data.providerConnections && db.data.providerConnections.length > 0) {
+    transaction(db.data.providerConnections);
+  }
+
+  console.log("[DB] Migrating Provider Nodes to SQLite...");
+  const insertNode = sqlite.prepare(`
+    INSERT OR REPLACE INTO provider_nodes (
+      id, type, name, baseUrl, apiType, prefix, metadata, createdAt, updatedAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const nodeTransaction = sqlite.transaction((nodes) => {
+    for (const n of nodes) {
+      insertNode.run(
+        n.id, n.type, n.name || null, n.baseUrl || null, n.apiType || null, n.prefix || null,
+        n.metadata ? JSON.stringify(n.metadata) : null,
+        n.createdAt || new Date().toISOString(), n.updatedAt || new Date().toISOString()
+      );
+    }
+  });
+
+  if (db.data.providerNodes && db.data.providerNodes.length > 0) {
+    nodeTransaction(db.data.providerNodes);
+  }
+
+  // Mark as migrated
+  db.data.settings[migratedKey] = true;
+  await db.write();
+  console.log("[DB] Migration to SQLite completed.");
+}
+
 // ============ Provider Connections ============
 
 /**
  * Get all provider connections
  */
 export async function getProviderConnections(filter = {}) {
-  const db = await getDb();
-  let connections = db.data.providerConnections || [];
+  if (isCloud) {
+    const db = await getDb();
+    let connections = db.data.providerConnections || [];
+    if (filter.provider) connections = connections.filter(c => c.provider === filter.provider);
+    if (filter.group) connections = connections.filter(c => c.group === filter.group);
+    if (filter.isActive !== undefined) connections = connections.filter(c => c.isActive === filter.isActive);
+    connections.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+    return connections;
+  }
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  let query = `SELECT * FROM provider_connections WHERE 1=1`;
+  const params = [];
 
   if (filter.provider) {
-    connections = connections.filter(c => c.provider === filter.provider);
+    query += ` AND provider = ?`;
+    params.push(filter.provider);
   }
   if (filter.group) {
-    connections = connections.filter(c => c.group === filter.group);
+    query += ` AND group_name = ?`;
+    params.push(filter.group);
   }
   if (filter.isActive !== undefined) {
-    connections = connections.filter(c => c.isActive === filter.isActive);
+    query += ` AND isActive = ?`;
+    params.push(filter.isActive ? 1 : 0);
+  }
+  if (filter.isEnabled !== undefined) {
+    query += ` AND isEnabled = ?`;
+    params.push(filter.isEnabled ? 1 : 0);
   }
 
-  // Sort by priority (lower = higher priority)
-  connections.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  query += ` ORDER BY priority ASC`;
 
-  return connections;
+  const rows = sqlite.prepare(query).all(...params);
+
+  // Map back to JS objects
+  return rows.map(r => ({
+    ...r,
+    group: r.group_name,
+    isActive: r.isActive === 1,
+    isEnabled: r.isEnabled === 1,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null,
+    providerSpecificData: r.metadata ? JSON.parse(r.metadata) : null, // Backwards compatible
+  }));
 }
 
 // ============ Provider Nodes ============
@@ -654,50 +854,86 @@ export async function getProviderConnections(filter = {}) {
  * Get provider nodes
  */
 export async function getProviderNodes(filter = {}) {
-  const db = await getDb();
-  let nodes = db.data.providerNodes || [];
-
-  if (filter.type) {
-    nodes = nodes.filter((node) => node.type === filter.type);
+  if (isCloud) {
+    const db = await getDb();
+    let nodes = db.data.providerNodes || [];
+    if (filter.type) nodes = nodes.filter((node) => node.type === filter.type);
+    return nodes;
   }
 
-  return nodes;
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  let query = `SELECT * FROM provider_nodes WHERE 1=1`;
+  const params = [];
+
+  if (filter.type) {
+    query += ` AND type = ?`;
+    params.push(filter.type);
+  }
+
+  const rows = sqlite.prepare(query).all(...params);
+  return rows.map(r => ({
+    ...r,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null,
+  }));
 }
 
 /**
  * Get provider node by ID
  */
 export async function getProviderNodeById(id) {
-  const db = await getDb();
-  return db.data.providerNodes.find((node) => node.id === id) || null;
+  if (isCloud) {
+    const db = await getDb();
+    return db.data.providerNodes.find((node) => node.id === id) || null;
+  }
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM provider_nodes WHERE id = ?`).get(id);
+
+  if (!row) return null;
+  return {
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+  };
 }
 
 /**
  * Create provider node
  */
 export async function createProviderNode(data) {
-  const db = await getDb();
-
-  // Initialize providerNodes if undefined (backward compatibility)
-  if (!db.data.providerNodes) {
-    db.data.providerNodes = [];
-  }
-
   const now = new Date().toISOString();
-
   const node = {
     id: data.id || uuidv4(),
     type: data.type,
-    name: data.name,
-    prefix: data.prefix,
-    apiType: data.apiType,
-    baseUrl: data.baseUrl,
+    name: data.name || null,
+    baseUrl: data.baseUrl || null,
+    apiType: data.apiType || null,
+    prefix: data.prefix || null,
+    metadata: data.metadata || null,
     createdAt: now,
     updatedAt: now,
   };
 
-  db.data.providerNodes.push(node);
-  await db.write();
+  if (isCloud) {
+    const db = await getDb();
+    if (!db.data.providerNodes) db.data.providerNodes = [];
+    db.data.providerNodes.push(node);
+    await db.write();
+    return node;
+  }
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  sqlite.prepare(`
+    INSERT INTO provider_nodes (id, type, name, wallet_id, baseUrl, apiType, prefix, metadata, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    node.id, node.type, node.name, data.wallet_id || null, node.baseUrl, node.apiType, node.prefix,
+    node.metadata ? JSON.stringify(node.metadata) : null,
+    node.createdAt, node.updatedAt
+  );
 
   return node;
 }
@@ -706,210 +942,476 @@ export async function createProviderNode(data) {
  * Update provider node
  */
 export async function updateProviderNode(id, data) {
-  const db = await getDb();
-  if (!db.data.providerNodes) {
-    db.data.providerNodes = [];
+  const now = new Date().toISOString();
+
+  if (isCloud) {
+    const db = await getDb();
+    if (!db.data.providerNodes) db.data.providerNodes = [];
+    const index = db.data.providerNodes.findIndex((node) => node.id === id);
+    if (index === -1) return null;
+    db.data.providerNodes[index] = { ...db.data.providerNodes[index], ...data, updatedAt: now };
+    await db.write();
+    return db.data.providerNodes[index];
   }
 
-  const index = db.data.providerNodes.findIndex((node) => node.id === id);
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
 
-  if (index === -1) return null;
+  const existing = await getProviderNodeById(id);
+  if (!existing) return null;
 
-  db.data.providerNodes[index] = {
-    ...db.data.providerNodes[index],
-    ...data,
-    updatedAt: new Date().toISOString(),
-  };
+  const fields = [];
+  const params = [];
 
-  await db.write();
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "id") continue;
+    fields.push(`${key} = ?`);
+    params.push(key === "metadata" ? JSON.stringify(value) : value);
+  }
 
-  return db.data.providerNodes[index];
+  fields.push(`updatedAt = ?`);
+  params.push(now);
+  params.push(id);
+
+  sqlite.prepare(`UPDATE provider_nodes SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+  return await getProviderNodeById(id);
 }
 
 /**
  * Delete provider node
  */
 export async function deleteProviderNode(id) {
-  const db = await getDb();
-  if (!db.data.providerNodes) {
-    db.data.providerNodes = [];
+  if (isCloud) {
+    const db = await getDb();
+    if (!db.data.providerNodes) db.data.providerNodes = [];
+    const index = db.data.providerNodes.findIndex((node) => node.id === id);
+    if (index === -1) return null;
+    const removed = db.data.providerNodes.splice(index, 1);
+    await db.write();
+    return removed[0];
   }
 
-  const index = db.data.providerNodes.findIndex((node) => node.id === id);
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const existing = await getProviderNodeById(id);
+  if (!existing) return null;
 
-  if (index === -1) return null;
+  sqlite.prepare(`DELETE FROM provider_connections WHERE provider = ?`).run(id);
+  sqlite.prepare(`DELETE FROM provider_nodes WHERE id = ?`).run(id);
 
-  const [removed] = db.data.providerNodes.splice(index, 1);
-  await db.write();
+  return existing;
+}
 
-  return removed;
+// ============ Wallets ============
+
+/**
+ * Get all wallets
+ */
+export async function getWallets() {
+  if (isCloud) return [];
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const rows = sqlite.prepare(`SELECT * FROM wallets ORDER BY createdAt DESC`).all();
+
+  return rows.map(r => ({
+    ...r,
+    isDefault: r.isDefault === 1,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null
+  }));
+}
+
+/**
+ * Get wallet by ID
+ */
+export async function getWalletById(id) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM wallets WHERE id = ?`).get(id);
+
+  if (!row) return null;
+  return {
+    ...row,
+    isDefault: row.isDefault === 1,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null
+  };
+}
+
+/**
+ * Get wallet by address
+ */
+export async function getWalletByAddress(address) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM wallets WHERE address = ?`).get(address);
+
+  if (!row) return null;
+  return {
+    ...row,
+    isDefault: row.isDefault === 1,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null
+  };
+}
+
+/**
+ * Create a new wallet
+ */
+export async function createWallet(data) {
+  const now = new Date().toISOString();
+  const wallet = {
+    id: data.id || uuidv4(),
+    name: data.name,
+    address: data.address,
+    encryptedPrivateKey: data.encryptedPrivateKey || null,
+    type: data.type || 'imported',
+    balance: data.balance || 0,
+    isDefault: data.isDefault ? 1 : 0,
+    metadata: data.metadata || null,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  if (isCloud) return wallet;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  // Handle default flag
+  if (wallet.isDefault) {
+    sqlite.prepare(`UPDATE wallets SET isDefault = 0`).run();
+  }
+
+  sqlite.prepare(`
+    INSERT INTO wallets (id, name, address, encryptedPrivateKey, type, balance, isDefault, metadata, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    wallet.id, wallet.name, wallet.address, wallet.encryptedPrivateKey,
+    wallet.type, wallet.balance, wallet.isDefault,
+    wallet.metadata ? JSON.stringify(wallet.metadata) : null,
+    wallet.createdAt, wallet.updatedAt
+  );
+
+  return { ...wallet, isDefault: wallet.isDefault === 1 };
+}
+
+/**
+ * Update wallet
+ */
+export async function updateWallet(id, data) {
+  const now = new Date().toISOString();
+
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getWalletById(id);
+  if (!existing) return null;
+
+  if (data.isDefault) {
+    sqlite.prepare(`UPDATE wallets SET isDefault = 0`).run();
+  }
+
+  const fields = [];
+  const params = [];
+
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "id") continue;
+    fields.push(`${key} = ?`);
+    params.push(key === "metadata" || key === "isDefault" ?
+      (key === "metadata" ? JSON.stringify(value) : (value ? 1 : 0)) : value);
+  }
+
+  fields.push(`updatedAt = ?`);
+  params.push(now);
+  params.push(id);
+
+  sqlite.prepare(`UPDATE wallets SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+  return await getWalletById(id);
+}
+
+/**
+ * Delete wallet
+ */
+export async function deleteWallet(id) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const existing = await getWalletById(id);
+  if (!existing) return null;
+
+  sqlite.prepare(`DELETE FROM wallet_transactions WHERE wallet_id = ?`).run(id);
+  sqlite.prepare(`DELETE FROM wallets WHERE id = ?`).run(id);
+
+  return existing;
+}
+
+/**
+ * Get wallet transactions
+ */
+export async function getWalletTransactions(walletId) {
+  if (isCloud) return [];
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const rows = sqlite.prepare(`SELECT * FROM wallet_transactions WHERE wallet_id = ? ORDER BY timestamp DESC`).all(walletId);
+
+  return rows.map(r => ({
+    ...r,
+    metadata: r.metadata ? JSON.parse(r.metadata) : null
+  }));
+}
+
+/**
+ * Add wallet transaction
+ */
+export async function addWalletTransaction(data) {
+  const now = new Date().toISOString();
+  const tx = {
+    id: data.id || uuidv4(),
+    wallet_id: data.wallet_id,
+    type: data.type,
+    amount: data.amount,
+    symbol: data.symbol || 'ZIPc',
+    status: data.status || 'confirmed',
+    counterparty: data.counterparty || null,
+    txHash: data.txHash || null,
+    description: data.description || "",
+    timestamp: data.timestamp || now,
+    metadata: data.metadata ? JSON.stringify(data.metadata) : null
+  };
+
+  if (isCloud) return tx;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  sqlite.prepare(`
+    INSERT INTO wallet_transactions (id, wallet_id, type, amount, symbol, status, counterparty, txHash, description, timestamp, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    tx.id, tx.wallet_id, tx.type, tx.amount, tx.symbol, tx.status,
+    tx.counterparty, tx.txHash, tx.description, tx.timestamp, tx.metadata
+  );
+
+  return tx;
 }
 
 /**
  * Delete all provider connections by provider ID
  */
 export async function deleteProviderConnectionsByProvider(providerId) {
-  const db = await getDb();
-  const beforeCount = db.data.providerConnections.length;
-  db.data.providerConnections = db.data.providerConnections.filter(
-    (connection) => connection.provider !== providerId
-  );
-  const deletedCount = beforeCount - db.data.providerConnections.length;
-  await db.write();
-  return deletedCount;
+  if (isCloud) {
+    const db = await getDb();
+    const beforeCount = db.data.providerConnections.length;
+    db.data.providerConnections = db.data.providerConnections.filter(
+      (connection) => connection.provider !== providerId
+    );
+    const deletedCount = beforeCount - db.data.providerConnections.length;
+    await db.write();
+    return deletedCount;
+  }
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const result = sqlite.prepare(`DELETE FROM provider_connections WHERE provider = ?`).run(providerId);
+  return result.changes;
 }
 
 /**
  * Get provider connection by ID
  */
 export async function getProviderConnectionById(id) {
-  const db = await getDb();
-  return db.data.providerConnections.find(c => c.id === id) || null;
+  if (isCloud) {
+    const db = await getDb();
+    return db.data.providerConnections.find(c => c.id === id) || null;
+  }
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM provider_connections WHERE id = ?`).get(id);
+
+  if (!row) return null;
+  return {
+    ...row,
+    group: row.group_name,
+    isActive: row.isActive === 1,
+    isEnabled: row.isEnabled === 1,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    providerSpecificData: row.metadata ? JSON.parse(row.metadata) : null,
+  };
 }
 
 /**
  * Create or update provider connection (upsert by provider + email/name)
  */
 export async function createProviderConnection(data) {
-  const db = await getDb();
   const now = new Date().toISOString();
 
-  // Check for existing connection by explicit connectionId,
-  // or by same provider and email (for OAuth),
-  // or by same provider and name (for API key)
-  let existingIndex = -1;
-  if (data.connectionId) {
-    existingIndex = db.data.providerConnections.findIndex(c => c.id === data.connectionId);
-  } else if (data.authType === "oauth" && data.email) {
-    existingIndex = db.data.providerConnections.findIndex(
-      c => c.provider === data.provider && c.authType === "oauth" && c.email === data.email
-    );
-  } else if (data.authType === "apikey" && data.name) {
-    existingIndex = db.data.providerConnections.findIndex(
-      c => c.provider === data.provider && c.authType === "apikey" && c.name === data.name
-    );
-  }
-
-  // If exists, update instead of create
-  if (existingIndex !== -1) {
-    db.data.providerConnections[existingIndex] = {
-      ...db.data.providerConnections[existingIndex],
-      ...data,
-      updatedAt: now,
-    };
-    await db.write();
-    return db.data.providerConnections[existingIndex];
-  }
-
-  // Generate name for OAuth if not provided
-  let connectionName = data.name || null;
-  if (!connectionName && data.authType === "oauth") {
-    if (data.email) {
-      connectionName = data.email;
+  if (isCloud) {
+    const db = await getDb();
+    // Simplified logic for Cloud
+    let existingIndex = -1;
+    if (data.connectionId) {
+      existingIndex = db.data.providerConnections.findIndex(c => c.id === data.connectionId);
+    }
+    if (existingIndex !== -1) {
+      db.data.providerConnections[existingIndex] = { ...db.data.providerConnections[existingIndex], ...data, updatedAt: now };
     } else {
-      // Count existing connections for this provider to generate index
-      const existingCount = db.data.providerConnections.filter(
-        c => c.provider === data.provider
-      ).length;
-      connectionName = `Account ${existingCount + 1}`;
+      const conn = { id: uuidv4(), ...data, createdAt: now, updatedAt: now };
+      db.data.providerConnections.push(conn);
     }
+    await db.write();
+    return data;
   }
 
-  // Auto-increment priority if not provided
-  let connectionPriority = data.priority;
-  if (!connectionPriority) {
-    const providerConnections = db.data.providerConnections.filter(
-      c => c.provider === data.provider
-    );
-    const maxPriority = providerConnections.reduce((max, c) => Math.max(max, c.priority || 0), 0);
-    connectionPriority = maxPriority + 1;
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  // Check for existing connection
+  let existing = null;
+  if (data.connectionId) {
+    existing = await getProviderConnectionById(data.connectionId);
+  } else if (data.authType === "oauth" && data.email) {
+    existing = sqlite.prepare(`SELECT * FROM provider_connections WHERE provider = ? AND authType = 'oauth' AND email = ?`).get(data.provider, data.email);
+  } else if (data.authType === "apikey" && data.name) {
+    existing = sqlite.prepare(`SELECT * FROM provider_connections WHERE provider = ? AND authType = 'apikey' AND name = ?`).get(data.provider, data.name);
   }
 
-  // Create new connection - only save fields with actual values
-  const connection = {
-    id: uuidv4(),
-    provider: data.provider,
-    authType: data.authType || "oauth",
-    name: connectionName,
-    group: data.group || "default",
-    priority: connectionPriority,
-    isActive: data.isActive !== undefined ? data.isActive : true,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  // Only add optional fields if they have values
-  const optionalFields = [
-    "displayName", "email", "globalPriority", "defaultModel", "group",
-    "accessToken", "refreshToken", "expiresAt", "tokenType",
-    "scope", "idToken", "projectId", "apiKey", "testStatus",
-    "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "expiresIn", "errorCode",
-    "consecutiveUseCount", "latency", "tps"
-  ];
-
-  for (const field of optionalFields) {
-    if (data[field] !== undefined && data[field] !== null) {
-      connection[field] = data[field];
-    }
+  if (existing) {
+    return await updateProviderConnection(existing.id, data);
   }
 
-  // Only add providerSpecificData if it has content
-  if (data.providerSpecificData && Object.keys(data.providerSpecificData).length > 0) {
-    connection.providerSpecificData = data.providerSpecificData;
+  // Create new
+  let name = data.name || (data.email ? data.email : null);
+  if (!name && data.authType === "oauth") {
+    const count = sqlite.prepare(`SELECT COUNT(*) as count FROM provider_connections WHERE provider = ?`).get(data.provider).count;
+    name = `Account ${count + 1}`;
   }
 
-  db.data.providerConnections.push(connection);
-  await db.write();
+  let priority = data.priority;
+  if (!priority) {
+    const max = sqlite.prepare(`SELECT MAX(priority) as max FROM provider_connections WHERE provider = ?`).get(data.provider).max;
+    priority = (max || 0) + 1;
+  }
 
-  // Reorder to ensure consistency
+  const id = uuidv4();
+  const metadata = data.metadata || data.providerSpecificData || {};
+
+  sqlite.prepare(`
+    INSERT INTO provider_connections (
+      id, provider, authType, name, wallet_id, group_name, priority, isActive, isEnabled,
+      email, accessToken, refreshToken, expiresAt, apiKey, createdAt, updatedAt, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, data.provider, data.authType || "oauth", name, data.wallet_id || null, data.group || "default",
+    priority, data.isActive === false ? 0 : 1, data.isEnabled === false ? 0 : 1,
+    data.email || null, data.accessToken || null, data.refreshToken || null,
+    data.expiresAt || null, data.apiKey || null, now, now, JSON.stringify(metadata)
+  );
+
   await reorderProviderConnections(data.provider);
-
-  return connection;
+  return await getProviderConnectionById(id);
 }
 
 /**
  * Update provider connection
  */
 export async function updateProviderConnection(id, data) {
-  const db = await getDb();
-  const index = db.data.providerConnections.findIndex(c => c.id === id);
+  const now = new Date().toISOString();
 
-  if (index === -1) return null;
-
-  const providerId = db.data.providerConnections[index].provider;
-
-  db.data.providerConnections[index] = {
-    ...db.data.providerConnections[index],
-    ...data,
-    updatedAt: new Date().toISOString(),
-  };
-
-  await db.write();
-
-  // Reorder if priority was changed
-  if (data.priority !== undefined) {
-    await reorderProviderConnections(providerId);
+  if (isCloud) {
+    const db = await getDb();
+    const index = db.data.providerConnections.findIndex(c => c.id === id);
+    if (index === -1) return null;
+    db.data.providerConnections[index] = { ...db.data.providerConnections[index], ...data, updatedAt: now };
+    await db.write();
+    return db.data.providerConnections[index];
   }
 
-  return db.data.providerConnections[index];
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getProviderConnectionById(id);
+  if (!existing) return null;
+
+  const fields = [];
+  const params = [];
+
+  const mapping = {
+    group: "group_name",
+    isActive: "isActive",
+    isEnabled: "isEnabled",
+    metadata: "metadata",
+    providerSpecificData: "metadata"
+  };
+
+  for (const [key, value] of Object.entries(data)) {
+    if (key === "id" || key === "connectionId") continue;
+
+    const dbKey = mapping[key] || key;
+
+    // Skip fields that aren't in the schema
+    const validFields = [
+      "provider", "authType", "name", "wallet_id", "group_name", "priority", "isActive", "isEnabled",
+      "email", "accessToken", "refreshToken", "expiresAt", "apiKey", "testStatus",
+      "lastTested", "lastError", "lastErrorAt", "rateLimitedUntil", "metadata", "updatedAt"
+    ];
+
+    if (!validFields.includes(dbKey)) continue;
+
+    fields.push(`${dbKey} = ?`);
+
+    if (dbKey === "isActive" || dbKey === "isEnabled") {
+      params.push(value ? 1 : 0);
+    } else if (dbKey === "metadata") {
+      params.push(JSON.stringify(value));
+    } else {
+      params.push(value);
+    }
+  }
+
+  if (fields.length === 0) return existing;
+
+  fields.push(`updatedAt = ?`);
+  params.push(now);
+  params.push(id);
+
+  sqlite.prepare(`UPDATE provider_connections SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+
+  if (data.priority !== undefined) {
+    await reorderProviderConnections(existing.provider);
+  }
+
+  return await getProviderConnectionById(id);
 }
 
 /**
  * Delete provider connection
  */
 export async function deleteProviderConnection(id) {
-  const db = await getDb();
-  const index = db.data.providerConnections.findIndex(c => c.id === id);
+  if (isCloud) {
+    const db = await getDb();
+    const index = db.data.providerConnections.findIndex(c => c.id === id);
+    if (index === -1) return false;
+    const providerId = db.data.providerConnections[index].provider;
+    db.data.providerConnections.splice(index, 1);
+    await db.write();
+    return true;
+  }
 
-  if (index === -1) return false;
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const existing = await getProviderConnectionById(id);
+  if (!existing) return false;
 
-  const providerId = db.data.providerConnections[index].provider;
-
-  db.data.providerConnections.splice(index, 1);
-  await db.write();
-
-  // Reorder to fill gaps
-  await reorderProviderConnections(providerId);
+  sqlite.prepare(`DELETE FROM provider_connections WHERE id = ?`).run(id);
+  await reorderProviderConnections(existing.provider);
 
   return true;
 }
@@ -918,25 +1420,29 @@ export async function deleteProviderConnection(id) {
  * Reorder provider connections to ensure unique, sequential priorities
  */
 export async function reorderProviderConnections(providerId) {
-  const db = await getDb();
-  if (!db.data.providerConnections) return;
+  if (isCloud) {
+    const db = await getDb();
+    if (!db.data.providerConnections) return;
+    const providerConnections = db.data.providerConnections
+      .filter(c => c.provider === providerId)
+      .sort((a, b) => (a.priority || 0) - (b.priority || 0));
+    providerConnections.forEach((conn, index) => { conn.priority = index + 1; });
+    await db.write();
+    return;
+  }
 
-  const providerConnections = db.data.providerConnections
-    .filter(c => c.provider === providerId)
-    .sort((a, b) => {
-      // Sort by priority first
-      const pDiff = (a.priority || 0) - (b.priority || 0);
-      if (pDiff !== 0) return pDiff;
-      // Use updatedAt as tie-breaker (newer first)
-      return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const connections = await getProviderConnections({ provider: providerId });
+
+  const update = sqlite.prepare(`UPDATE provider_connections SET priority = ? WHERE id = ?`);
+  const transaction = sqlite.transaction((conns) => {
+    conns.forEach((c, i) => {
+      update.run(i + 1, c.id);
     });
-
-  // Re-assign sequential priorities
-  providerConnections.forEach((conn, index) => {
-    conn.priority = index + 1;
   });
 
-  await db.write();
+  transaction(connections);
 }
 
 // ============ Model Aliases ============
@@ -1197,29 +1703,61 @@ export async function isCloudEnabled() {
  */
 export async function getNodeIdentity() {
   const db = await getDb();
-  if (db.data.settings?.nodeIdentity) {
-    return db.data.settings.nodeIdentity;
+  let identity = db.data.settings?.nodeIdentity;
+
+  if (!identity) {
+    // Generate new key pair
+    const { generateKeyPair } = await import("node:crypto");
+    const { promisify } = await import("node:util");
+    const generate = promisify(generateKeyPair);
+
+    const { publicKey, privateKey } = await generate("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+
+    identity = {
+      publicKey,
+      privateKey,
+      createdAt: new Date().toISOString()
+    };
+
+    db.data.settings.nodeIdentity = identity;
+    await db.write();
   }
 
-  // Generate new key pair
-  const { generateKeyPair } = await import("node:crypto");
-  const { promisify } = await import("node:util");
-  const generate = promisify(generateKeyPair);
+  // Include the default wallet address if available
+  const defaultWallet = await getNodeWallet();
+  if (defaultWallet) {
+    identity = { ...identity, walletAddress: defaultWallet.address, walletId: defaultWallet.id };
+  }
 
-  const { publicKey, privateKey } = await generate("ed25519", {
-    publicKeyEncoding: { type: "spki", format: "pem" },
-    privateKeyEncoding: { type: "pkcs8", format: "pem" },
-  });
-
-  const identity = {
-    publicKey,
-    privateKey,
-    createdAt: new Date().toISOString()
-  };
-
-  db.data.settings.nodeIdentity = identity;
-  await db.write();
   return identity;
+}
+
+/**
+ * Get the default/primary wallet for this node
+ */
+export async function getNodeWallet() {
+  if (isCloud) return null;
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  // Try to find the default wallet first
+  let wallet = sqlite.prepare(`SELECT * FROM wallets WHERE isDefault = 1`).get();
+
+  // If no default, take the first one created
+  if (!wallet) {
+    wallet = sqlite.prepare(`SELECT * FROM wallets ORDER BY createdAt ASC LIMIT 1`).get();
+  }
+
+  if (!wallet) return null;
+
+  return {
+    ...wallet,
+    isDefault: wallet.isDefault === 1,
+    metadata: wallet.metadata ? JSON.parse(wallet.metadata) : null
+  };
 }
 
 // ============ Pricing ============
@@ -1598,3 +2136,4 @@ export async function recordP2pTransaction(transaction) {
     return false;
   }
 }
+

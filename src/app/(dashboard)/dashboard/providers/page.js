@@ -130,7 +130,10 @@ export default function ProvidersPage() {
     const errorCode = latestError ? getErrorCode(latestError.lastError) : null;
     const errorTime = latestError?.lastErrorAt ? getRelativeTime(latestError.lastErrorAt) : null;
 
-    return { connected, error, total, errorCode, errorTime, avgLatency, avgTps };
+    // Get active groups
+    const groups = [...new Set(providerConnections.filter(c => c.isEnabled !== false).map(c => c.group || "default"))];
+
+    return { connected, error, total, errorCode, errorTime, avgLatency, avgTps, groups };
   };
 
   const compatibleProviders = providerNodes
@@ -181,7 +184,11 @@ export default function ProvidersPage() {
         <div className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/20 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="material-symbols-outlined text-blue-500">check_circle</span>
-            <span className="text-sm font-medium">Scan complete: {discoveredCount} new local providers discovered.</span>
+            <span className="text-sm font-medium">
+              {discoveredCount > 0
+                ? `Scan complete: ${discoveredCount} local provider(s) discovered and added.`
+                : "Scan complete: No new local providers found on the network."}
+            </span>
           </div>
           <button onClick={() => setDiscoveredCount(null)} className="text-text-muted hover:text-text">
             <span className="material-symbols-outlined text-sm">close</span>
@@ -381,21 +388,36 @@ function ProviderCard({ providerId, provider, stats }) {
             </div>
             <div>
               <h3 className="font-semibold">{provider.name}</h3>
-              <div className="flex items-center gap-2 text-xs flex-wrap">
-                {getStatusDisplay(connected, error, errorCode)}
-                {avgLatency && (
-                  <span className="text-text-muted flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">timer</span>
-                    {avgLatency}ms
-                  </span>
+              <div className="flex flex-col gap-1.5 mt-1">
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  {getStatusDisplay(connected, error, errorCode)}
+                  {avgLatency && (
+                    <span className="text-text-muted flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">timer</span>
+                      {avgLatency}ms
+                    </span>
+                  )}
+                  {avgTps && (
+                    <span className="text-text-muted flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">speed</span>
+                      {avgTps} t/s
+                    </span>
+                  )}
+                  {errorTime && <span className="text-text-muted">• {errorTime}</span>}
+                </div>
+                {stats.groups && stats.groups.length > 0 && (
+                  <div className="flex gap-1 flex-wrap">
+                    {stats.groups.map(g => (
+                      <span key={g} className={`text-[9px] px-1.5 py-0 rounded border ${g === "work" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
+                        g === "team" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
+                          g === "personal" ? "bg-green-500/10 text-green-600 border-green-500/20" :
+                            "bg-gray-500/10 text-gray-600 border-gray-500/20"
+                        }`}>
+                        {g === "default" ? "Def" : g.charAt(0).toUpperCase() + g.slice(1, 4)}
+                      </span>
+                    ))}
+                  </div>
                 )}
-                {avgTps && (
-                  <span className="text-text-muted flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">speed</span>
-                    {avgTps} t/s
-                  </span>
-                )}
-                {errorTime && <span className="text-text-muted">• {errorTime}</span>}
               </div>
             </div>
           </div>
@@ -472,31 +494,46 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
             </div>
             <div>
               <h3 className="font-semibold">{provider.name}</h3>
-              <div className="flex items-center gap-2 text-xs flex-wrap">
-                {getStatusDisplay(connected, error, errorCode)}
-                {avgLatency && (
-                  <span className="text-text-muted flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">timer</span>
-                    {avgLatency}ms
-                  </span>
+              <div className="flex flex-col gap-1.5 mt-1">
+                <div className="flex items-center gap-2 text-xs flex-wrap">
+                  {getStatusDisplay(connected, error, errorCode)}
+                  {avgLatency && (
+                    <span className="text-text-muted flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">timer</span>
+                      {avgLatency}ms
+                    </span>
+                  )}
+                  {avgTps && (
+                    <span className="text-text-muted flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[14px]">speed</span>
+                      {avgTps} t/s
+                    </span>
+                  )}
+                  {isCompatible && (
+                    <Badge variant="default" size="sm">
+                      {provider.apiType === "responses" ? "Responses" : "Chat"}
+                    </Badge>
+                  )}
+                  {isAnthropicCompatible && (
+                    <Badge variant="default" size="sm">
+                      Messages
+                    </Badge>
+                  )}
+                  {errorTime && <span className="text-text-muted">• {errorTime}</span>}
+                </div>
+                {stats.groups && stats.groups.length > 0 && (
+                  <div className="flex gap-1 flex-wrap">
+                    {stats.groups.map(g => (
+                      <span key={g} className={`text-[9px] px-1.5 py-0 rounded border ${g === "work" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
+                        g === "team" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
+                          g === "personal" ? "bg-green-500/10 text-green-600 border-green-500/20" :
+                            "bg-gray-500/10 text-gray-600 border-gray-500/20"
+                        }`}>
+                        {g === "default" ? "Def" : g.charAt(0).toUpperCase() + g.slice(1, 4)}
+                      </span>
+                    ))}
+                  </div>
                 )}
-                {avgTps && (
-                  <span className="text-text-muted flex items-center gap-1">
-                    <span className="material-symbols-outlined text-[14px]">speed</span>
-                    {avgTps} t/s
-                  </span>
-                )}
-                {isCompatible && (
-                  <Badge variant="default" size="sm">
-                    {provider.apiType === "responses" ? "Responses" : "Chat"}
-                  </Badge>
-                )}
-                {isAnthropicCompatible && (
-                  <Badge variant="default" size="sm">
-                    Messages
-                  </Badge>
-                )}
-                {errorTime && <span className="text-text-muted">• {errorTime}</span>}
               </div>
             </div>
           </div>
@@ -550,7 +587,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
       setFormData(prev => ({
         ...prev,
         name: preset.name.split(" ")[0], // e.g. "Kilo"
-        prefix: preset.id.split("-")[0], // e.g. "kilo"
+        prefix: preset.id.split("-")[0], // e.g. "kiro"
         baseUrl: preset.baseUrl,
       }));
     };

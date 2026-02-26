@@ -1,16 +1,35 @@
 import { NextResponse } from "next/server";
-import { getProviderNodes } from "@/lib/localDb.js";
-import { getWalletBalance } from "@/lib/sidecar.js";
+import { getNodeWallet, getSettings } from "@/lib/localDb.js";
 
 export async function GET() {
     try {
-        const balance = await getWalletBalance();
-        const nodes = await getProviderNodes();
-        const localNode = nodes.find(n => n.type === "local") || { id: "0xx-node-local" };
+        const settings = await getSettings();
+
+        if (settings.isDemoMode) {
+            return NextResponse.json({
+                balance: 10240.0,
+                currency: "ZIP",
+                address: "ZIP-DEMO-NODE-123456789",
+                symbol: "ZIPc"
+            });
+        }
+
+        const wallet = await getNodeWallet();
+
+        if (!wallet) {
+            return NextResponse.json({
+                balance: 0,
+                currency: "ZIP",
+                address: "No wallet linked",
+                symbol: "ZIPc"
+            });
+        }
 
         return NextResponse.json({
-            balance,
-            address: `ZIP-${localNode.id.slice(0, 10).toUpperCase()}`,
+            balance: wallet.balance || 0,
+            address: wallet.address,
+            name: wallet.name,
+            currency: "ZIP",
             symbol: "ZIPc"
         });
     } catch (error) {

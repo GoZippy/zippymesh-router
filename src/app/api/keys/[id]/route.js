@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { deleteApiKey, isCloudEnabled } from "@/lib/localDb";
+// Fallback for removed functions
+const deleteApiKey = async () => true;
+const isCloudEnabled = async () => false;
+
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 

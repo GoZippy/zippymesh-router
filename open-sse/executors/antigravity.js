@@ -27,16 +27,16 @@ export class AntigravityExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const projectId = credentials?.projectId || this.generateProjectId();
-    
+
     const transformedRequest = {
       ...body.request,
       sessionId: body.request?.sessionId || this.generateSessionId(),
       safetySettings: undefined,
-      toolConfig: body.request?.tools?.length > 0 
+      toolConfig: body.request?.tools?.length > 0
         ? { functionCallingConfig: { mode: "VALIDATED" } }
         : body.request?.toolConfig
     };
-    
+
     return {
       ...body,
       project: projectId,
@@ -97,7 +97,7 @@ export class AntigravityExecutor extends BaseExecutor {
     if (retryAfter) {
       const seconds = parseInt(retryAfter, 10);
       if (!isNaN(seconds) && seconds > 0) return seconds * 1000;
-      
+
       const date = new Date(retryAfter);
       if (!isNaN(date.getTime())) {
         const diff = date.getTime() - Date.now();
@@ -126,15 +126,26 @@ export class AntigravityExecutor extends BaseExecutor {
   parseRetryFromErrorMessage(errorMessage) {
     if (!errorMessage || typeof errorMessage !== "string") return null;
 
-    const match = errorMessage.match(/reset after (\d+h)?(\d+m)?(\d+s)?/i);
-    if (!match) return null;
+    // Normalize: remove "Your quota will reset after " and other fluff if present
+    const cleanMessage = errorMessage.toLowerCase();
+
+    // Pattern for h m s
+    const hMatch = cleanMessage.match(/(\d+)\s*h/);
+    const mMatch = cleanMessage.match(/(\d+)\s*m/);
+    const sMatch = cleanMessage.match(/(\d+)\s*s/);
 
     let totalMs = 0;
-    if (match[1]) totalMs += parseInt(match[1]) * 3600 * 1000; // hours
-    if (match[2]) totalMs += parseInt(match[2]) * 60 * 1000; // minutes
-    if (match[3]) totalMs += parseInt(match[3]) * 1000; // seconds
+    if (hMatch) totalMs += parseInt(hMatch[1]) * 3600 * 1000;
+    if (mMatch) totalMs += parseInt(mMatch[1]) * 60 * 1000;
+    if (sMatch) totalMs += parseInt(sMatch[1]) * 1000;
 
-    return totalMs > 0 ? totalMs : null;
+    if (totalMs > 0) return totalMs;
+
+    // Fallback for "reset in X seconds"
+    const inSecondsMatch = cleanMessage.match(/reset in (\d+) seconds/);
+    if (inSecondsMatch) return parseInt(inSecondsMatch[1]) * 1000;
+
+    return null;
   }
 
   async execute({ model, body, stream, credentials, signal, log }) {
@@ -148,7 +159,7 @@ export class AntigravityExecutor extends BaseExecutor {
       const url = this.buildUrl(model, stream, urlIndex);
       const headers = this.buildHeaders(credentials, stream);
       const transformedBody = this.transformRequest(model, body, stream, credentials);
-      
+
       // Initialize retry counter for this URL
       if (!retryAttemptsByUrl[urlIndex]) {
         retryAttemptsByUrl[urlIndex] = 0;
@@ -179,7 +190,7 @@ export class AntigravityExecutor extends BaseExecutor {
           }
 
           if (retryMs && retryMs <= MAX_RETRY_AFTER_MS) {
-            log?.debug?.("RETRY", `${response.status} with Retry-After: ${Math.ceil(retryMs/1000)}s, waiting...`);
+            log?.debug?.("RETRY", `${response.status} with Retry-After: ${Math.ceil(retryMs / 1000)}s, waiting...`);
             await new Promise(resolve => setTimeout(resolve, retryMs));
             urlIndex--;
             continue;
@@ -190,15 +201,15 @@ export class AntigravityExecutor extends BaseExecutor {
             retryAttemptsByUrl[urlIndex]++;
             // Exponential backoff: 2s, 4s, 8s...
             const backoffMs = Math.min(1000 * (2 ** retryAttemptsByUrl[urlIndex]), MAX_RETRY_AFTER_MS);
-            log?.debug?.("RETRY", `429 auto retry ${retryAttemptsByUrl[urlIndex]}/${MAX_AUTO_RETRIES} after ${backoffMs/1000}s`);
+            log?.debug?.("RETRY", `429 auto retry ${retryAttemptsByUrl[urlIndex]}/${MAX_AUTO_RETRIES} after ${backoffMs / 1000}s`);
             await new Promise(resolve => setTimeout(resolve, backoffMs));
             urlIndex--;
             continue;
           }
 
-          log?.debug?.("RETRY", `${response.status}, Retry-After ${retryMs ? `too long (${Math.ceil(retryMs/1000)}s)` : 'missing'}, trying fallback`);
+          log?.debug?.("RETRY", `${response.status}, Retry-After ${retryMs ? `too long (${Math.ceil(retryMs / 1000)}s)` : 'missing'}, trying fallback`);
           lastStatus = response.status;
-          
+
           if (urlIndex + 1 < fallbackCount) {
             continue;
           }

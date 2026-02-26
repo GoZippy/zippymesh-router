@@ -14,7 +14,15 @@ import {
   GITHUB_CONFIG,
   KIRO_CONFIG,
   CURSOR_CONFIG,
+  KILO_CONFIG,
 } from "./constants/oauth";
+
+// Cache for Kiro client registration
+const kiroClientCache = {
+  clientInfo: null,
+  timestamp: 0,
+};
+const KIRO_CACHE_TTL = 3600000; // 1 hour
 
 // Provider configurations
 const PROVIDERS = {
@@ -528,6 +536,8 @@ const PROVIDERS = {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       expiresIn: tokens.expires_in,
+      email: extra?.userInfo?.email || extra?.userInfo?.login,
+      displayName: extra?.userInfo?.name || extra?.userInfo?.login || extra?.userInfo?.email,
       providerSpecificData: {
         copilotToken: extra?.copilotToken?.token,
         copilotTokenExpiresAt: extra?.copilotToken?.expires_at,
@@ -544,28 +554,38 @@ const PROVIDERS = {
     flowType: "device_code",
     // Kiro uses AWS SSO OIDC - requires client registration first
     requestDeviceCode: async (config) => {
-      // Step 1: Register client with AWS SSO OIDC
-      const registerRes = await fetch(config.registerClientUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          clientName: config.clientName,
-          clientType: config.clientType,
-          scopes: config.scopes,
-          grantTypes: config.grantTypes,
-          issuerUrl: config.issuerUrl,
-        }),
-      });
+      // Step 1: Register client with AWS SSO OIDC (or use cached)
+      let clientInfo = kiroClientCache.clientInfo;
+      const now = Date.now();
 
-      if (!registerRes.ok) {
-        const error = await registerRes.text();
-        throw new Error(`Client registration failed: ${error}`);
+      if (!clientInfo || (now - kiroClientCache.timestamp > KIRO_CACHE_TTL)) {
+        console.log("[Kiro] Registering new client with AWS SSO OIDC");
+        const registerRes = await fetch(config.registerClientUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            clientName: config.clientName,
+            clientType: config.clientType,
+            scopes: config.scopes,
+            grantTypes: config.grantTypes,
+            issuerUrl: config.issuerUrl,
+          }),
+        });
+
+        if (!registerRes.ok) {
+          const error = await registerRes.text();
+          throw new Error(`Client registration failed: ${error}`);
+        }
+
+        clientInfo = await registerRes.json();
+        kiroClientCache.clientInfo = clientInfo;
+        kiroClientCache.timestamp = now;
+      } else {
+        console.log("[Kiro] Using cached client registration");
       }
-
-      const clientInfo = await registerRes.json();
 
       // Step 2: Request device authorization
       const deviceRes = await fetch(config.deviceAuthUrl, {
@@ -673,6 +693,14 @@ const PROVIDERS = {
       },
     }),
   },
+  kiro_api: {
+    config: KIRO_CONFIG,
+    flowType: "api_key",
+  },
+  kilo: {
+    config: KILO_CONFIG,
+    flowType: "api_key",
+  },
 };
 
 /**
@@ -727,9 +755,9 @@ export function generateAuthData(providerName, redirectUri) {
  */
 export async function exchangeTokens(providerName, code, redirectUri, codeVerifier, state) {
   const provider = getProvider(providerName);
-  
+
   const tokens = await provider.exchangeToken(provider.config, code, redirectUri, codeVerifier, state);
-  
+
   let extra = null;
   if (provider.postExchange) {
     extra = await provider.postExchange(tokens);
@@ -761,9 +789,9 @@ export async function pollForToken(providerName, deviceCode, codeVerifier, extra
   if (provider.flowType !== "device_code") {
     throw new Error(`Provider ${providerName} does not support device code flow`);
   }
-  
+
   const result = await provider.pollToken(provider.config, deviceCode, codeVerifier, extraData);
-  
+
   if (result.ok) {
     // For device code flows, success is only when we have an access token
     if (result.data.access_token) {
@@ -777,23 +805,23 @@ export async function pollForToken(providerName, deviceCode, codeVerifier, extra
       // Check if it's still pending authorization
       if (result.data.error === 'authorization_pending' || result.data.error === 'slow_down') {
         // This is not a failure, just still waiting
-        return { 
-          success: false, 
-          error: result.data.error, 
+        return {
+          success: false,
+          error: result.data.error,
           errorDescription: result.data.error_description || result.data.message,
           pending: result.data.error === 'authorization_pending'
         };
       } else {
         // Actual error
-        return { 
-          success: false, 
-          error: result.data.error || 'no_access_token', 
-          errorDescription: result.data.error_description || result.data.message || 'No access token received' 
+        return {
+          success: false,
+          error: result.data.error || 'no_access_token',
+          errorDescription: result.data.error_description || result.data.message || 'No access token received'
         };
       }
     }
   }
-  
+
   return { success: false, error: result.data.error, errorDescription: result.data.error_description };
 }
 
