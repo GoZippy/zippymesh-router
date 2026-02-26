@@ -63,14 +63,19 @@ class ZippyNodeManager extends EventEmitter {
         this.config.mode = mode;
         this.config.broadcast = broadcast;
 
+        const isValidator = mode === 'validator';
         const args = [
-            `--mode=${mode}`,
-            `--discovery-broadcast=${broadcast}`,
-            `--api-port=${this.config.apiPort}`,
-            `--rpc-port=${this.config.rpcPort}`
+            `--rpc-port=${this.config.rpcPort}`,
+            `--p2p-port=${this.config.apiPort + 20000}`, // Distinct P2P port
+            `--data-dir=${path.join(process.cwd(), 'data', 'chain')}`,
+            `--peers=10.0.97.100:30303`
         ];
 
-        this._addLog(`Starting ZippyNode in ${mode} mode (broadcast: ${broadcast})...`, 'system');
+        if (!isValidator) {
+            args.push('--full-node');
+        }
+
+        this._addLog(`Starting ZippyNode (isValidator: ${isValidator}, peers: 10.0.97.100)...`, 'system');
         this._addLog(`Binary path: ${this.config.binaryPath}`, 'system');
 
         if (!fs.existsSync(this.config.binaryPath)) {
