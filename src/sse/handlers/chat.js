@@ -6,7 +6,7 @@ import { handleComboChat } from "open-sse/services/combo.js";
 import { HTTP_STATUS } from "open-sse/config/constants.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
-import { checkSafety } from "../utils/guardrails.js";
+import { checkSafety } from "../../utils/guardrails.js";
 
 /**
  * Handle chat completion request
