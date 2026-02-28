@@ -17,12 +17,22 @@ export async function OPTIONS() {
  * GET /v1beta/models - Gemini compatible models list
  * Returns models in Gemini API format
  */
-export async function GET() {
+export async function GET(request) {
+  // optional auth
+  const { getSettings } = await import("@/lib/localDb.js");
+  const settings = await getSettings();
+  if (settings.requireApiKey) {
+    const { requireApiKey } = await import("@/lib/auth/apiKey.js");
+    try {
+      await requireApiKey(request);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: err.code || 401, headers: { "Content-Type": "application/json" } });
+    }
+  }
+
   try {
     // Collect all models from all providers
     const models = [];
-    
-    for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       for (const model of providerModels) {
         models.push({
           name: `models/${provider}/${model.id}`,

@@ -14,7 +14,19 @@ export async function OPTIONS() {
 /**
  * GET /v1 - Return models list (OpenAI compatible)
  */
-export async function GET() {
+export async function GET(request) {
+  // enforce API key if required
+  const { getSettings } = await import("@/lib/localDb.js");
+  const settings = await getSettings();
+  if (settings.requireApiKey) {
+    const { requireApiKey } = await import("@/lib/auth/apiKey.js");
+    try {
+      await requireApiKey(request);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), { status: err.code || 401, headers: { "Content-Type": "application/json", ...CORS_HEADERS } });
+    }
+  }
+
   const models = [
     { id: "claude-sonnet-4-20250514", object: "model", owned_by: "anthropic" },
     { id: "claude-3-5-sonnet-20241022", object: "model", owned_by: "anthropic" },

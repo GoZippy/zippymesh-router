@@ -29,6 +29,21 @@ export async function handleChat(request, clientRawRequest = null) {
     return errorResponse(HTTP_STATUS.FORBIDDEN, safety.reason);
   }
 
+  // API key authentication (optional depending on settings)
+  try {
+    const { requireApiKey } = await import("@/lib/auth/apiKey.js");
+    const { getSettings } = await import("@/lib/localDb");
+    const settings = await getSettings();
+    if (settings.requireApiKey) {
+      await requireApiKey(request);
+      log.debug("AUTH", "API key validated");
+    }
+  } catch (err) {
+    log.warn("AUTH", err.message);
+    const status = err.code || HTTP_STATUS.UNAUTHORIZED;
+    return errorResponse(status, err.message);
+  }
+
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
     const url = new URL(request.url);

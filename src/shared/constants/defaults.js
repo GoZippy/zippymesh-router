@@ -58,6 +58,7 @@ export const INITIAL_SETTINGS = {
     cloudEnabled: false,
     stickyRoundRobinLimit: 3,
     requireLogin: true,
+    requireApiKey: false,
     defaultPlaybookId: "pb-balanced-default",
     autoDiscovery: true,
     isDemoMode: false

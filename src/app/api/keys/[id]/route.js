@@ -1,25 +1,29 @@
 import { NextResponse } from "next/server";
-// Fallback for removed functions
-const deleteApiKey = async () => true;
-const isCloudEnabled = async () => false;
+import { revokeRouterApiKey } from "@/lib/localDb.js";
+import { isAuthenticated } from "@/lib/auth/login.js";
+import { getSettings } from "@/lib/localDb.js";
 
+// cloud sync helpers are left in case
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/app/api/sync/cloud/route";
 
-// DELETE /api/keys/[id] - Delete API key
+// DELETE /api/keys/[id] - revoke API key
 export async function DELETE(request, { params }) {
-  try {
-    const { id } = await params;
+  const auth = await isAuthenticated();
+  const settings = await getSettings();
+  if (settings.requireLogin !== false && !auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
-    const deleted = await deleteApiKey(id);
-    if (!deleted) {
+  const { id } = params;
+  try {
+    const ok = await revokeRouterApiKey(id);
+    if (!ok) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-
-    // Auto sync to Cloud if enabled
+    // optional sync
     await syncKeysToCloudIfEnabled();
-
-    return NextResponse.json({ message: "Key deleted successfully" });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting key:", error);
     return NextResponse.json({ error: "Failed to delete key" }, { status: 500 });

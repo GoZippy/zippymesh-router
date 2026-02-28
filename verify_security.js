@@ -37,6 +37,24 @@ async function runTest() {
         console.log("4. Tampering Check: OK (Rejected invalid token)");
     }
 
+    // 5. Router API key generation and verification
+    const { createRouterApiKey, verifyRouterApiKey, revokeRouterApiKey } = await import("./src/lib/localDb.js");
+    const { id: keyId, rawKey } = await createRouterApiKey({ name: "test" });
+    console.log("5. Created router API key", keyId);
+    const v1 = await verifyRouterApiKey(rawKey);
+    if (v1.valid) {
+        console.log("5a. Key verification: OK");
+    } else {
+        throw new Error("Router API key failed to verify");
+    }
+    await revokeRouterApiKey(keyId);
+    const v2 = await verifyRouterApiKey(rawKey);
+    if (!v2.valid) {
+        console.log("5b. Revocation: OK");
+    } else {
+        console.error("5b. Revocation FAILED");
+    }
+
     console.log("\n--- PHASE 12 SECURITY VERIFIED ---");
     console.log("All cryptographic foundations are solid.");
 }

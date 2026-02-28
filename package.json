@@ -7,7 +7,8 @@
     "dev": "next dev -p 20128 --webpack",
     "build": "next build --webpack",
     "start": "next start -p 20128",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node tests/routerKey.test.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

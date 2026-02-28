@@ -9,6 +9,7 @@ import { APP_CONFIG } from "@/shared/constants/config";
 export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
   const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
+  const [requireApiKey, setRequireApiKey] = useState(false);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
@@ -19,6 +20,7 @@ export default function ProfilePage() {
       .then((res) => res.json())
       .then((data) => {
         setSettings(data);
+        if (data.requireApiKey !== undefined) setRequireApiKey(data.requireApiKey);
         setLoading(false);
       })
       .catch((err) => {
@@ -110,6 +112,22 @@ export default function ProfilePage() {
     }
   };
 
+  const updateRequireApiKey = async (req) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requireApiKey: req }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, requireApiKey: req }));
+        setRequireApiKey(req);
+      }
+    } catch (err) {
+      console.error("Failed to update requireApiKey:", err);
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex flex-col gap-6">
@@ -150,6 +168,19 @@ export default function ProfilePage() {
               <Toggle
                 checked={settings.requireLogin === true}
                 onChange={() => updateRequireLogin(!settings.requireLogin)}
+                disabled={loading}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">Require API key</p>
+                <p className="text-sm text-text-muted">
+                  When ON, external API endpoints (/v1/*) require a valid router API key.
+                </p>
+              </div>
+              <Toggle
+                checked={requireApiKey === true}
+                onChange={() => updateRequireApiKey(!requireApiKey)}
                 disabled={loading}
               />
             </div>

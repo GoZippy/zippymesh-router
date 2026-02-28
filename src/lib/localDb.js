@@ -1,6 +1,7 @@
 import { Low } from "lowdb";
 import { JSONFile } from "lowdb/node";
 import { v4 as uuidv4 } from "uuid";
+import bcrypt from "bcryptjs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -134,6 +135,26 @@ export function getSqliteDb() {
       metadata TEXT, -- JSON blob
       createdAt TEXT,
       updatedAt TEXT
+    );
+
+    -- router API keys for clients of the local service
+    CREATE TABLE IF NOT EXISTS router_api_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      keyHash TEXT NOT NULL,
+      scopes TEXT, -- JSON array string
+      createdAt TEXT,
+      expiresAt TEXT,
+      revoked BOOLEAN DEFAULT 0
+    );
+
+    -- blacklist entries for IPs or keys
+    CREATE TABLE IF NOT EXISTS blacklist (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL, -- 'ip' | 'key'
+      value TEXT NOT NULL,
+      reason TEXT,
+      createdAt TEXT
     );
 
     CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -1688,6 +1709,107 @@ export async function updateSettings(updates) {
   };
   await db.write();
   return db.data.settings;
+}
+
+// ============ Router API Keys ============
+
+/**
+ * Create a new router API key
+ * @param {{name?:string, scopes?:string[], expiresAt?:string}} opts
+ * @returns {{id:string, rawKey:string}}
+ */
+export async function createRouterApiKey(opts = {}) {
+  const db = await getDb();
+  const id = uuidv4();
+  const rawKey = Buffer.from(uuidv4() + uuidv4()).toString("base64");
+  const salt = await bcrypt.genSalt(10);
+  const keyHash = await bcrypt.hash(rawKey, salt);
+
+  const record = {
+    id,
+    name: opts.name || null,
+    keyHash,
+    scopes: opts.scopes ? JSON.stringify(opts.scopes) : null,
+    createdAt: new Date().toISOString(),
+    expiresAt: opts.expiresAt || null,
+    revoked: false
+  };
+  if (!db.data.routerApiKeys) db.data.routerApiKeys = [];
+  db.data.routerApiKeys.push(record);
+  await db.write();
+  return { id, rawKey };
+}
+
+export async function listRouterApiKeys() {
+  const db = await getDb();
+  return db.data.routerApiKeys || [];
+}
+
+export async function getRouterApiKey(id) {
+  const db = await getDb();
+  return (db.data.routerApiKeys || []).find(k => k.id === id) || null;
+}
+
+export async function revokeRouterApiKey(id) {
+  const db = await getDb();
+  const keys = db.data.routerApiKeys || [];
+  const idx = keys.findIndex(k => k.id === id);
+  if (idx === -1) return false;
+  keys[idx].revoked = true;
+  await db.write();
+  return true;
+}
+
+export async function verifyRouterApiKey(rawKey) {
+  if (!rawKey) return false;
+  const db = await getDb();
+  const keys = db.data.routerApiKeys || [];
+  const now = Date.now();
+
+  for (const rec of keys) {
+    if (rec.revoked) continue;
+    if (rec.expiresAt && new Date(rec.expiresAt).getTime() < now) continue;
+    const match = await bcrypt.compare(rawKey, rec.keyHash);
+    if (match) {
+      return { valid: true, scopes: rec.scopes ? JSON.parse(rec.scopes) : [] };
+    }
+  }
+  return { valid: false };
+}
+
+// ============ Blacklist ============
+
+import { blacklistIp as firewallBlacklistIp } from "./firewall.js";
+
+export async function addBlacklistEntry(type, value, reason = null) {
+  const db = await getDb();
+  const entry = {
+    id: uuidv4(),
+    type,
+    value,
+    reason,
+    createdAt: new Date().toISOString()
+  };
+  if (!db.data.blacklist) db.data.blacklist = [];
+  db.data.blacklist.push(entry);
+  await db.write();
+
+  // if we're blacklisting an IP on the host, also update firewall
+  if (type === "ip") {
+    try {
+      await firewallBlacklistIp(value);
+    } catch (e) {
+      console.error("Failed to update host firewall for blacklisted IP", e);
+    }
+  }
+
+  return entry;
+}
+
+export async function isBlacklisted(type, value) {
+  const db = await getDb();
+  const list = db.data.blacklist || [];
+  return list.some(e => e.type === type && e.value === value);
 }
 
 /**

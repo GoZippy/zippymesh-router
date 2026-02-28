@@ -327,9 +327,17 @@ Periodic sync is triggered by `CloudSyncScheduler` when cloud is enabled.
 
 ## Data Model and Storage Map
 
+The router maintains a small embedded database (`db.json`/SQLite) tracking
+provider connections, usage, and – importantly – **local API keys** used to
+secure the `/v1` endpoints.  Keys are stored hashed; the raw secret is shown only
+once when created.  A separate blacklist table tracks banned IPs or keys and
+can trigger host firewall rules.
+
 ```mermaid
 erDiagram
     SETTINGS ||--o{ PROVIDER_CONNECTION : controls
+    SETTINGS ||--o{ ROUTER_API_KEY : issues
+    SETTINGS ||--o{ BLACKLIST : monitors
     PROVIDER_NODE ||--o{ PROVIDER_CONNECTION : backs_compatible_provider
     PROVIDER_CONNECTION ||--o{ USAGE_ENTRY : emits_usage
 
@@ -377,11 +385,21 @@ erDiagram
       string[] models
     }
 
-    API_KEY {
+    ROUTER_API_KEY {
       string id
       string name
-      string key
-      string machineId
+      boolean revoked
+      string scopes
+      string createdAt
+      string expiresAt
+    }
+
+    BLACKLIST {
+      string id
+      string type  -- "ip" | "key"
+      string value
+      string reason
+      string createdAt
     }
 
     USAGE_ENTRY {

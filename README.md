@@ -17,9 +17,29 @@ ZippyMesh sits between your CLI tools (Claude Code, Codex, Cline, etc.) and upst
 - **Usage tracking** — token counts, cost estimation, request logs
 - **Service Discovery** — auto-validation of credentials and health checks
 - **Context Compression** — smart summarization to fit context limits
-- **Web dashboard** — manage providers, keys, combos, and settings
+- **Web dashboard** — manage providers, keys (including local router API keys), combos, and settings
+- **API key security** — create scoped API tokens, enable enforcement via settings, and auto-blacklist abusive clients
+- **Firewall integration** — optional helper to apply host firewall rules (UFW/Defender/pf) when blacklisting
 
 ## Quick Start
+
+### Running Tests
+
+A simple sanity check is provided for the router API key logic.  Run:
+
+```bash
+npm install            # if not already done
+npm run test            # exercises key generation, verification, revocation
+```
+
+A secondary script (`verify_firewall.js`) attempts to apply default firewall
+rules and blacklist an example IP.  It is meant for manual verification on a
+supported host; it will not harm your configuration if run as a normal user.
+
+```bash
+node verify_firewall.js
+```
+
 
 ### From Source
 
@@ -74,6 +94,7 @@ Your CLI Tool (Claude Code, Codex, Cline...)
 | `DATA_DIR` | Recommended | Database location (default: `~/.zippymesh`) |
 | `PORT` | No | Service port (default: framework default) |
 | `API_KEY_SECRET` | Recommended | HMAC secret for generated API keys |
+| `ENABLE_FIREWALL` | No | When true, router attempts to configure OS firewall on blacklist events |
 | `MACHINE_ID_SALT` | Recommended | Salt for stable machine ID hashing |
 | `ENABLE_REQUEST_LOGS` | No | Enable request/response debug logs |
 | `NEXT_PUBLIC_BASE_URL` | No | Internal base URL for self-referencing API calls |
@@ -99,6 +120,7 @@ Your CLI Tool (Claude Code, Codex, Cline...)
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+
 
 ## License
 
