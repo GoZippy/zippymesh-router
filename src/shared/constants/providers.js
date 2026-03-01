@@ -8,7 +8,7 @@ export const FREE_PROVIDERS = {
 
 // OAuth Providers
 export const OAUTH_PROVIDERS = {
-  claude: { id: "claude", alias: "cc", name: "Claude Code", icon: "smart_toy", color: "#D97757" },
+  claude: { id: "claude", alias: "cc", name: "Claude Code", icon: "smart_toy", color: "#E85C4A" },
   antigravity: { id: "antigravity", alias: "ag", name: "Antigravity", icon: "rocket_launch", color: "#F59E0B" },
   codex: { id: "codex", alias: "cx", name: "OpenAI Codex", icon: "code", color: "#3B82F6" },
   "gemini-cli": { id: "gemini-cli", alias: "gc", name: "Gemini CLI", icon: "terminal", color: "#4285F4" },
@@ -32,7 +32,7 @@ export const APIKEY_PROVIDERS = {
   minimax: { id: "minimax", alias: "minimax", name: "Minimax Coding", icon: "memory", color: "#7C3AED", textIcon: "MM" },
   "minimax-cn": { id: "minimax-cn", alias: "minimax-cn", name: "Minimax (China)", icon: "memory", color: "#DC2626", textIcon: "MC" },
   openai: { id: "openai", alias: "openai", name: "OpenAI", icon: "auto_awesome", color: "#10A37F", textIcon: "OA" },
-  anthropic: { id: "anthropic", alias: "anthropic", name: "Anthropic", icon: "smart_toy", color: "#D97757", textIcon: "AN" },
+  anthropic: { id: "anthropic", alias: "anthropic", name: "Anthropic", icon: "smart_toy", color: "#E85C4A", textIcon: "AN" },
   gemini: { id: "gemini", alias: "gemini", name: "Gemini", icon: "diamond", color: "#4285F4", textIcon: "GE" },
   // Additional providers for 50+ target
   mistral: { id: "mistral", alias: "mistral", name: "Mistral AI", icon: "cloud", color: "#FF6B00", textIcon: "MT", helpText: "Mistral models via mistral.ai API." },

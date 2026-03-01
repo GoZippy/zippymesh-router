@@ -18,22 +18,20 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
   const [isDeviceCode, setIsDeviceCode] = useState(false);
   const [deviceData, setDeviceData] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [pollingAttempt, setPollingAttempt] = useState(0);
+  const maxAttempts = 150;
   const popupRef = useRef(null);
   const flowStartedRef = useRef(null); // Tracks provider for which flow started
   const isMountedRef = useRef(true);
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
-  const [isLocalhost, setIsLocalhost] = useState(false);
   const [placeholderUrl, setPlaceholderUrl] = useState("/callback?code=...");
   const callbackProcessedRef = useRef(false);
 
-  // Detect if running on localhost (client-side only)
+  // Compute callback URL placeholder on client
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setIsLocalhost(
-        window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-      );
       setPlaceholderUrl(`${window.location.origin}/callback?code=...`);
     }
   }, []);
@@ -77,13 +75,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     }
   }, [authData, provider, onSuccess]);
 
-  // Poll for device code token
+  // Poll for device code token (Kiro/AWS flow can take longer; allow up to ~12.5 min)
   const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData) => {
     setPolling(true);
-    const maxAttempts = 60;
+    setPollingAttempt(0);
 
     for (let i = 0; i < maxAttempts; i++) {
       if (!isMountedRef.current) return;
+      setPollingAttempt(i + 1);
       await new Promise((r) => setTimeout(r, interval * 1000));
       if (!isMountedRef.current) return;
 
@@ -103,6 +102,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         if (data.success) {
           setStep("success");
           setPolling(false);
+          setPollingAttempt(0);
           onSuccess?.();
           return;
         }
@@ -118,6 +118,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         setError(err.message);
         setStep("error");
         setPolling(false);
+        setPollingAttempt(0);
         return;
       }
     }
@@ -125,6 +126,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     setError("Authorization timeout");
     setStep("error");
     setPolling(false);
+    setPollingAttempt(0);
   }, [provider, onSuccess]);
 
   // Start OAuth flow
@@ -171,8 +173,12 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 
       setAuthData({ ...data, redirectUri });
 
+      // Determine localhost at runtime to avoid first-render race on initial modal open.
+      const hostname = window.location.hostname;
+      const runningOnLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+
       // For Codex or non-localhost: use manual input mode
-      if (provider === "codex" || !isLocalhost) {
+      if (provider === "codex" || !runningOnLocalhost) {
         setStep("input");
         window.open(data.authUrl, "_blank");
       } else {
@@ -191,7 +197,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         setStep("error");
       }
     }
-  }, [provider, isLocalhost, startPolling]);
+  }, [provider, startPolling]);
 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
@@ -388,9 +394,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
               </div>
             </div>
             {polling && (
-              <div className="flex items-center justify-center gap-2 text-sm text-text-muted">
+              <div className="flex flex-col items-center justify-center gap-2 text-sm text-text-muted">
+                <div className="w-full max-w-xs h-2 bg-border rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${Math.round((pollingAttempt / maxAttempts) * 100)}%` }}
+                  />
+                </div>
                 <span className="material-symbols-outlined animate-spin">progress_activity</span>
-                Waiting for authorization...
+                Waiting for authorization... ({pollingAttempt}/{maxAttempts})
               </div>
             )}
           </>

@@ -68,10 +68,10 @@ export default function AnalyticsPage() {
                     <div className="h-64 mt-4 w-full">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={stats.performance} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={12} axisLine={false} tickLine={false} />
-                                <YAxis stroke="var(--text-muted)" fontSize={12} axisLine={false} tickLine={false} />
+                                <XAxis dataKey="name" stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
+                                <YAxis stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)', borderRadius: '12px' }}
+                                    contentStyle={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)', borderRadius: '12px', color: 'var(--color-text-main)' }}
                                     itemStyle={{ fontSize: '12px' }}
                                 />
                                 <Bar dataKey="latency" radius={[8, 8, 0, 0]} maxBarSize={60}>
@@ -88,10 +88,10 @@ export default function AnalyticsPage() {
                     <div className="h-64 mt-4 w-full">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={stats.performance} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
-                                <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={12} axisLine={false} tickLine={false} />
-                                <YAxis stroke="var(--text-muted)" fontSize={12} axisLine={false} tickLine={false} />
+                                <XAxis dataKey="name" stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
+                                <YAxis stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
                                 <Tooltip
-                                    contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)', borderRadius: '12px' }}
+                                    contentStyle={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)', borderRadius: '12px', color: 'var(--color-text-main)' }}
                                     itemStyle={{ fontSize: '12px' }}
                                 />
                                 <Bar dataKey="cost" radius={[8, 8, 0, 0]} maxBarSize={60}>

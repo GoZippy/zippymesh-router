@@ -57,6 +57,20 @@ if (!isCloud && !fs.existsSync(DATA_DIR)) {
 
 let sqliteDb = null;
 
+function ensureWalletColumns(sqlite) {
+  const connCols = sqlite.prepare("PRAGMA table_info(provider_connections)").all();
+  const hasWalletIdConn = connCols.some((c) => c.name === "wallet_id");
+  if (!hasWalletIdConn) {
+    sqlite.exec("ALTER TABLE provider_connections ADD COLUMN wallet_id TEXT");
+  }
+
+  const nodeCols = sqlite.prepare("PRAGMA table_info(provider_nodes)").all();
+  const hasWalletIdNode = nodeCols.some((c) => c.name === "wallet_id");
+  if (!hasWalletIdNode) {
+    sqlite.exec("ALTER TABLE provider_nodes ADD COLUMN wallet_id TEXT");
+  }
+}
+
 export function getSqliteDb() {
   if (isCloud) return null;
   if (sqliteDb) return sqliteDb;
@@ -172,6 +186,13 @@ export function getSqliteDb() {
       FOREIGN KEY(wallet_id) REFERENCES wallets(id)
     );
   `);
+
+  // Migration: add wallet_id to provider_connections / provider_nodes if missing (existing DBs created before column was added)
+  try {
+    ensureWalletColumns(sqliteDb);
+  } catch (e) {
+    // Ignore if already migrated or table missing
+  }
 
   return sqliteDb;
 }
@@ -607,12 +628,7 @@ const defaultData = {
   modelAliases: {},
   combos: [],
   apiKeys: [],
-  settings: {
-    cloudEnabled: false,
-    stickyRoundRobinLimit: 3,
-    requireLogin: true,
-    isDemoMode: false
-  },
+  settings: { ...INITIAL_SETTINGS },
 
   pricing: {}, // pricing configuration
   routingPlaybooks: [], // NEW: routing playbooks
@@ -637,7 +653,22 @@ function cloneDefaultData() {
     rateLimitState: {},
     p2pOffers: [],
     p2pSubscriptions: [],
-    cachedModels: {}
+    cachedModels: {},
+    nodePricingConfig: {
+      pricing_mode: "simple",
+      margin_percent: 20,
+      zip_usd_rate: 1,
+      model_overrides: {},
+    },
+    meshExposedProviders: [],
+    meshOfferedModels: [],
+    nodeConnections: [],
+    serviceRegistryConfig: {
+      enabled: false,
+      node_id: "",
+      region: "",
+      rpc_url: "",
+    },
   };
 }
 
@@ -693,6 +724,41 @@ function ensureDbShape(data) {
   }
   if (!next.p2pSubscriptions) {
     next.p2pSubscriptions = [];
+    changed = true;
+  }
+
+  if (!next.nodePricingConfig || typeof next.nodePricingConfig !== "object") {
+    next.nodePricingConfig = {
+      pricing_mode: "simple",
+      margin_percent: 20,
+      zip_usd_rate: 1,
+      model_overrides: {},
+    };
+    changed = true;
+  }
+
+  if (!Array.isArray(next.meshExposedProviders)) {
+    next.meshExposedProviders = [];
+    changed = true;
+  }
+
+  if (!Array.isArray(next.meshOfferedModels)) {
+    next.meshOfferedModels = [];
+    changed = true;
+  }
+
+  if (!Array.isArray(next.nodeConnections)) {
+    next.nodeConnections = [];
+    changed = true;
+  }
+
+  if (!next.serviceRegistryConfig || typeof next.serviceRegistryConfig !== "object") {
+    next.serviceRegistryConfig = {
+      enabled: false,
+      node_id: "",
+      region: "",
+      rpc_url: "",
+    };
     changed = true;
   }
 
@@ -1324,7 +1390,7 @@ export async function createProviderConnection(data) {
   const id = uuidv4();
   const metadata = data.metadata || data.providerSpecificData || {};
 
-  sqlite.prepare(`
+  const insertConnection = () => sqlite.prepare(`
     INSERT INTO provider_connections (
       id, provider, authType, name, wallet_id, group_name, priority, isActive, isEnabled,
       email, accessToken, refreshToken, expiresAt, apiKey, createdAt, updatedAt, metadata
@@ -1335,6 +1401,18 @@ export async function createProviderConnection(data) {
     data.email || null, data.accessToken || null, data.refreshToken || null,
     data.expiresAt || null, data.apiKey || null, now, now, JSON.stringify(metadata)
   );
+
+  try {
+    insertConnection();
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (!message.includes("no column named wallet_id")) {
+      throw error;
+    }
+    // Defensive self-heal for legacy tables created before wallet_id migration.
+    ensureWalletColumns(sqlite);
+    insertConnection();
+  }
 
   await reorderProviderConnections(data.provider);
   return await getProviderConnectionById(id);
@@ -1932,6 +2010,127 @@ export async function getPricing() {
 }
 
 /**
+ * Get node pricing config (mode, margin, model overrides)
+ */
+export async function getNodePricingConfig() {
+  const db = await getDb();
+  return db.data.nodePricingConfig || {
+    pricing_mode: "simple",
+    margin_percent: 20,
+    zip_usd_rate: 1,
+    model_overrides: {},
+  };
+}
+
+/**
+ * Set node pricing config
+ */
+export async function setNodePricingConfig(config) {
+  const db = await getDb();
+  db.data.nodePricingConfig = {
+    ...(db.data.nodePricingConfig || {}),
+    ...config,
+    model_overrides: config.model_overrides ?? db.data.nodePricingConfig?.model_overrides ?? {},
+  };
+  await db.write();
+  return db.data.nodePricingConfig;
+}
+
+/**
+ * Get mesh-exposed providers (provider node IDs and local runtime IDs)
+ */
+export async function getMeshExposedProviders() {
+  const db = await getDb();
+  return db.data.meshExposedProviders || [];
+}
+
+/**
+ * Set mesh-exposed providers
+ */
+export async function setMeshExposedProviders(providers) {
+  const db = await getDb();
+  db.data.meshExposedProviders = Array.isArray(providers) ? providers : [];
+  await db.write();
+  return db.data.meshExposedProviders;
+}
+
+/**
+ * Get mesh-offered models (per-model monetization config; provider not exposed to mesh)
+ */
+export async function getMeshOfferedModels() {
+  const db = await getDb();
+  return db.data.meshOfferedModels || [];
+}
+
+/**
+ * Set mesh-offered models
+ */
+export async function setMeshOfferedModels(models) {
+  const db = await getDb();
+  db.data.meshOfferedModels = Array.isArray(models) ? models : [];
+  await db.write();
+  return db.data.meshOfferedModels;
+}
+
+/**
+ * Get node-to-node connections (peer_id, wallet_ids, contract_terms)
+ */
+export async function getNodeConnections() {
+  const db = await getDb();
+  return db.data.nodeConnections || [];
+}
+
+/**
+ * Set node connections
+ */
+export async function setNodeConnections(connections) {
+  const db = await getDb();
+  db.data.nodeConnections = Array.isArray(connections) ? connections : [];
+  await db.write();
+  return db.data.nodeConnections;
+}
+
+/**
+ * Update a single node connection
+ */
+export async function updateNodeConnection(peerId, updates) {
+  const db = await getDb();
+  const conns = db.data.nodeConnections || [];
+  const idx = conns.findIndex((c) => c.peer_id === peerId);
+  if (idx >= 0) {
+    conns[idx] = { ...conns[idx], ...updates };
+  } else {
+    conns.push({ peer_id: peerId, wallet_ids: [], contract_terms: null, ...updates });
+  }
+  db.data.nodeConnections = conns;
+  await db.write();
+  return db.data.nodeConnections.find((c) => c.peer_id === peerId);
+}
+
+/**
+ * Get ServiceRegistry config (for ZippyCoin integration)
+ */
+export async function getServiceRegistryConfig() {
+  const db = await getDb();
+  return db.data.serviceRegistryConfig || {
+    enabled: false,
+    node_id: "",
+    region: "",
+    rpc_url: "",
+  };
+}
+
+/**
+ * Set ServiceRegistry config
+ */
+export async function setServiceRegistryConfig(config) {
+  const db = await getDb();
+  db.data.serviceRegistryConfig = { ...(db.data.serviceRegistryConfig || {}), ...config };
+  await db.write();
+  return db.data.serviceRegistryConfig;
+}
+
+/**
  * Get pricing for a specific provider and model
  */
 export async function getPricingForModel(provider, model) {
@@ -1953,13 +2152,31 @@ export async function getPricingForModel(provider, model) {
     iflow: "if",
     antigravity: "ag",
     github: "gh",
+    cursor: "cu",
+    kiro: "kr",
+    kiro_api: "kiro",
+    kilo: "kilo",
     openai: "openai",
     anthropic: "anthropic",
     gemini: "gemini",
     openrouter: "openrouter",
+    deepseek: "deepseek",
+    groq: "groq",
+    mistral: "mistral",
+    xai: "xai",
     glm: "glm",
     kimi: "kimi",
     minimax: "minimax",
+    togetherai: "togetherai",
+    fireworks: "fireworks",
+    anyscale: "anyscale",
+    perplexity: "perplexity",
+    cerebras: "cerebras",
+    cohere: "cohere",
+    deepinfra: "deepinfra",
+    novita: "novita",
+    ai21: "ai21",
+    moonshot: "moonshot",
   };
 
   const alias = PROVIDER_ID_TO_ALIAS[provider];
@@ -2067,9 +2284,12 @@ export async function createRoutingPlaybook(data) {
     id: uuidv4(),
     name: data.name,
     description: data.description || "",
+    trigger: data.trigger || null,
+    intent: data.intent || null,
     rules: data.rules || [], // Array of rule objects
     isActive: data.isActive !== undefined ? data.isActive : true,
     priority: data.priority || 0,
+    metadata: data.metadata || null,
     createdAt: now,
     updatedAt: now,
   };

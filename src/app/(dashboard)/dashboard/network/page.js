@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import Button from "@/shared/components/Button";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
@@ -15,6 +16,14 @@ export default function NetworkPage() {
     const [showConnectModal, setShowConnectModal] = useState(false);
     const [connectAddress, setConnectAddress] = useState("");
     const [isConnecting, setIsConnecting] = useState(false);
+
+    const [providerNodes, setProviderNodes] = useState([]);
+    const [localRuntimes, setLocalRuntimes] = useState([]);
+    const [exposedProviders, setExposedProviders] = useState([]);
+    const [savingMesh, setSavingMesh] = useState(false);
+    const [connections, setConnections] = useState([]);
+    const [wallets, setWallets] = useState([]);
+    const [serviceRegistry, setServiceRegistry] = useState({ enabled: false, node_id: "", region: "", rpc_url: "" });
 
     async function fetchStatus() {
         try {
@@ -57,11 +66,116 @@ export default function NetworkPage() {
         }
     };
 
+    async function fetchMeshConfig() {
+        try {
+            const [exposedRes, nodesRes, runtimesRes, connRes, regRes] = await Promise.all([
+                fetch("/api/mesh/exposed-providers"),
+                fetch("/api/provider-nodes"),
+                fetch("/api/local-runtimes"),
+                fetch("/api/mesh/connections"),
+                fetch("/api/mesh/service-registry").catch(() => ({ ok: false })),
+            ]);
+            if (exposedRes.ok) {
+                const d = await exposedRes.json();
+                setExposedProviders(d.exposed || []);
+            }
+            if (nodesRes.ok) {
+                const d = await nodesRes.json();
+                setProviderNodes(d.nodes || []);
+            }
+            if (runtimesRes.ok) {
+                const d = await runtimesRes.json();
+                setLocalRuntimes(d.runtimes || []);
+            }
+            if (connRes.ok) {
+                const d = await connRes.json();
+                setConnections(d.connections || []);
+                setWallets(d.wallets || []);
+            }
+        } catch (e) {
+            console.error("Failed to fetch mesh config", e);
+        }
+    }
+
+    async function handleUpdateConnection(peerId, walletIds, contractTerms) {
+        try {
+            const res = await fetch("/api/mesh/connections", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "update",
+                    peer_id: peerId,
+                    wallet_ids: walletIds,
+                    contract_terms: contractTerms,
+                }),
+            });
+            if (res.ok) {
+                const d = await res.json();
+                setConnections(d.connections || []);
+            }
+        } catch (e) {
+            console.error("Failed to update connection", e);
+        }
+    }
+
+    async function handleSaveMeshProviders() {
+        setSavingMesh(true);
+        try {
+            const [exposedRes, regRes] = await Promise.all([
+                fetch("/api/mesh/exposed-providers", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ exposed: exposedProviders }),
+                }),
+                serviceRegistry.enabled
+                    ? fetch("/api/mesh/service-registry", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify(serviceRegistry),
+                      })
+                    : Promise.resolve({ ok: true }),
+            ]);
+            if (exposedRes.ok) {
+                const d = await exposedRes.json();
+                setExposedProviders(d.exposed || []);
+                alert("Mesh provider config saved and published.");
+            } else {
+                alert("Failed to save.");
+            }
+            if (regRes?.ok && serviceRegistry.enabled) {
+                await regRes.json();
+            }
+        } catch (e) {
+            alert(`Error: ${e.message}`);
+        } finally {
+            setSavingMesh(false);
+        }
+    }
+
+    function toggleExposed(id) {
+        setExposedProviders((prev) =>
+            prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+        );
+    }
+
     useEffect(() => {
         fetchStatus();
+        fetchMeshConfig();
         const interval = setInterval(fetchStatus, 30000); // Poll every 30s
         return () => clearInterval(interval);
     }, []);
+
+    useEffect(() => {
+        if (!status?.peers?.length) return;
+        const peers = status.peers;
+        const peerIds = peers.map((p) => p.id || p.peer_id).filter(Boolean);
+        setConnections((prev) => {
+            const existing = new Set(prev.map((c) => c.peer_id));
+            const added = peerIds.filter((id) => !existing.has(id));
+            if (added.length === 0) return prev;
+            return [...prev, ...added.map((peer_id) => ({ peer_id, wallet_ids: [], contract_terms: null }))];
+        });
+    }, [status?.peers]);
 
     if (loading && !status) {
         return <div className="p-8 text-center text-text-muted">Loading Network Status...</div>;
@@ -152,6 +266,173 @@ export default function NetworkPage() {
                     </div>
                 </Card>
             </div>
+
+            {/* Mesh Provider Setup */}
+            <Card
+                title="Mesh Provider Setup"
+                subtitle={
+                    <>
+                        Select providers to expose, or use{" "}
+                        <Link href="/dashboard/monetization" className="text-primary underline">Monetization</Link>{" "}
+                        to expose models by name only (provider stays private).
+                    </>
+                }
+                icon="share"
+            >
+                <div className="space-y-4">
+                    <div>
+                        <div className="text-sm font-medium text-text-muted mb-2">Provider Nodes</div>
+                        <div className="flex flex-wrap gap-2">
+                            {providerNodes.length === 0 ? (
+                                <span className="text-sm text-text-muted">No provider nodes. Add them in Providers.</span>
+                            ) : (
+                                providerNodes.map((n) => (
+                                    <label
+                                        key={n.id}
+                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+                                            exposedProviders.includes(n.id)
+                                                ? "border-primary bg-primary/10"
+                                                : "border-border hover:border-primary/50"
+                                        }`}
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={exposedProviders.includes(n.id)}
+                                            onChange={() => toggleExposed(n.id)}
+                                            className="rounded"
+                                        />
+                                        <span className="text-sm font-medium">{n.name || n.prefix}</span>
+                                    </label>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-sm font-medium text-text-muted mb-2">Local Runtimes</div>
+                        <div className="flex flex-wrap gap-2">
+                            {localRuntimes.map((r) => (
+                                <label
+                                    key={r.id}
+                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+                                        exposedProviders.includes(r.id)
+                                            ? "border-primary bg-primary/10"
+                                            : "border-border hover:border-primary/50"
+                                    }`}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={exposedProviders.includes(r.id)}
+                                        onChange={() => toggleExposed(r.id)}
+                                        className="rounded"
+                                    />
+                                    <span className="text-sm font-medium">{r.name}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="mt-4 p-3 bg-sidebar/30 rounded-lg border border-border">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={serviceRegistry.enabled || false}
+                                onChange={(e) => setServiceRegistry({ ...serviceRegistry, enabled: e.target.checked })}
+                            />
+                            <span className="text-sm">Register with ZippyCoin ServiceRegistry (when L2 is ready)</span>
+                        </label>
+                        {serviceRegistry.enabled && (
+                            <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <Input
+                                    placeholder="Node ID"
+                                    value={serviceRegistry.node_id || ""}
+                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, node_id: e.target.value })}
+                                />
+                                <Input
+                                    placeholder="Region"
+                                    value={serviceRegistry.region || ""}
+                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, region: e.target.value })}
+                                />
+                                <Input
+                                    placeholder="RPC URL"
+                                    value={serviceRegistry.rpc_url || ""}
+                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, rpc_url: e.target.value })}
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex justify-end">
+                        <Button onClick={handleSaveMeshProviders} disabled={savingMesh} loading={savingMesh}>
+                            Publish to Mesh
+                        </Button>
+                    </div>
+                </div>
+            </Card>
+
+            {/* Node Connections - Wallet & Contract Config */}
+            {peers.length > 0 && (
+                <Card
+                    title="Node Connections"
+                    subtitle="Configure wallets and contract terms per peer connection."
+                    icon="link"
+                >
+                    <div className="space-y-4">
+                        {peers.map((peer) => {
+                            const conn = connections.find((c) => c.peer_id === (peer.id || peer.peer_id));
+                            const peerId = peer.id || peer.peer_id;
+                            return (
+                                <div key={peerId} className="p-4 border border-border rounded-lg">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="font-mono text-sm text-text-muted truncate max-w-xs">
+                                            {String(peerId).substring(0, 24)}...
+                                        </span>
+                                        <Badge variant="secondary" size="sm">
+                                            {peer.models?.length || 0} models
+                                        </Badge>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {wallets.map((w) => (
+                                            <label
+                                                key={w.id}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer ${
+                                                    (conn?.wallet_ids || []).includes(w.id)
+                                                        ? "bg-primary/20 border border-primary"
+                                                        : "border border-border"
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={(conn?.wallet_ids || []).includes(w.id)}
+                                                    onChange={() => {
+                                                        const current = conn?.wallet_ids || [];
+                                                        const next = current.includes(w.id)
+                                                            ? current.filter((x) => x !== w.id)
+                                                            : [...current, w.id];
+                                                        handleUpdateConnection(peerId, next, conn?.contract_terms);
+                                                    }}
+                                                />
+                                                {w.name}
+                                            </label>
+                                        ))}
+                                    </div>
+                                    <div className="mt-2 text-xs text-text-muted">
+                                        <button
+                                            type="button"
+                                            className="underline hover:text-primary"
+                                            onClick={() => {
+                                                const terms = conn?.contract_terms || { slaMs: 5000, minBalance: 10, autoRenew: false };
+                                                if (confirm("Propose contract? (Stub - not implemented)")) {
+                                                    handleUpdateConnection(peerId, conn?.wallet_ids || [], terms);
+                                                }
+                                            }}
+                                        >
+                                            Propose contract
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </Card>
+            )}
 
             {/* Peers Table */}
             <Card title="Discovered Peers" padding="none">

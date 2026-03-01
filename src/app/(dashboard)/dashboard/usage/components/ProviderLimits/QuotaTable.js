@@ -77,7 +77,7 @@ export default function QuotaTable({ quotas = [] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full table-fixed">
+      <table className="w-full table-fixed text-text-main">
         <colgroup>
           <col className="w-[30%]" /> {/* Model Name */}
           <col className="w-[45%]" /> {/* Limit Progress */}
@@ -102,7 +102,7 @@ export default function QuotaTable({ quotas = [] }) {
                 <td className="py-2 px-3">
                   <div className="flex items-center gap-2">
                     <span className="text-xs">{colors.emoji}</span>
-                    <span className="text-sm font-medium text-text-primary">{quota.name}</span>
+                    <span className="text-sm font-medium text-primary">{quota.name}</span>
                   </div>
                 </td>
 
@@ -136,7 +136,7 @@ export default function QuotaTable({ quotas = [] }) {
                   {countdown !== "-" || resetDisplay ? (
                     <div className="space-y-0.5">
                       {countdown !== "-" && (
-                        <div className="text-sm text-text-primary font-medium">
+                        <div className="text-sm text-primary font-medium">
                           in {countdown}
                         </div>
                       )}

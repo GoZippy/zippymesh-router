@@ -183,10 +183,10 @@ export default function ZippyStatusBar() {
                     <button
                         onClick={handleDemoToggle}
                         title="Toggle Demo Mode (Simulated Data)"
-                        className={`flex flex-col items-center gap-0 group px-2 py-0.5 rounded transition-all ${isDemoMode ? 'bg-orange-500/20 text-orange-500' : 'hover:bg-white/5 text-text-muted'}`}
+                        className={`flex flex-col items-center gap-0 group px-2 py-0.5 rounded transition-all ${isDemoMode ? 'bg-primary/20 text-primary' : 'hover:bg-white/5 text-text-muted'}`}
                     >
                         <span className="material-symbols-outlined text-[14px]">visibility</span>
-                        <span className={`text-[7px] uppercase font-black ${isDemoMode ? 'text-orange-500' : 'text-text-muted group-hover:text-primary'}`}>Demo</span>
+                        <span className={`text-[7px] uppercase font-black ${isDemoMode ? 'text-primary' : 'text-text-muted group-hover:text-primary'}`}>Demo</span>
                     </button>
                 </div>
 

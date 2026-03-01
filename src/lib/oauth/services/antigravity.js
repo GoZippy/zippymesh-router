@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import open from "open";
 import { ANTIGRAVITY_CONFIG } from "../constants/oauth.js";
+import { isUsableClientSecret, resolveOAuthClientSecret } from "../utils/secrets.js";
 import { getServerCredentials } from "../config/index.js";
 import { startLocalServer } from "../utils/server.js";
 import { spinner as createSpinner } from "../utils/ui.js";
@@ -35,19 +36,25 @@ export class AntigravityService {
    * Exchange authorization code for tokens
    */
   async exchangeCode(code, redirectUri) {
+    const payload = {
+      grant_type: "authorization_code",
+      client_id: this.config.clientId,
+      code: code,
+      redirect_uri: redirectUri,
+    };
+    
+    const clientSecret = await resolveOAuthClientSecret("antigravity", this.config);
+    if (clientSecret) {
+      payload.client_secret = clientSecret;
+    }
+
     const response = await fetch(this.config.tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        code: code,
-        redirect_uri: redirectUri,
-      }),
+      body: new URLSearchParams(payload),
     });
 
     if (!response.ok) {

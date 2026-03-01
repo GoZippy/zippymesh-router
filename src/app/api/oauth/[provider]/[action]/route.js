@@ -95,10 +95,10 @@ export async function POST(request, { params }) {
       // Save to database
       console.log(`[OAuth] Saving connection for ${provider} (${tokenData.email || 'no email'})`);
       const connection = await createProviderConnection({
+        ...tokenData,
         provider,
         authType: "oauth",
         connectionId,
-        ...tokenData,
         expiresAt: tokenData.expiresIn
           ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
           : null,
@@ -157,10 +157,10 @@ export async function POST(request, { params }) {
         // Save to database
         console.log(`[OAuth] Saving device code connection for ${provider}`);
         const connection = await createProviderConnection({
+          ...result.tokens,
           provider,
           authType: "oauth",
           connectionId,
-          ...result.tokens,
           expiresAt: result.tokens.expiresIn
             ? new Date(Date.now() + result.tokens.expiresIn * 1000).toISOString()
             : null,

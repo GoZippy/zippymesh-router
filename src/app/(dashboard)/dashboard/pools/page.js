@@ -207,7 +207,7 @@ export default function PoolsPage() {
                                                     ) : isRateLimited ? (
                                                         <div className="flex flex-col gap-1">
                                                             <Badge variant="warning" size="sm" dot>Rate Limited</Badge>
-                                                            <span className="text-xs text-orange-500">
+                                                            <span className="text-xs text-primary">
                                                                 Until {new Date(conn.rateLimitedUntil).toLocaleTimeString()}
                                                             </span>
                                                         </div>
@@ -233,7 +233,7 @@ export default function PoolsPage() {
                                                         <Button
                                                             size="sm"
                                                             variant="secondary"
-                                                            className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-900/20"
+                                                            className="text-primary hover:text-[var(--color-primary-hover)] hover:bg-primary/10 dark:hover:bg-primary/20"
                                                             onClick={() => handleResetRateLimit(conn.id)}
                                                             disabled={resetting[conn.id]}
                                                         >

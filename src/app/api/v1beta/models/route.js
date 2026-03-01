@@ -33,6 +33,8 @@ export async function GET(request) {
   try {
     // Collect all models from all providers
     const models = [];
+    for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS || {})) {
+      if (!Array.isArray(providerModels)) continue;
       for (const model of providerModels) {
         models.push({
           name: `models/${provider}/${model.id}`,

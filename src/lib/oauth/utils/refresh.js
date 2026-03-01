@@ -7,6 +7,7 @@ import {
     CLAUDE_CONFIG
 } from "../constants/oauth.js";
 import { updateProviderConnection } from "../../localDb.js";
+import { resolveOAuthClientSecret } from "./secrets.js";
 
 /**
  * Refresh OAuth token using refresh_token
@@ -23,15 +24,20 @@ export async function refreshOAuthToken(connection) {
         // Google-based providers
         if (provider === "gemini-cli" || provider === "antigravity") {
             const config = provider === "gemini-cli" ? GEMINI_CONFIG : ANTIGRAVITY_CONFIG;
+            const providerName = provider === "gemini-cli" ? "gemini-cli" : "antigravity";
+            const clientSecret = await resolveOAuthClientSecret(providerName, config);
+            const payload = {
+                client_id: config.clientId,
+                grant_type: "refresh_token",
+                refresh_token: refreshToken,
+            };
+            if (clientSecret) {
+                payload.client_secret = clientSecret;
+            }
             const response = await fetch("https://oauth2.googleapis.com/token", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: new URLSearchParams({
-                    client_id: config.clientId,
-                    client_secret: config.clientSecret,
-                    grant_type: "refresh_token",
-                    refresh_token: refreshToken,
-                }),
+                body: new URLSearchParams(payload),
             });
 
             if (!response.ok) return null;

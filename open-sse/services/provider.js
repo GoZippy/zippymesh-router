@@ -189,6 +189,9 @@ export function buildProviderUrl(provider, model, stream = true, options = {}) {
 // Build provider headers
 export function buildProviderHeaders(provider, credentials, stream = true, body = null) {
   const config = getProviderConfig(provider);
+  const apiKey = typeof credentials?.apiKey === "string" ? credentials.apiKey.trim() : credentials?.apiKey;
+  const accessToken = typeof credentials?.accessToken === "string" ? credentials.accessToken.trim() : credentials?.accessToken;
+  const copilotToken = typeof credentials?.copilotToken === "string" ? credentials.copilotToken.trim() : credentials?.copilotToken;
   const headers = {
     "Content-Type": "application/json",
     ...config.headers
@@ -197,12 +200,12 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
   // Add auth header
   // Specific override for Anthropic Compatible
   if (isAnthropicCompatible(provider)) {
-    if (credentials.apiKey) {
-      headers["x-api-key"] = credentials.apiKey;
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
       // Do NOT send Authorization header when apiKey is present for Anthropic Compatible
       // as it causes issues with some providers (e.g. opencode.ai)
-    } else if (credentials.accessToken) {
-      headers["Authorization"] = `Bearer ${credentials.accessToken}`;
+    } else if (accessToken) {
+      headers["Authorization"] = `Bearer ${accessToken}`;
     }
     // Add default Anthropic version if not present (some proxies require it)
     if (!headers["anthropic-version"]) {
@@ -211,32 +214,32 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
   } else {
     switch (provider) {
       case "gemini":
-        if (credentials.apiKey) {
-          headers["x-goog-api-key"] = credentials.apiKey;
-        } else if (credentials.accessToken) {
-          headers["Authorization"] = `Bearer ${credentials.accessToken}`;
+        if (apiKey) {
+          headers["x-goog-api-key"] = apiKey;
+        } else if (accessToken) {
+          headers["Authorization"] = `Bearer ${accessToken}`;
         }
         break;
   
       case "antigravity":
       case "gemini-cli":
         // Antigravity and Gemini CLI use OAuth access token
-        headers["Authorization"] = `Bearer ${credentials.accessToken}`;
+        headers["Authorization"] = `Bearer ${accessToken}`;
         break;
   
       case "claude":
         // Claude uses x-api-key header for API key, or Authorization for OAuth
-        if (credentials.apiKey) {
-          headers["x-api-key"] = credentials.apiKey;
-        } else if (credentials.accessToken) {
-          headers["Authorization"] = `Bearer ${credentials.accessToken}`;
+        if (apiKey) {
+          headers["x-api-key"] = apiKey;
+        } else if (accessToken) {
+          headers["Authorization"] = `Bearer ${accessToken}`;
         }
         break;
   
       case "github":
         // GitHub Copilot requires special headers to mimic VSCode
         // Prioritize copilotToken from providerSpecificData, fallback to accessToken
-        const githubToken = credentials.copilotToken || credentials.accessToken;
+        const githubToken = copilotToken || accessToken;
         // Add headers in exact same order as test endpoint
         headers["Authorization"] = `Bearer ${githubToken}`;
         headers["Content-Type"] = "application/json";
@@ -262,18 +265,18 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
       case "qwen":
       case "openai":
       case "openrouter":
-        headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
+        headers["Authorization"] = `Bearer ${apiKey || accessToken}`;
         break;
   
       case "glm":
       case "kimi":
       case "minimax":
         // Claude-compatible API providers use x-api-key
-        headers["x-api-key"] = credentials.apiKey;
+        headers["x-api-key"] = apiKey;
         break;
   
       default:
-        headers["Authorization"] = `Bearer ${credentials.apiKey || credentials.accessToken}`;
+        headers["Authorization"] = `Bearer ${apiKey || accessToken}`;
         break;
     }
   }

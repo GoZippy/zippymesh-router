@@ -151,7 +151,7 @@ export default function ProvidersPage() {
     .map((node) => ({
       id: node.id,
       name: node.name || "Anthropic Compatible",
-      color: "#D97757",
+      color: "#E85C4A",
       textIcon: "AC",
     }));
 

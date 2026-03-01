@@ -1,3 +1,34 @@
+// Provider source metadata: cloud | local | oauth | api-key
+export const PROVIDER_SOURCE = {
+  cc: "oauth",
+  cx: "oauth",
+  gc: "oauth",
+  qw: "oauth",
+  if: "oauth",
+  ag: "oauth",
+  gh: "oauth",
+  cu: "oauth",
+  kr: "oauth",
+  openai: "api-key",
+  anthropic: "api-key",
+  gemini: "api-key",
+  groq: "api-key",
+  cerebras: "api-key",
+  github_models: "api-key",
+  cohere: "api-key",
+  openrouter: "api-key",
+  glm: "api-key",
+  kimi: "api-key",
+  minimax: "api-key",
+  kilo: "api-key",
+  kiro: "api-key",
+  ollama: "local",
+  lmstudio: "local",
+  llamacpp: "local",
+  kilo_local: "local",
+  cursor_local: "local",
+};
+
 // Default pricing rates for AI models
 // All rates are in dollars per million tokens ($/1M tokens)
 // Based on user-provided pricing for Antigravity models and industry standards for others
@@ -550,8 +581,39 @@ export const DEFAULT_PRICING = {
       reasoning: 3.00,
       cache_creation: 0.50
     }
-  }
+  },
+
+  // Local providers (run on hardware; marginal cost for compute)
+  ollama: {
+    "llama3.2": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "llama3.1": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "mistral": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "qwen2.5": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "codellama": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "phi3": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  lmstudio: {
+    "local-model": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  llamacpp: {
+    "local-model": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  kilo_local: {
+    "kilo-models": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  cursor_local: {
+    "cursor-models": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
 };
+
+/**
+ * Get provider source (cloud | local | oauth | api-key)
+ * @param {string} provider - Provider ID
+ * @returns {string} source
+ */
+export function getProviderSource(provider) {
+  return PROVIDER_SOURCE[provider] || "api-key";
+}
 
 /**
  * Get pricing for a specific provider and model

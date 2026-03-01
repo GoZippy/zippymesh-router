@@ -12,7 +12,7 @@ scripts/
 worker/
 shared-sse/
 copilot-api/
-CLIProxyAPI/
+vendor/
 
 # Config files
 *.md

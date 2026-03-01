@@ -28,13 +28,11 @@ export default function ProviderDetailPage() {
   const [testingConnections, setTestingConnections] = useState({}); // connectionId -> boolean
   const [testResults, setTestResults] = useState({}); // connectionId -> "success" | "failed" | null
   const { copied, copy } = useCopyToClipboard();
-  const activeConnection = connections.find(c => c.isActive !== false) || connections[0];
-
   const providerInfo = providerNode
     ? {
       id: providerNode.id,
       name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
-      color: providerNode.type === "anthropic-compatible" ? "#D97757" : "#10A37F",
+      color: providerNode.type === "anthropic-compatible" ? "#E85C4A" : "#10A37F",
       textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
       apiType: providerNode.apiType,
       baseUrl: providerNode.baseUrl,
@@ -261,18 +259,22 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleUpdateConnectionStatus = async (id, isActive) => {
+  const handleUpdateConnectionStatus = async (id, isEnabled) => {
+    setConnections(prev => prev.map(c => c.id === id ? { ...c, isEnabled, isActive: isEnabled } : c));
+
     try {
       const res = await fetch(`/api/providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive }),
+        body: JSON.stringify({ isEnabled }),
       });
-      if (res.ok) {
-        setConnections(prev => prev.map(c => c.id === id ? { ...c, isActive } : c));
+      if (!res.ok) {
+        throw new Error("Failed to update connection status");
       }
+      await fetchConnections();
     } catch (error) {
       console.log("Error updating connection status:", error);
+      await fetchConnections();
     }
   };
 
@@ -327,11 +329,13 @@ export default function ProviderDetailPage() {
       return (
         <PassthroughModelsSection
           providerAlias={providerAlias}
+          providerStorageAlias={providerStorageAlias}
           modelAliases={modelAliases}
           copied={copied}
           onCopy={copy}
           onSetAlias={handleSetAlias}
           onDeleteAlias={handleDeleteAlias}
+          connections={connections}
         />
       );
     }
@@ -622,9 +626,10 @@ ModelRow.propTypes = {
   onCopy: PropTypes.func.isRequired,
 };
 
-function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias }) {
+function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias, connections }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   // Filter aliases for this provider - models are persisted via alias
   const providerAliases = Object.entries(modelAliases).filter(
@@ -637,26 +642,42 @@ function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy,
     alias,
   }));
 
+  const activeConnection = connections.find((conn) => conn.isEnabled !== false);
+  const canImport = !!activeConnection;
+
   // Generate default alias from modelId (last part after /)
   const generateDefaultAlias = (modelId) => {
     const parts = modelId.split("/");
     return parts[parts.length - 1];
   };
 
+  const resolveAlias = (modelId) => {
+    const baseAlias = generateDefaultAlias(modelId);
+    if (!modelAliases[baseAlias]) return baseAlias;
+    const prefixedAlias = `${providerAlias}-${baseAlias}`;
+    if (!modelAliases[prefixedAlias]) return prefixedAlias;
+    return null;
+  };
+
+  const normalizeModelId = (rawModelId) => {
+    const value = String(rawModelId || "").trim();
+    const prefix = `${providerAlias}/`;
+    return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  };
+
   const handleAdd = async () => {
     if (!newModel.trim() || adding) return;
-    const modelId = newModel.trim();
-    const defaultAlias = generateDefaultAlias(modelId);
-
-    // Check if alias already exists
-    if (modelAliases[defaultAlias]) {
-      alert(`Alias "${defaultAlias}" already exists. Please use a different model or edit existing alias.`);
+    const modelId = normalizeModelId(newModel);
+    if (!modelId) return;
+    const resolvedAlias = resolveAlias(modelId);
+    if (!resolvedAlias) {
+      alert("All suggested aliases already exist. Please use a different model or edit existing alias.");
       return;
     }
 
     setAdding(true);
     try {
-      await onSetAlias(modelId, defaultAlias);
+      await onSetAlias(modelId, resolvedAlias, providerStorageAlias || providerAlias);
       setNewModel("");
     } catch (error) {
       console.log("Error adding model:", error);
@@ -665,16 +686,55 @@ function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy,
     }
   };
 
+  const handleImport = async () => {
+    if (!activeConnection || importing) return;
+
+    setImporting(true);
+    try {
+      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Failed to import models");
+        return;
+      }
+
+      const models = data.models || [];
+      if (models.length === 0) {
+        alert("No models returned from /models.");
+        return;
+      }
+
+      let importedCount = 0;
+      for (const model of models) {
+        const modelId = normalizeModelId(model.id || model.name || model.model);
+        if (!modelId) continue;
+        const resolvedAlias = resolveAlias(modelId);
+        if (!resolvedAlias) continue;
+        await onSetAlias(modelId, resolvedAlias, providerStorageAlias || providerAlias);
+        importedCount += 1;
+      }
+
+      if (importedCount === 0) {
+        alert("No new models were added.");
+      }
+    } catch (error) {
+      console.log("Error importing models:", error);
+      alert("Failed to import models");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">
-        OpenRouter supports any model. Add models and create aliases for quick access.
+        Add models manually, or import the provider /models list and create aliases for quick access.
       </p>
 
       {/* Add new model */}
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
-          <label htmlFor="new-model-input" className="text-xs text-text-muted mb-1 block">Model ID (from OpenRouter)</label>
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="flex-1 min-w-[240px]">
+          <label htmlFor="new-model-input" className="text-xs text-text-muted mb-1 block">Model ID</label>
           <input
             id="new-model-input"
             type="text"
@@ -688,7 +748,16 @@ function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy,
         <Button size="sm" icon="add" onClick={handleAdd} disabled={!newModel.trim() || adding}>
           {adding ? "Adding..." : "Add"}
         </Button>
+        <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
+          {importing ? "Importing..." : "Import from /models"}
+        </Button>
       </div>
+
+      {!canImport && (
+        <p className="text-xs text-text-muted">
+          Add and enable a connection to import models.
+        </p>
+      )}
 
       {/* Models list */}
       {allModels.length > 0 && (
@@ -711,11 +780,13 @@ function PassthroughModelsSection({ providerAlias, modelAliases, copied, onCopy,
 
 PassthroughModelsSection.propTypes = {
   providerAlias: PropTypes.string.isRequired,
+  providerStorageAlias: PropTypes.string,
   modelAliases: PropTypes.object.isRequired,
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
   onSetAlias: PropTypes.func.isRequired,
   onDeleteAlias: PropTypes.func.isRequired,
+  connections: PropTypes.array.isRequired,
 };
 
 function PassthroughModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias }) {
@@ -817,7 +888,7 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
 
   const handleImport = async () => {
     if (importing) return;
-    const activeConnection = connections.find((conn) => conn.isActive !== false);
+    const activeConnection = connections.find((conn) => conn.isEnabled !== false);
     if (!activeConnection) return;
 
     setImporting(true);
@@ -857,7 +928,7 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
     setSyncingKiro(true);
     setKiroSyncStats(null);
     try {
-      const activeConn = connections.find(c => c.isActive !== false) || connections[0];
+      const activeConn = connections.find(c => c.isEnabled !== false) || connections[0];
       const apiKey = activeConn?.apiKey || "";
       const res = await fetch("/api/providers/kiro/sync-models", {
         method: "POST",
@@ -877,7 +948,7 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
     }
   };
 
-  const canImport = connections.some((conn) => conn.isActive !== false);
+  const canImport = connections.some((conn) => conn.isEnabled !== false);
   const isKiroNode = node?.baseUrl?.includes("kiro.ai");
 
   return (
@@ -963,7 +1034,7 @@ CompatibleModelsSection.propTypes = {
   onDeleteAlias: PropTypes.func.isRequired,
   connections: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
-    isActive: PropTypes.bool,
+    isEnabled: PropTypes.bool,
   })).isRequired,
   isAnthropic: PropTypes.bool,
 };
@@ -998,7 +1069,7 @@ function CooldownTimer({ until }) {
   if (!remaining) return null;
 
   return (
-    <span className="text-xs text-orange-500 font-mono">
+    <span className="text-xs text-primary font-mono">
       ⏱ {remaining}
     </span>
   );
@@ -1048,7 +1119,7 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
   };
 
   return (
-    <div className={`group flex items-center justify-between p-3 rounded-lg hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${connection.isActive === false ? "opacity-60" : ""}`}>
+    <div className={`group flex items-center justify-between p-3 rounded-lg hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${connection.isEnabled === false ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-3 flex-1 min-w-0">
         {/* Priority arrows */}
         <div className="flex flex-col">
@@ -1077,8 +1148,8 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isEnabled === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
-            {isCooldown && connection.isActive !== false && <CooldownTimer until={connection.rateLimitedUntil} />}
-            {connection.lastError && connection.isActive !== false && (
+            {isCooldown && connection.isEnabled !== false && <CooldownTimer until={connection.rateLimitedUntil} />}
+            {connection.lastError && connection.isEnabled !== false && (
               <span className="text-xs text-red-500 truncate max-w-[300px]" title={connection.lastError}>
                 {connection.lastError}
               </span>
@@ -1155,6 +1226,7 @@ ConnectionRow.propTypes = {
     rateLimitedUntil: PropTypes.string,
     testStatus: PropTypes.string,
     isActive: PropTypes.bool,
+    isEnabled: PropTypes.bool,
     lastError: PropTypes.string,
     priority: PropTypes.number,
     globalPriority: PropTypes.number,

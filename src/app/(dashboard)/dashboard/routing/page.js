@@ -16,6 +16,7 @@ export default function RoutingPage() {
                     Control how ZippyMesh selects providers, respects rate limits, and fails over between models
                 </p>
             </div>
+            <RoutingModePanel />
             <div className="flex gap-2 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg w-fit">
                 <button
                     onClick={() => setActiveTab("limits")}
@@ -39,6 +40,71 @@ export default function RoutingPage() {
 
             {activeTab === "limits" ? <ProviderLimitsTab /> : <PlaybooksTab />}
         </div>
+    );
+}
+
+function RoutingModePanel() {
+    const [mode, setMode] = useState("auto");
+    const [saving, setSaving] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const res = await fetch("/api/settings", { cache: "no-store" });
+                const data = await res.json();
+                if (res.ok && data.routingMode) {
+                    setMode(data.routingMode);
+                }
+            } catch (err) {
+                console.error("Failed to load routing settings:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+    }, []);
+
+    const updateMode = async (nextMode) => {
+        setMode(nextMode);
+        setSaving(true);
+        try {
+            await fetch("/api/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ routingMode: nextMode }),
+            });
+        } catch (err) {
+            console.error("Failed to update routing mode:", err);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <Card className="flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <h3 className="font-semibold">Routing Mode</h3>
+                    <p className="text-sm text-text-muted">
+                        <strong>AUTO</strong> infers generic/specific intent and maps to playbooks, groups, or pools with failover.
+                    </p>
+                </div>
+                {saving && <Badge size="sm" variant="secondary">Saving...</Badge>}
+            </div>
+            <Select
+                label="Operating Mode"
+                value={mode}
+                disabled={loading || saving}
+                onChange={(e) => updateMode(e.target.value)}
+                options={[
+                    { value: "auto", label: "AUTO (intent inference + playbooks)" },
+                    { value: "playbook", label: "Playbook-first (explicit rules)" },
+                    { value: "default", label: "Default (cost/latency strategy only)" },
+                ]}
+                hint="AUTO: intent trigger -> group/pool trigger -> default playbook -> base strategy."
+            />
+        </Card>
     );
 }
 

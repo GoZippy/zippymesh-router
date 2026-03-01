@@ -369,10 +369,10 @@ export default function UsageStats() {
       {/* Usage by Model Table */}
       <Card className="overflow-hidden">
         <div className="p-4 border-b border-border bg-bg-subtle/50">
-          <h3 className="font-semibold">Usage by Model</h3>
+          <h3 className="font-semibold text-text-main">Usage by Model</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="w-full text-sm text-left text-text-main">
             <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
               <tr>
                 <th
@@ -560,10 +560,10 @@ export default function UsageStats() {
       {/* Usage by Account Table */}
       <Card className="overflow-hidden">
         <div className="p-4 border-b border-border bg-bg-subtle/50">
-          <h3 className="font-semibold">Usage by Account</h3>
+          <h3 className="font-semibold text-text-main">Usage by Account</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+          <table className="w-full text-sm text-left text-text-main">
             <thead className="bg-bg-subtle/30 text-text-muted uppercase text-xs">
               <tr>
                 <th

@@ -12,7 +12,8 @@ export function useCopyToClipboard(resetDelay = 2000) {
   const timeoutRef = useRef(null);
 
   const copy = useCallback((text, id = "default") => {
-    navigator.clipboard.writeText(text);
+    const value = text != null && typeof text === "string" ? text : "";
+    navigator.clipboard.writeText(value);
     setCopied(id);
 
     if (timeoutRef.current) {

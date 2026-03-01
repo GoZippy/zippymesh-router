@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { toCanonicalModel } from "@/lib/modelNormalization.js";
 
 const isCloud = typeof caches !== 'undefined' || typeof caches === 'object';
 
@@ -173,7 +174,7 @@ export async function saveRequestUsage(entry) {
       db.data.history = [];
     }
 
-    db.data.history.push(entry);
+    db.data.history.push(normalizeUsageEntry(entry));
 
     // Optional: Limit history size if needed in future
     // if (db.data.history.length > 10000) db.data.history.shift();
@@ -182,6 +183,156 @@ export async function saveRequestUsage(entry) {
   } catch (error) {
     console.error("Failed to save usage stats:", error);
   }
+}
+
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getTokenField(tokens = {}, keys = []) {
+  for (const key of keys) {
+    if (tokens[key] !== undefined && tokens[key] !== null) {
+      return safeNumber(tokens[key], 0);
+    }
+  }
+  return 0;
+}
+
+function firstDefinedNumber(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
+function generateRequestId() {
+  try {
+    if (globalThis?.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch {
+    // noop
+  }
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function normalizeUsageEntry(entry = {}) {
+  const tokens = entry.tokens || {};
+  const providerTokens = entry.providerTokens || {};
+
+  const ourPromptTokens = firstDefinedNumber(
+    entry.ourPromptTokens,
+    getTokenField(tokens, ["prompt_tokens", "input_tokens", "promptTokens", "inputTokens"])
+  );
+  const ourCompletionTokens = firstDefinedNumber(
+    entry.ourCompletionTokens,
+    getTokenField(tokens, ["completion_tokens", "output_tokens", "completionTokens", "outputTokens"])
+  );
+  const ourTotalTokens = firstDefinedNumber(
+    entry.ourTotalTokens,
+    tokens.total_tokens,
+    safeNumber(ourPromptTokens, 0) + safeNumber(ourCompletionTokens, 0)
+  );
+
+  const providerPromptTokens = firstDefinedNumber(
+    entry.providerPromptTokens,
+    getTokenField(providerTokens, ["prompt_tokens", "input_tokens", "promptTokens", "inputTokens"])
+  );
+  const providerCompletionTokens = firstDefinedNumber(
+    entry.providerCompletionTokens,
+    getTokenField(providerTokens, ["completion_tokens", "output_tokens", "completionTokens", "outputTokens"])
+  );
+  const providerTotalTokens = firstDefinedNumber(
+    entry.providerTotalTokens,
+    providerTokens.total_tokens,
+    safeNumber(providerPromptTokens, 0) + safeNumber(providerCompletionTokens, 0)
+  );
+
+  const canonical = toCanonicalModel(entry.provider, entry.model, entry.modelMetadata || null);
+
+  return {
+    requestId: entry.requestId || generateRequestId(),
+    provider: entry.provider || "unknown",
+    connectionId: entry.connectionId || null,
+    model: entry.model || "unknown",
+    timestamp: entry.timestamp || new Date().toISOString(),
+    latencyMs: safeNumber(entry.latencyMs ?? entry.latency, 0),
+    canonicalModelId: canonical.canonicalModelId,
+    modelFamily: canonical.modelFamily,
+    providerModelId: canonical.providerModelId,
+    ourPromptTokens: safeNumber(ourPromptTokens, 0),
+    ourCompletionTokens: safeNumber(ourCompletionTokens, 0),
+    ourTotalTokens: safeNumber(ourTotalTokens, 0),
+    providerPromptTokens: safeNumber(providerPromptTokens, 0),
+    providerCompletionTokens: safeNumber(providerCompletionTokens, 0),
+    providerTotalTokens: safeNumber(providerTotalTokens, 0),
+    ourExpectedCostUsd: safeNumber(entry.ourExpectedCostUsd ?? entry.cost, 0),
+    providerReportedCostUsd: safeNumber(entry.providerReportedCostUsd, 0),
+    providerReportedCredits: safeNumber(entry.providerReportedCredits, 0),
+    billingWindowKey: entry.billingWindowKey || null,
+    pricingSnapshotId: entry.pricingSnapshotId || null,
+    tierAtRequest: entry.tierAtRequest || null,
+    usageSource: entry.usageSource || "estimated",
+    status: safeNumber(entry.status, 0),
+    tokens: {
+      prompt_tokens: safeNumber(ourPromptTokens, 0),
+      completion_tokens: safeNumber(ourCompletionTokens, 0),
+      total_tokens: safeNumber(ourTotalTokens, 0),
+    },
+    providerTokens: {
+      prompt_tokens: safeNumber(providerPromptTokens, 0),
+      completion_tokens: safeNumber(providerCompletionTokens, 0),
+      total_tokens: safeNumber(providerTotalTokens, 0),
+    },
+    metadata: entry.metadata || null,
+  };
+}
+
+export function extractProviderUsageFromHeaders(headers = null) {
+  if (!headers) return {};
+
+  const normalized = {};
+  if (typeof headers.forEach === "function") {
+    headers.forEach((value, key) => {
+      normalized[String(key).toLowerCase()] = value;
+    });
+  } else {
+    for (const [key, value] of Object.entries(headers)) {
+      normalized[String(key).toLowerCase()] = value;
+    }
+  }
+
+  const prompt = safeNumber(
+    normalized["x-usage-prompt-tokens"] ??
+      normalized["x-prompt-tokens"] ??
+      normalized["x-ratelimit-used-prompt-tokens"],
+    0
+  );
+  const completion = safeNumber(
+    normalized["x-usage-completion-tokens"] ??
+      normalized["x-completion-tokens"] ??
+      normalized["x-ratelimit-used-completion-tokens"],
+    0
+  );
+  const total = safeNumber(
+    normalized["x-usage-total-tokens"] ?? normalized["x-total-tokens"] ?? prompt + completion,
+    prompt + completion
+  );
+  const costUsd = safeNumber(
+    normalized["x-usage-cost-usd"] ?? normalized["x-cost-usd"] ?? normalized["x-provider-cost-usd"],
+    0
+  );
+  const credits = safeNumber(normalized["x-usage-credits"] ?? normalized["x-provider-credits"], 0);
+
+  return {
+    providerPromptTokens: prompt,
+    providerCompletionTokens: completion,
+    providerTotalTokens: total,
+    providerReportedCostUsd: costUsd,
+    providerReportedCredits: credits,
+    usageSource: "headers",
+  };
 }
 
 /**

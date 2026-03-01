@@ -6,9 +6,9 @@ import { Card } from "@/shared/components";
 const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
         return (
-            <div className="bg-surface border border-border p-3 rounded-lg shadow-lg text-xs">
+            <div className="bg-surface border border-border p-3 rounded-lg shadow-lg text-xs text-text-main">
                 <p className="font-semibold mb-1">{new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                <p className="text-green-500 font-medium">
+                <p className="text-green-500 dark:text-green-400 font-medium">
                     Cost: ${payload[0].value.toFixed(4)}
                 </p>
             </div>
@@ -35,24 +35,26 @@ export default function CostTrendChart({ data }) {
                                 <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
                             </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.5} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
                         <XAxis
                             dataKey="timestamp"
                             tickFormatter={(time) => new Date(time).getHours() + 'h'}
-                            stroke="var(--text-muted)"
+                            stroke="var(--color-text-muted)"
+                            tick={{ fill: 'var(--color-text-muted)' }}
                             fontSize={10}
                             tickLine={false}
                             axisLine={false}
                             minTickGap={30}
                         />
                         <YAxis
-                            stroke="var(--text-muted)"
+                            stroke="var(--color-text-muted)"
+                            tick={{ fill: 'var(--color-text-muted)' }}
                             fontSize={10}
                             tickLine={false}
                             axisLine={false}
                             tickFormatter={(value) => `$${value.toFixed(2)}`}
                         />
-                        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--border)', strokeWidth: 1 }} />
+                        <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'var(--color-border)', strokeWidth: 1 }} />
                         <Area
                             type="monotone"
                             dataKey="cost"

@@ -21,6 +21,17 @@ ZippyMesh sits between your CLI tools (Claude Code, Codex, Cline, etc.) and upst
 - **API key security** — create scoped API tokens, enable enforcement via settings, and auto-blacklist abusive clients
 - **Firewall integration** — optional helper to apply host firewall rules (UFW/Defender/pf) when blacklisting
 
+## Privacy & Telemetry
+
+ZippyMesh is designed with privacy as a core principle. Unlike some similar routing proxies, ZippyMesh:
+
+- **No built-in telemetry** — the router does not phone home, send usage analytics to external servers, or collect data beyond what you configure locally
+- **Local-first** — all provider credentials, usage data, and configuration stay on your machine
+- **Optional cloud sync** — if you enable cloud sync, data is sent only to endpoints you explicitly configure (`NEXT_PUBLIC_CLOUD_URL`)
+- **Transparent** — usage logs and request logs are stored locally and only when you enable `ENABLE_REQUEST_LOGS`
+
+Your prompts, responses, and API keys never leave your control unless you explicitly route them through upstream providers you connect. See [docs/PRIVACY.md](docs/PRIVACY.md) for details.
+
 ## Quick Start
 
 ### Running Tests

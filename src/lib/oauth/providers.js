@@ -3,7 +3,8 @@
  * Centralized DRY approach for all OAuth providers
  */
 
-import { generatePKCE, generateState } from "./utils/pkce";
+import { generatePKCE, generateState } from "./utils/pkce.js";
+import { isUsableClientSecret, resolveOAuthClientSecret } from "./utils/secrets.js";
 import {
   CLAUDE_CONFIG,
   CODEX_CONFIG,
@@ -15,7 +16,7 @@ import {
   KIRO_CONFIG,
   CURSOR_CONFIG,
   KILO_CONFIG,
-} from "./constants/oauth";
+} from "./constants/oauth.js";
 
 // Cache for Kiro client registration
 const kiroClientCache = {
@@ -23,6 +24,24 @@ const kiroClientCache = {
   timestamp: 0,
 };
 const KIRO_CACHE_TTL = 3600000; // 1 hour
+
+function normalizeDeviceCodeError(errorCode) {
+  const normalized = String(errorCode || "").toLowerCase();
+  if (!normalized) return "";
+  if (normalized.includes("authorizationpending") || normalized === "authorization_pending") {
+    return "authorization_pending";
+  }
+  if (normalized.includes("slowdown") || normalized === "slow_down") {
+    return "slow_down";
+  }
+  if (normalized.includes("expiredtoken") || normalized === "expired_token") {
+    return "expired_token";
+  }
+  if (normalized.includes("accessdenied") || normalized === "access_denied") {
+    return "access_denied";
+  }
+  return normalized;
+}
 
 // Provider configurations
 const PROVIDERS = {
@@ -151,19 +170,24 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${params.toString()}`;
     },
     exchangeToken: async (config, code, redirectUri) => {
+      const clientSecret = await resolveOAuthClientSecret("gemini-cli", config);
+      const payload = {
+        grant_type: "authorization_code",
+        client_id: config.clientId,
+        code: code,
+        redirect_uri: redirectUri,
+      };
+      if (clientSecret) {
+        payload.client_secret = clientSecret;
+      }
+
       const response = await fetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
         },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          code: code,
-          redirect_uri: redirectUri,
-        }),
+        body: new URLSearchParams(payload),
       });
 
       if (!response.ok) {
@@ -232,19 +256,24 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${params.toString()}`;
     },
     exchangeToken: async (config, code, redirectUri) => {
+      const clientSecret = await resolveOAuthClientSecret("antigravity", config);
+      const payload = {
+        grant_type: "authorization_code",
+        client_id: config.clientId,
+        code: code,
+        redirect_uri: redirectUri,
+      };
+      if (clientSecret) {
+        payload.client_secret = clientSecret;
+      }
+
       const response = await fetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "application/json",
         },
-        body: new URLSearchParams({
-          grant_type: "authorization_code",
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-          code: code,
-          redirect_uri: redirectUri,
-        }),
+        body: new URLSearchParams(payload),
       });
 
       if (!response.ok) {
@@ -644,14 +673,15 @@ const PROVIDERS = {
         data = { error: "invalid_response", error_description: text };
       }
 
-      // AWS SSO OIDC returns camelCase
-      if (data.accessToken) {
+      // AWS SSO OIDC may return camelCase or snake_case
+      const accessToken = data.accessToken ?? data.access_token;
+      if (accessToken) {
         return {
           ok: true,
           data: {
-            access_token: data.accessToken,
-            refresh_token: data.refreshToken,
-            expires_in: data.expiresIn,
+            access_token: accessToken,
+            refresh_token: data.refreshToken ?? data.refresh_token ?? null,
+            expires_in: data.expiresIn ?? data.expires_in ?? 3600,
             // Store client credentials for refresh
             _clientId: extraData?._clientId,
             _clientSecret: extraData?._clientSecret,
@@ -659,10 +689,11 @@ const PROVIDERS = {
         };
       }
 
+      const normalizedError = normalizeDeviceCodeError(data.error || data.errorCode || data.code);
       return {
         ok: false,
         data: {
-          error: data.error || "authorization_pending",
+          error: normalizedError || "authorization_pending",
           error_description: data.error_description || data.message,
         },
       };
@@ -803,25 +834,33 @@ export async function pollForToken(providerName, deviceCode, codeVerifier, extra
       return { success: true, tokens: provider.mapTokens(result.data, extra) };
     } else {
       // Check if it's still pending authorization
-      if (result.data.error === 'authorization_pending' || result.data.error === 'slow_down') {
+      const normalizedError = normalizeDeviceCodeError(result.data.error);
+      if (normalizedError === "authorization_pending" || normalizedError === "slow_down") {
         // This is not a failure, just still waiting
         return {
           success: false,
-          error: result.data.error,
+          error: normalizedError,
           errorDescription: result.data.error_description || result.data.message,
-          pending: result.data.error === 'authorization_pending'
+          pending: normalizedError === 'authorization_pending'
         };
       } else {
         // Actual error
         return {
           success: false,
-          error: result.data.error || 'no_access_token',
+          error: normalizedError || result.data.error || 'no_access_token',
           errorDescription: result.data.error_description || result.data.message || 'No access token received'
         };
       }
     }
   }
 
-  return { success: false, error: result.data.error, errorDescription: result.data.error_description };
+  const normalizedError = normalizeDeviceCodeError(result.data.error);
+  const pending = normalizedError === "authorization_pending" || normalizedError === "slow_down";
+  return {
+    success: false,
+    error: normalizedError || result.data.error,
+    errorDescription: result.data.error_description,
+    pending,
+  };
 }
 

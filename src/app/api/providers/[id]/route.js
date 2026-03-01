@@ -35,7 +35,20 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, priority, globalPriority, defaultModel, isActive, apiKey, testStatus, lastError, lastErrorAt, group, rateLimitedUntil } = body;
+    const {
+      name,
+      priority,
+      globalPriority,
+      defaultModel,
+      isActive,
+      isEnabled,
+      apiKey,
+      testStatus,
+      lastError,
+      lastErrorAt,
+      group,
+      rateLimitedUntil,
+    } = body;
 
     const existing = await getProviderConnectionById(id);
     if (!existing) {
@@ -48,6 +61,10 @@ export async function PUT(request, { params }) {
     if (globalPriority !== undefined) updateData.globalPriority = globalPriority;
     if (defaultModel !== undefined) updateData.defaultModel = defaultModel;
     if (isActive !== undefined) updateData.isActive = isActive;
+    if (isEnabled !== undefined) updateData.isEnabled = isEnabled;
+    if (isEnabled !== undefined && isActive === undefined) {
+      updateData.isActive = isEnabled;
+    }
     if (group !== undefined) updateData.group = group;
     if (rateLimitedUntil !== undefined) updateData.rateLimitedUntil = rateLimitedUntil;
     if (apiKey && existing.authType === "apikey") updateData.apiKey = apiKey;

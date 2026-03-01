@@ -65,8 +65,8 @@ export default function RequestLogger() {
           ) : logs.length === 0 ? (
             <div className="p-8 text-center text-text-muted">No logs recorded yet.</div>
           ) : (
-            <table className="w-full text-left border-collapse whitespace-nowrap">
-              <thead className="sticky top-0 bg-bg-subtle border-b border-border z-10">
+            <table className="w-full text-left border-collapse whitespace-nowrap text-text-main">
+              <thead className="sticky top-0 bg-bg-subtle border-b border-border z-10 text-text-muted text-xs uppercase">
                 <tr>
                   <th className="px-3 py-2 border-r border-border">DateTime</th>
                   <th className="px-3 py-2 border-r border-border">Model</th>

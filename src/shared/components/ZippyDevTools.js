@@ -86,7 +86,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
             <div className="bg-black/80 backdrop-blur-xl border-t border-white/10 w-full max-w-7xl h-96 shadow-2xl pointer-events-auto flex flex-col clip-path-devtools">
                 <header className="flex items-center justify-between px-6 py-3 border-b border-white/5 bg-white/5">
                     <div className="flex items-center gap-4">
-                        <span className="text-orange-500 font-bold flex items-center gap-2">
+                        <span className="text-primary font-bold flex items-center gap-2">
                             <span className="material-symbols-outlined text-lg">terminal</span>
                             Zippy Console
                         </span>
@@ -113,7 +113,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                         <div className="h-4 w-px bg-white/5" />
                         {stats && (
                             <div className="flex items-center gap-3 text-[10px] font-mono text-white/60">
-                                <span className="text-orange-400 font-bold">{stats.monitorData?.network ? "MAINNET" : "EDGE NET"}</span>
+                                <span className="text-primary font-bold">{stats.monitorData?.network ? "MAINNET" : "EDGE NET"}</span>
                                 <span>BLOCK: {stats.blockHeight}</span>
                                 <span>PEERS: {stats.peerCount}</span>
                                 <Badge variant={stats.health > 80 ? "success" : "warning"} className="scale-75">
@@ -136,7 +136,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                             {logs.map((log, i) => (
                                 <div key={i} className="flex gap-4 border-b border-white/5 py-1">
                                     <span className="text-white/20 shrink-0">{log.timestamp.split('T')[1].split('.')[0]}</span>
-                                    <span className={`shrink-0 uppercase font-bold ${log.type === 'stdout' ? 'text-blue-400' : log.type === 'stderr' ? 'text-red-400' : 'text-orange-500'}`}>
+                                    <span className={`shrink-0 uppercase font-bold ${log.type === 'stdout' ? 'text-blue-400' : log.type === 'stderr' ? 'text-red-400' : 'text-primary'}`}>
                                         [{log.type}]
                                     </span>
                                     <span className="text-white/80 break-all">{log.line}</span>
@@ -175,7 +175,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                             </div>
                                             <div className="flex justify-between items-center">
                                                 <span>Trust Score</span>
-                                                <span className="text-orange-400 font-bold">{stats?.trustScore || 0}</span>
+                                                <span className="text-primary font-bold">{stats?.trustScore || 0}</span>
                                             </div>
                                             <div className="flex justify-between items-center">
                                                 <span>Latency (RTT)</span>
@@ -192,7 +192,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                             <input
                                                 type="text"
                                                 placeholder="/ip4/1.2.3.4/tcp/9480"
-                                                className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-orange-500/50 transition-colors"
+                                                className="flex-1 bg-black/40 border border-white/10 rounded px-3 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-primary/50 transition-colors"
                                                 value={dialMultiaddr}
                                                 onChange={(e) => setDialMultiaddr(e.target.value)}
                                             />
@@ -222,11 +222,11 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                                                     <span className="text-[9px] text-white/40 uppercase relative inline-block cursor-help w-max">
                                                                         {peer.component_type || "VALIDATOR"}
                                                                         <div className="hidden group-hover:block absolute top-[120%] left-0 p-3 bg-zinc-900 border border-white/10 rounded-lg shadow-2xl z-50 text-white/80 w-56 text-[11px] normal-case leading-relaxed pointer-events-none">
-                                                                            <div className="mb-2 font-bold text-orange-400 border-b border-white/10 pb-1">Capabilities</div>
+                                                                            <div className="mb-2 font-bold text-primary border-b border-white/10 pb-1">Capabilities</div>
                                                                             <div className="flex justify-between"><span>TCP:</span> <span className="text-white">Yes</span></div>
                                                                             <div className="flex justify-between"><span>UDP:</span> <span className="text-white">Yes</span></div>
                                                                             <div className="flex justify-between"><span>Max msg:</span> <span className="text-white font-mono">1MB</span></div>
-                                                                            <div className="mt-3 mb-2 font-bold text-orange-400 border-b border-white/10 pb-1">Reputation</div>
+                                                                            <div className="mt-3 mb-2 font-bold text-primary border-b border-white/10 pb-1">Reputation</div>
                                                                             <div className="flex justify-between"><span>Uptime:</span> <span className="text-white">99.9%</span></div>
                                                                             <div className="flex justify-between"><span>Behavior Score:</span> <span className="text-white font-mono">1.0</span></div>
                                                                         </div>
@@ -234,7 +234,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                                                 </div>
                                                             </td>
                                                             <td className="px-4 py-3 font-mono text-white/50">{peer.host || "192.168.1.100"}:{peer.port || 9480}</td>
-                                                            <td className="px-4 py-3 font-mono text-orange-400 font-bold">{peer.trust_score || 95}</td>
+                                                            <td className="px-4 py-3 font-mono text-primary font-bold">{peer.trust_score || 95}</td>
                                                             <td className="px-4 py-3 text-right">
                                                                 <button
                                                                     onClick={() => handleBlockPeer(peer.id)}
@@ -253,11 +253,11 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                                                 <span className="text-[9px] text-white/40 uppercase relative inline-block cursor-help w-max">
                                                                     VALIDATOR
                                                                     <div className="hidden group-hover:block absolute top-[120%] left-0 p-3 bg-zinc-900 border border-white/10 rounded-lg shadow-2xl z-50 text-white/80 w-56 text-[11px] normal-case leading-relaxed pointer-events-none">
-                                                                        <div className="mb-2 font-bold text-orange-400 border-b border-white/10 pb-1">Capabilities</div>
+                                                                        <div className="mb-2 font-bold text-primary border-b border-white/10 pb-1">Capabilities</div>
                                                                         <div className="flex justify-between"><span>TCP:</span> <span className="text-white">Yes</span></div>
                                                                         <div className="flex justify-between"><span>UDP:</span> <span className="text-white">Yes</span></div>
                                                                         <div className="flex justify-between"><span>Max msg:</span> <span className="text-white font-mono">1MB</span></div>
-                                                                        <div className="mt-3 mb-2 font-bold text-orange-400 border-b border-white/10 pb-1">Reputation</div>
+                                                                        <div className="mt-3 mb-2 font-bold text-primary border-b border-white/10 pb-1">Reputation</div>
                                                                         <div className="flex justify-between"><span>Uptime:</span> <span className="text-white">99.9%</span></div>
                                                                         <div className="flex justify-between"><span>Behavior Score:</span> <span className="text-white font-mono">1.0</span></div>
                                                                     </div>
@@ -265,7 +265,7 @@ export default function ZippyDevTools({ isOpen, onClose }) {
                                                             </div>
                                                         </td>
                                                         <td className="px-4 py-3 font-mono text-white/50">144.22.9.11:9480</td>
-                                                        <td className="px-4 py-3 font-mono text-orange-400 font-bold">92</td>
+                                                        <td className="px-4 py-3 font-mono text-primary font-bold">92</td>
                                                         <td className="px-4 py-3 text-right">
                                                             <button
                                                                 onClick={() => handleBlockPeer("Zpy...9x4j")}

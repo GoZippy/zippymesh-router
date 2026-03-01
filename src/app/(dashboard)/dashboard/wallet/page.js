@@ -5,6 +5,7 @@ import Button from "@/shared/components/Button";
 import Card from "@/shared/components/Card";
 import Input from "@/shared/components/Input";
 import Badge from "@/shared/components/Badge";
+import Select from "@/shared/components/Select";
 
 export default function WalletPage() {
     const [wallets, setWallets] = useState([]);
@@ -13,7 +14,12 @@ export default function WalletPage() {
         base_price_per_token: 0.0001,
         min_price_per_token: 0.00005,
         congestion_multiplier: 1.0,
+        pricing_mode: "simple",
+        margin_percent: 20,
+        zip_usd_rate: 1,
+        model_overrides: {},
     });
+    const [spotPricePreview, setSpotPricePreview] = useState([]);
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -49,7 +55,15 @@ export default function WalletPage() {
             }
             if (priceRes.ok) {
                 const p = await priceRes.json();
-                if (p) setPricing(p);
+                if (p) setPricing({
+                    base_price_per_token: p.base_price_per_token ?? 0.0001,
+                    min_price_per_token: p.min_price_per_token ?? 0.00005,
+                    congestion_multiplier: p.congestion_multiplier ?? 1.0,
+                    pricing_mode: p.pricing_mode ?? "simple",
+                    margin_percent: p.margin_percent ?? 20,
+                    zip_usd_rate: p.zip_usd_rate ?? 1,
+                    model_overrides: p.model_overrides ?? {},
+                });
             }
         } catch (error) {
             console.error("Failed to fetch data", error);
@@ -77,6 +91,20 @@ export default function WalletPage() {
         }
     }, [activeWallet?.id]);
 
+    async function fetchSpotPricePreview() {
+        try {
+            const res = await fetch("/api/marketplace/spot-prices?limit=5");
+            const data = await res.json();
+            if (res.ok && data.models) setSpotPricePreview(data.models);
+        } catch (e) {
+            setSpotPricePreview([]);
+        }
+    }
+
+    useEffect(() => {
+        if (pricing.pricing_mode === "marketplace-anchored") fetchSpotPricePreview();
+    }, [pricing.pricing_mode, pricing.margin_percent]);
+
     async function handleSavePricing() {
         setSavingPricing(true);
         try {
@@ -96,6 +124,35 @@ export default function WalletPage() {
             alert("Error updating pricing");
         } finally {
             setSavingPricing(false);
+        }
+    }
+
+    async function handleSend(e) {
+        e.preventDefault();
+        if (!activeWallet || !recipient?.trim() || !amount) return;
+
+        setIsSending(true);
+        try {
+            const res = await fetch("/api/v1/wallet/send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ to: recipient.trim(), amount: parseFloat(amount) }),
+            });
+            const data = await res.json();
+
+            if (res.ok) {
+                setRecipient("");
+                setAmount("");
+                await fetchData();
+                if (activeWallet?.id) await fetchTransactions(activeWallet.id);
+                alert("Transfer initiated successfully.");
+            } else {
+                alert(data.error || "Transfer failed");
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setIsSending(false);
         }
     }
 
@@ -226,10 +283,10 @@ export default function WalletPage() {
                     </div>
                 </Card>
 
-                {/* Active Wallet Detail Card */}
+                {/* Active Wallet Detail Card - always dark for contrast; force light text in light mode */}
                 <Card
                     title={activeWallet ? activeWallet.name : "Select a Wallet"}
-                    className="bg-gradient-to-br from-indigo-900 to-indigo-950 text-white border-indigo-800 md:col-span-2"
+                    className="bg-gradient-to-br from-indigo-900 to-indigo-950 text-white border-indigo-800 md:col-span-2 [&_h3]:!text-white [&_p]:!text-indigo-200 [&_.text-text-main]:!text-white [&_.text-text-muted]:!text-indigo-200"
                 >
                     <div className="flex items-baseline gap-2">
                         <span className="text-5xl font-bold tracking-tight">{activeWallet?.balance?.toFixed(4) || "0.0000"}</span>
@@ -302,25 +359,79 @@ export default function WalletPage() {
                 subtitle="Set the price you charge for serving LLM requests."
                 icon="sell"
             >
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <Input
-                        label="Base Price (ZIP/Token)"
-                        type="number" step="0.00001"
-                        value={pricing.base_price_per_token}
-                        onChange={(e) => setPricing({ ...pricing, base_price_per_token: parseFloat(e.target.value) })}
+                <div className="space-y-4">
+                    <Select
+                        label="Pricing Mode"
+                        options={[
+                            { label: "Simple (base, min, congestion)", value: "simple" },
+                            { label: "Model-aware (per-model overrides)", value: "model-aware" },
+                            { label: "Marketplace-anchored (spot + margin)", value: "marketplace-anchored" },
+                        ]}
+                        value={pricing.pricing_mode || "simple"}
+                        onChange={(e) => setPricing({ ...pricing, pricing_mode: e.target.value })}
+                        placeholder=""
                     />
-                    <Input
-                        label="Min Price (ZIP/Token)"
-                        type="number" step="0.00001"
-                        value={pricing.min_price_per_token}
-                        onChange={(e) => setPricing({ ...pricing, min_price_per_token: parseFloat(e.target.value) })}
-                    />
-                    <Input
-                        label="Congestion Multiplier"
-                        type="number" step="0.1"
-                        value={pricing.congestion_multiplier}
-                        onChange={(e) => setPricing({ ...pricing, congestion_multiplier: parseFloat(e.target.value) })}
-                    />
+
+                    {(pricing.pricing_mode === "simple" || !pricing.pricing_mode) && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <Input
+                                label="Base Price (ZIP/Token)"
+                                type="number" step="0.00001"
+                                value={pricing.base_price_per_token}
+                                onChange={(e) => setPricing({ ...pricing, base_price_per_token: parseFloat(e.target.value) })}
+                            />
+                            <Input
+                                label="Min Price (ZIP/Token)"
+                                type="number" step="0.00001"
+                                value={pricing.min_price_per_token}
+                                onChange={(e) => setPricing({ ...pricing, min_price_per_token: parseFloat(e.target.value) })}
+                            />
+                            <Input
+                                label="Congestion Multiplier"
+                                type="number" step="0.1"
+                                value={pricing.congestion_multiplier}
+                                onChange={(e) => setPricing({ ...pricing, congestion_multiplier: parseFloat(e.target.value) })}
+                            />
+                        </div>
+                    )}
+
+                    {pricing.pricing_mode === "marketplace-anchored" && (
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <Input
+                                    label="Margin (%)"
+                                    type="number" step="1" min="0"
+                                    value={pricing.margin_percent ?? 20}
+                                    onChange={(e) => setPricing({ ...pricing, margin_percent: parseFloat(e.target.value) || 20 })}
+                                />
+                                <Input
+                                    label="ZIP/USD Rate (optional)"
+                                    type="number" step="0.0001"
+                                    value={pricing.zip_usd_rate ?? 1}
+                                    onChange={(e) => setPricing({ ...pricing, zip_usd_rate: parseFloat(e.target.value) || 1 })}
+                                />
+                            </div>
+                            {spotPricePreview.length > 0 && (
+                                <div className="p-3 bg-sidebar/50 rounded-lg border border-border">
+                                    <div className="text-xs font-medium text-text-muted uppercase mb-2">Preview (top 5 models, spot + {pricing.margin_percent ?? 20}%)</div>
+                                    <div className="space-y-1 text-sm">
+                                        {spotPricePreview.map((p) => (
+                                            <div key={p.canonicalModelId} className="flex justify-between">
+                                                <span className="text-text-muted truncate">{p.modelDisplayName}</span>
+                                                <span className="font-mono">${(p.spotPriceUsd * (1 + (pricing.margin_percent ?? 20) / 100)).toFixed(4)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {pricing.pricing_mode === "model-aware" && (
+                        <div className="p-3 bg-sidebar/50 rounded-lg border border-border text-sm text-text-muted">
+                            Per-model overrides coming soon. Use Simple or Marketplace-anchored for now.
+                        </div>
+                    )}
                 </div>
                 <div className="flex justify-end mt-4">
                     <Button onClick={handleSavePricing} disabled={savingPricing} variant="secondary" loading={savingPricing}>

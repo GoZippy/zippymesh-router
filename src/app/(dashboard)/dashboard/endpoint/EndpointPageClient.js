@@ -5,6 +5,8 @@ import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
+const KEY_MASK = "zm_••••••••••••••••";
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -12,6 +14,9 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(null);
   const [showSnippets, setShowSnippets] = useState(null);
+  const [revealKey, setRevealKey] = useState(false);
+  const [regenerating, setRegenerating] = useState(null);
+  const [createdKeyIsRegenerated, setCreatedKeyIsRegenerated] = useState(false);
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -46,6 +51,8 @@ export default function APIPageClient({ machineId }) {
 
       if (res.ok) {
         setCreatedKey(data.key);
+        setRevealKey(true);
+        setCreatedKeyIsRegenerated(false);
         await fetchData();
         setNewKeyName("");
         setShowAddModal(false);
@@ -65,6 +72,32 @@ export default function APIPageClient({ machineId }) {
       }
     } catch (error) {
       console.log("Error deleting key:", error);
+    }
+  };
+
+  const handleRegenerateKey = async (keyRecord) => {
+    if (!confirm("Regenerate this key? The old key will stop working. You will see the new key once—copy it for your bots and tools.")) return;
+
+    setRegenerating(keyRecord.id);
+    try {
+      const res = await fetch(`/api/keys/${keyRecord.id}/regenerate`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to regenerate key");
+
+      const rawKey = data.key;
+      if (!rawKey || typeof rawKey !== "string") {
+        throw new Error("No key returned from regenerate");
+      }
+
+      setCreatedKey(rawKey);
+      setRevealKey(true);
+      setCreatedKeyIsRegenerated(true);
+      await fetchData();
+    } catch (error) {
+      console.log("Error regenerating key:", error);
+      alert(error.message || "Failed to regenerate key");
+    } finally {
+      setRegenerating(null);
     }
   };
 
@@ -136,7 +169,7 @@ export default function APIPageClient({ machineId }) {
           </div>
         ) : (
           <div className="flex flex-col">
-            {keys.map((key) => (
+            {keys.filter((k) => !k.revoked).map((key) => (
               <div
                 key={key.id}
                 className="group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0"
@@ -144,26 +177,33 @@ export default function APIPageClient({ machineId }) {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{key.name}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">{key.key}</code>
-                    <button
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-0 group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
-                      </span>
-                    </button>
+                    <code className="text-xs text-text-muted font-mono">{KEY_MASK}</code>
+                    <span className="text-xs text-text-muted" title="Keys are stored securely and cannot be retrieved. Use Regenerate to get a new key.">
+                      <span className="material-symbols-outlined text-[14px] align-middle">info</span>
+                    </span>
                   </div>
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
                 </div>
-                <button
-                  onClick={() => handleDeleteKey(key.id)}
-                  className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-                >
-                  <span className="material-symbols-outlined text-[18px]">delete</span>
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleRegenerateKey(key)}
+                    disabled={regenerating === key.id}
+                    className="p-2 hover:bg-primary/10 rounded text-primary"
+                    title="Regenerate key — get a new key to copy (old key will stop working)"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">
+                      {regenerating === key.id ? "hourglass_empty" : "refresh"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => handleDeleteKey(key.id)}
+                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-70 hover:opacity-100"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">delete</span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -263,11 +303,12 @@ export default function APIPageClient({ machineId }) {
         </div>
       </Modal>
 
-      {/* Created Key Modal */}
+      {/* Created/Regenerated Key Modal */}
       <Modal
         isOpen={!!createdKey}
-        title="API Key Created"
-        onClose={() => setCreatedKey(null)}
+        title={createdKeyIsRegenerated ? "API Key Regenerated" : "API Key Created"}
+        onClose={() => { setCreatedKey(null); setRevealKey(false); setCreatedKeyIsRegenerated(false); }}
+        closeOnOverlay={false}
       >
         <div className="flex flex-col gap-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
@@ -279,20 +320,33 @@ export default function APIPageClient({ machineId }) {
             </p>
           </div>
           <div className="flex gap-2">
-            <Input
-              value={createdKey || ""}
-              readOnly
-              className="flex-1 font-mono text-sm"
-            />
+            <div className="flex-1 relative">
+              <Input
+                value={revealKey ? (createdKey || "") : KEY_MASK}
+                readOnly
+                type={revealKey ? "text" : "password"}
+                className="font-mono text-sm pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setRevealKey((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-muted hover:text-primary rounded"
+                title={revealKey ? "Hide" : "Reveal"}
+              >
+                <span className="material-symbols-outlined text-[20px]">
+                  {revealKey ? "visibility_off" : "visibility"}
+                </span>
+              </button>
+            </div>
             <Button
               variant="secondary"
               icon={copied === "created_key" ? "check" : "content_copy"}
-              onClick={() => copy(createdKey, "created_key")}
+              onClick={() => typeof createdKey === "string" && copy(createdKey, "created_key")}
             >
               {copied === "created_key" ? "Copied!" : "Copy"}
             </Button>
           </div>
-          <Button onClick={() => setCreatedKey(null)} fullWidth>
+          <Button onClick={() => { setCreatedKey(null); setRevealKey(false); setCreatedKeyIsRegenerated(false); }} fullWidth>
             Done
           </Button>
         </div>

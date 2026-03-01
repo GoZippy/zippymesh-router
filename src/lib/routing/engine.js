@@ -4,6 +4,33 @@ import { getRoutingPlaybooks, getProviderConnections, getSettings } from "../loc
 import { resolveProviderId } from "../../shared/constants/providers.js";
 import { getRegistryModel } from "../modelRegistry.js";
 
+function inferIntentFromContext(context = {}) {
+    const explicitIntent = typeof context.intent === "string" ? context.intent.trim().toLowerCase() : "";
+    if (explicitIntent) return explicitIntent;
+
+    const messageText = Array.isArray(context.messages)
+        ? context.messages.map((m) => (typeof m?.content === "string" ? m.content : "")).join(" ")
+        : "";
+    const signalText = [
+        context.prompt,
+        context.message,
+        context.task,
+        context.systemPrompt,
+        messageText
+    ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+    if (!signalText) return "generic";
+    if (/(code|coding|debug|refactor|typescript|javascript|python|function|class|bug)/.test(signalText)) return "code";
+    if (/(research|analy|reason|compare|investigate|summar)/.test(signalText)) return "reasoning";
+    if (/(tool|function call|api call|agent|workflow|automation)/.test(signalText)) return "tool_use";
+    if (/(bot|runner|batch|cron|scheduled|pipeline)/.test(signalText)) return "bot_runner";
+
+    return "generic";
+}
+
 /**
  * Routing Engine
  * Coordinates Playbooks, Rate Limits, and Cost analysis to select the best provider.
@@ -71,12 +98,25 @@ export class RoutingEngine {
         // 3. Filter by Rate Limits
         const availableCandidates = [];
         for (const cand of candidates) {
+            const cooldownUntil = cand.connection?.rateLimitedUntil ? new Date(cand.connection.rateLimitedUntil).getTime() : 0;
+            if (cooldownUntil && cooldownUntil > Date.now()) {
+                cand.reasons.push(`cooldown_until:${cand.connection.rateLimitedUntil}`);
+                continue;
+            }
+
             const limitCheck = await this.rateLimiter.checkLimit(cand.provider, cand.model, {
                 estimatedTokens: requestContext.estimatedTokens
             });
 
             if (limitCheck.allowed) {
+                if (limitCheck.resetTime) {
+                    cand.rateLimitResetAt = new Date(limitCheck.resetTime).toISOString();
+                    cand.reasons.push(`rate_limit_reset:${cand.rateLimitResetAt}`);
+                }
                 availableCandidates.push(cand);
+            } else {
+                const blockedAt = limitCheck.resetTime ? new Date(limitCheck.resetTime).toISOString() : "unknown";
+                cand.reasons.push(`rate_limited_until:${blockedAt}`);
             }
         }
 
@@ -88,28 +128,60 @@ export class RoutingEngine {
             results = await this.defaultStrategy(availableCandidates, requestContext);
         }
 
+        // Favor candidates without immediate reset pressure. If both have reset timestamps,
+        // prefer the one with later reset to preserve providers that recover soon.
+        results.sort((a, b) => {
+            const aReset = a.rateLimitResetAt ? new Date(a.rateLimitResetAt).getTime() : Number.MAX_SAFE_INTEGER;
+            const bReset = b.rateLimitResetAt ? new Date(b.rateLimitResetAt).getTime() : Number.MAX_SAFE_INTEGER;
+            if (aReset !== bReset) return bReset - aReset;
+            return a.score - b.score;
+        });
+
         return results;
     }
 
     async selectPlaybook(playbooks, context, settings) {
         const sorted = playbooks.filter(p => p.isActive).sort((a, b) => b.priority - a.priority);
+        const routingMode = (context?.routingMode || settings?.routingMode || "default").toLowerCase();
+        const inferredIntent = inferIntentFromContext(context);
 
-        for (const pb of sorted) {
-            if (pb.trigger) {
+        if (routingMode === "auto" || routingMode === "playbook") {
+            for (const pb of sorted) {
+                if (!pb.trigger) continue;
+
                 if (pb.trigger.type === "intent") {
-                    if (context.intent === pb.trigger.value) return pb;
+                    const targetIntent = String(pb.trigger.value || "").toLowerCase();
+                    if ((context.intent && context.intent.toLowerCase() === targetIntent)
+                        || (routingMode === "auto" && inferredIntent === targetIntent)) {
+                        return pb;
+                    }
                 }
                 else if (pb.trigger.type === "group") {
                     if (context.userGroup === pb.trigger.value) return pb;
                 }
-                continue;
+                else if (pb.trigger.type === "pool") {
+                    if (context.poolId === pb.trigger.value || context.pool === pb.trigger.value) return pb;
+                }
             }
         }
 
-        if (settings?.defaultPlaybookId) {
+        if (routingMode === "auto") {
+            // Generic intent mapping fallback: route to playbook whose name/description matches inferred intent.
+            if (inferredIntent !== "generic") {
+                const inferredMatch = sorted.find((pb) => {
+                    const haystack = `${pb.name || ""} ${pb.description || ""}`.toLowerCase();
+                    return haystack.includes(inferredIntent);
+                });
+                if (inferredMatch) return inferredMatch;
+            }
+        }
+
+        if (settings?.defaultPlaybookId && (routingMode === "auto" || routingMode === "playbook")) {
             const defaultPb = playbooks.find(p => p.id === settings.defaultPlaybookId && p.isActive);
             if (defaultPb) return defaultPb;
         }
+
+        if (routingMode === "default") return null;
 
         return null;
     }

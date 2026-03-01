@@ -69,19 +69,10 @@ export default function Sidebar({ onClose }) {
   return (
     <>
       <aside className="flex w-72 flex-col border-r border-black/5 dark:border-white/5 bg-vibrancy backdrop-blur-xl transition-colors duration-300">
-        {/* Traffic lights */}
-        <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-          <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-          <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-          <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
-        </div>
-
         {/* Logo */}
-        <div className="px-6 py-4">
+        <div className="px-6 pt-5 pb-4">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded bg-linear-to-br from-[#f97815] to-[#c2590a]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
-            </div>
+            <img src="/zippymesh-logo.svg" alt="" className="size-9 shrink-0" width="36" height="36" />
             <div className="flex flex-col">
               <h1 className="text-lg font-semibold tracking-tight text-text-main">
                 {APP_CONFIG.name}

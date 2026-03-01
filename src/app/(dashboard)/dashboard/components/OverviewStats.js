@@ -248,7 +248,7 @@ export default function OverviewStats() {
                         </Link>
                         <Link href="/dashboard/combos" className="block">
                             <div className="p-3 rounded-lg border border-border hover:bg-bg-subtle transition-colors flex items-center gap-3">
-                                <div className="size-8 rounded bg-orange-500/10 flex items-center justify-center text-orange-500">
+                                <div className="size-8 rounded bg-primary/10 flex items-center justify-center text-primary">
                                     <span className="material-symbols-outlined">layers</span>
                                 </div>
                                 <div className="flex flex-col">

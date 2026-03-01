@@ -54,13 +54,74 @@ export const SMART_PLAYBOOKS = [
     }
 ];
 
+export const SMART_PLAYBOOK_TEMPLATES = [
+    {
+        id: "tpl-coding",
+        name: "Coding",
+        description: "Optimized for code generation and refactoring with failover.",
+        trigger: { type: "intent", value: "code" },
+        rules: [
+            { type: "sort-by-cheapest", target: "*" },
+            { type: "sort-by-fastest", target: "*" },
+            { type: "stack", target: "cc,qw,openai,gemini,anthropic", value: "failover" }
+        ]
+    },
+    {
+        id: "tpl-research",
+        name: "Research",
+        description: "Balanced reasoning with cost-aware backup chain.",
+        trigger: { type: "intent", value: "reasoning" },
+        rules: [
+            { type: "boost", target: "claude", value: 20000 },
+            { type: "boost", target: "gemini", value: 15000 },
+            { type: "stack", target: "claude,gemini,openai,groq", value: "failover" }
+        ]
+    },
+    {
+        id: "tpl-tool-use",
+        name: "Tool Use",
+        description: "Prioritizes tool-capable models with fallback.",
+        trigger: { type: "intent", value: "tool_use" },
+        rules: [
+            { type: "filter-in", target: "openai", value: "openai" },
+            { type: "filter-in", target: "anthropic", value: "anthropic" },
+            { type: "stack", target: "openai,anthropic,gemini", value: "failover" }
+        ]
+    },
+    {
+        id: "tpl-bot-runner",
+        name: "Bot Runner",
+        description: "Low-latency automation with economical fallback.",
+        trigger: { type: "intent", value: "bot_runner" },
+        rules: [
+            { type: "filter-in", target: "groq", value: "groq" },
+            { type: "filter-in", target: "cerebras", value: "cerebras" },
+            { type: "stack", target: "groq,cerebras,openrouter", value: "failover" }
+        ]
+    }
+];
+
 export const INITIAL_SETTINGS = {
     cloudEnabled: false,
     stickyRoundRobinLimit: 3,
     requireLogin: true,
     requireApiKey: false,
+    routingMode: "auto", // auto | playbook | default
     defaultPlaybookId: "pb-balanced-default",
     autoDiscovery: true,
-    isDemoMode: false
+    isDemoMode: false,
+    dashboardView: "simple",
+    advancedDashboard: true,
+    pricingValidation: true,
+    reconciliationEngine: true,
+    providerTransparency: true,
+    autoProviderCatalogSync: true,
+    providerCatalogSyncIntervalMinutes: 180,
+    providerCatalogLastSyncedAt: null,
+    providerCatalogLastSyncSummary: null,
+    minorVariancePct: 3,
+    warnVariancePct: 7,
+    criticalVariancePct: 12,
+    reconciliationMinSampleSize: 30
 };
 

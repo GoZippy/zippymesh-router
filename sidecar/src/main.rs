@@ -45,12 +45,28 @@ struct PaymentResponse {
     status: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct ExposedProviderConfig {
+    provider_ids: Vec<String>,
+    models: Vec<Model>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct WalletEntry {
+    id: String,
+    address: String,
+    balance: f64,
+}
+
 struct AppState {
     peers: Mutex<Vec<Peer>>,
     price_config: Mutex<PriceConfig>,
     wallet_balance: Mutex<f64>,
+    wallets: Mutex<std::collections::HashMap<String, WalletEntry>>,
+    active_wallet_id: Mutex<String>,
     transactions: Mutex<Vec<Transaction>>,
     tx_p2p_command: mpsc::Sender<P2PCommand>,
+    exposed_config: Mutex<Option<ExposedProviderConfig>>,
 }
 
 #[get("/health")]
@@ -97,22 +113,45 @@ async fn get_transactions(data: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(&*txs)
 }
 
+fn get_active_balance(data: &web::Data<AppState>) -> f64 {
+    let active_id = data.active_wallet_id.lock().unwrap().clone();
+    let wallets = data.wallets.lock().unwrap();
+    wallets.get(&active_id).map(|w| w.balance).unwrap_or(0.0)
+}
+
+fn deduct_active_balance(data: &web::Data<AppState>, amount: f64) -> bool {
+    let active_id = data.active_wallet_id.lock().unwrap().clone();
+    let mut wallets = data.wallets.lock().unwrap();
+    if let Some(w) = wallets.get_mut(&active_id) {
+        if w.balance >= amount {
+            w.balance -= amount;
+            return true;
+        }
+    }
+    false
+}
+
 #[post("/proxy/chat/completions")]
 async fn proxy_chat(_req_body: String, data: web::Data<AppState>) -> impl Responder {
-    let mut balance = data.wallet_balance.lock().unwrap();
+    let balance = get_active_balance(&data);
     let price_config = data.price_config.lock().unwrap();
     let estimated_tokens = 100.0;
     let cost = price_config.base_price_per_token * estimated_tokens; 
     
-    if *balance < cost {
+    if balance < cost {
         return HttpResponse::PaymentRequired().json(serde_json::json!({
             "error": "Insufficient funds",
             "required": cost,
-            "current_balance": *balance
+            "current_balance": balance
         }));
     }
     
-    *balance -= cost;
+    if !deduct_active_balance(&data, cost) {
+        return HttpResponse::PaymentRequired().json(serde_json::json!({
+            "error": "Insufficient funds",
+            "required": cost
+        }));
+    }
     
     let mut txs = data.transactions.lock().unwrap();
     txs.push(Transaction {
@@ -148,9 +187,8 @@ async fn proxy_chat(_req_body: String, data: web::Data<AppState>) -> impl Respon
 
 #[post("/payment/open_channel")]
 async fn open_channel(req: web::Json<PaymentRequest>, data: web::Data<AppState>) -> impl Responder {
-    let mut balance = data.wallet_balance.lock().unwrap();
-    if *balance >= req.amount {
-        *balance -= req.amount;
+    let balance = get_active_balance(&data);
+    if balance >= req.amount && deduct_active_balance(&data, req.amount) {
         
         let mut txs = data.transactions.lock().unwrap();
         txs.push(Transaction {
@@ -168,18 +206,33 @@ async fn open_channel(req: web::Json<PaymentRequest>, data: web::Data<AppState>)
     } else {
         HttpResponse::BadRequest().json(serde_json::json!({
             "error": "Insufficient funds",
-            "current_balance": *balance
+            "current_balance": balance
         }))
     }
 }
 
 #[get("/wallet/balance")]
 async fn get_balance(data: web::Data<AppState>) -> impl Responder {
-    let balance = data.wallet_balance.lock().unwrap();
+    let balance = get_active_balance(&data);
     HttpResponse::Ok().json(serde_json::json!({
-        "balance": *balance,
+        "balance": balance,
         "currency": "ZIP"
     }))
+}
+
+#[get("/wallet/list")]
+async fn get_wallet_list(data: web::Data<AppState>) -> impl Responder {
+    let wallets = data.wallets.lock().unwrap();
+    let active_id = data.active_wallet_id.lock().unwrap().clone();
+    let list: Vec<serde_json::Value> = wallets.values().map(|w| {
+        serde_json::json!({
+            "id": w.id,
+            "address": w.address,
+            "balance": w.balance,
+            "isActive": w.id == active_id
+        })
+    }).collect();
+    HttpResponse::Ok().json(list)
 }
 
 #[get("/node/pricing")]
@@ -215,6 +268,42 @@ async fn get_transactions_list(data: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(&*txs)
 }
 
+#[derive(Deserialize)]
+struct ExposedProvidersRequest {
+    provider_ids: Option<Vec<String>>,
+    models: Option<Vec<Model>>,
+}
+
+#[post("/mesh/exposed-providers")]
+async fn set_exposed_providers(req: web::Json<ExposedProvidersRequest>, data: web::Data<AppState>) -> impl Responder {
+    let provider_ids = req.provider_ids.clone().unwrap_or_default();
+    let models = req.models.clone().unwrap_or_else(|| {
+        vec![Model { name: "llama3".to_string(), cost_per_token: 0.0001, quantization: "q4".to_string() }]
+    });
+
+    {
+        let mut config = data.exposed_config.lock().unwrap();
+        *config = Some(ExposedProviderConfig {
+            provider_ids: provider_ids.clone(),
+            models: models.clone(),
+        });
+    }
+
+    let price_config = data.price_config.lock().unwrap().clone();
+    let announcement = PeerAnnouncement {
+        id: "sidecar-mock-node-id".to_string(),
+        latency_ms: 10,
+        models,
+        price_config: Some(price_config),
+    };
+
+    if let Err(e) = data.tx_p2p_command.send(P2PCommand::Publish(announcement)).await {
+        eprintln!("Failed to broadcast mesh announcement: {}", e);
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ok", "provider_ids": provider_ids }))
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let mut port = 9480;
@@ -240,10 +329,21 @@ async fn main() -> std::io::Result<()> {
     let (tx_peer_update, mut rx_peer_update) = mpsc::channel::<PeerAnnouncement>(32);
     let (tx_p2p_command, rx_p2p_command) = mpsc::channel::<P2PCommand>(32);
 
+    let default_wallet = WalletEntry {
+        id: "default".to_string(),
+        address: "ZIP-MOCK-DEV-WALLET-001".to_string(),
+        balance: 100.0,
+    };
+    let mut wallets_map = std::collections::HashMap::new();
+    wallets_map.insert("default".to_string(), default_wallet);
+
     let app_state = web::Data::new(AppState {
         peers: Mutex::new(vec![]),
         price_config: Mutex::new(PriceConfig::default()),
         wallet_balance: Mutex::new(100.0),
+        wallets: Mutex::new(wallets_map),
+        active_wallet_id: Mutex::new("default".to_string()),
+        exposed_config: Mutex::new(None),
         transactions: Mutex::new(vec![
             Transaction {
                 id: Uuid::new_v4().to_string(),
@@ -283,17 +383,22 @@ async fn main() -> std::io::Result<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let price_config = {
+            let (price_config, models) = {
                 let config = state_heartbeat.price_config.lock().unwrap();
-                config.clone()
+                let exposed = state_heartbeat.exposed_config.lock().unwrap();
+                let price_config = config.clone();
+                let models = exposed.as_ref()
+                    .map(|e| e.models.clone())
+                    .unwrap_or_else(|| vec![
+                        Model { name: "llama3".to_string(), cost_per_token: price_config.base_price_per_token, quantization: "q4".to_string() }
+                    ]);
+                (price_config, models)
             };
 
             let announcement = PeerAnnouncement {
                 id: "sidecar-mock-node-id".to_string(),
                 latency_ms: 15,
-                models: vec![
-                    Model { name: "llama3".to_string(), cost_per_token: price_config.base_price_per_token, quantization: "q4".to_string() }
-                ],
+                models,
                 price_config: Some(price_config),
             };
             let _ = tx_heartbeat.send(P2PCommand::Publish(announcement)).await;
@@ -314,6 +419,8 @@ async fn main() -> std::io::Result<()> {
             .service(get_pricing)
             .service(set_pricing)
             .service(get_transactions)
+            .service(set_exposed_providers)
+            .service(get_wallet_list)
     })
     .bind(("0.0.0.0", port))?
     .run()

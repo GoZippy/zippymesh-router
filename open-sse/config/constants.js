@@ -56,7 +56,7 @@ export const PROVIDERS = {
       "X-Goog-Api-Client": "gl-node/22.17.0"
     },
     // Qwen OAuth configuration
-    clientId: "f0304373b74a44d2b584a3fb70ca9e56", // From CLIProxyAPI
+    clientId: "f0304373b74a44d2b584a3fb70ca9e56",
     tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
     authUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code"
   },
@@ -66,7 +66,7 @@ export const PROVIDERS = {
     headers: {
       "User-Agent": "iFlow-Cli"
     },
-    // iFlow OAuth configuration (from CLIProxyAPI)
+    // iFlow OAuth configuration
     clientId: "10009311001",
     clientSecret: "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
     tokenUrl: "https://iflow.cn/oauth/token",
@@ -91,6 +91,71 @@ export const PROVIDERS = {
       "HTTP-Referer": "https://zippymesh.local",
       "X-Title": "ZippyMesh"
     }
+  },
+  deepseek: {
+    baseUrl: "https://api.deepseek.com/chat/completions",
+    format: "openai",
+  },
+  groq: {
+    baseUrl: "https://api.groq.com/openai/v1/chat/completions",
+    format: "openai",
+  },
+  cerebras: {
+    baseUrl: "https://api.cerebras.ai/v1/chat/completions",
+    format: "openai",
+  },
+  cohere: {
+    // Cohere provides an OpenAI compatibility API at /compatibility/v1
+    baseUrl: "https://api.cohere.ai/compatibility/v1/chat/completions",
+    format: "openai",
+  },
+  kilo: {
+    // Kilo Gateway is OpenAI-compatible at /chat/completions
+    baseUrl: "https://api.kilo.ai/api/gateway/chat/completions",
+    format: "openai",
+    headers: {
+      "X-Title": "ZippyMesh"
+    }
+  },
+  mistral: {
+    baseUrl: "https://api.mistral.ai/v1/chat/completions",
+    format: "openai",
+  },
+  xai: {
+    baseUrl: "https://api.x.ai/v1/chat/completions",
+    format: "openai",
+  },
+  togetherai: {
+    baseUrl: "https://api.together.xyz/v1/chat/completions",
+    format: "openai",
+  },
+  fireworks: {
+    baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions",
+    format: "openai",
+  },
+  anyscale: {
+    baseUrl: "https://api.endpoints.anyscale.com/v1/chat/completions",
+    format: "openai",
+  },
+  perplexity: {
+    baseUrl: "https://api.perplexity.ai/chat/completions",
+    format: "openai",
+  },
+  deepinfra: {
+    baseUrl: "https://api.deepinfra.com/v1/openai/chat/completions",
+    format: "openai",
+  },
+  novita: {
+    baseUrl: "https://api.novita.ai/openai/v1/chat/completions",
+    format: "openai",
+  },
+  ai21: {
+    baseUrl: "https://api.ai21.com/studio/v1/chat/completions",
+    format: "openai",
+  },
+  moonshot: {
+    baseUrl: "https://api.moonshot.ai/v1/chat/completions",
+    format: "openai",
   },
   openai: {
     baseUrl: "https://api.openai.com/v1/chat/completions",
@@ -193,8 +258,8 @@ export const OAUTH_ENDPOINTS = {
     auth: "https://console.anthropic.com/v1/oauth/authorize"
   },
   qwen: {
-    token: "https://chat.qwen.ai/api/v1/oauth2/token", // From CLIProxyAPI
-    auth: "https://chat.qwen.ai/api/v1/oauth2/device/code" // From CLIProxyAPI
+    token: "https://chat.qwen.ai/api/v1/oauth2/token",
+    auth: "https://chat.qwen.ai/api/v1/oauth2/device/code"
   },
   iflow: {
     token: "https://iflow.cn/oauth/token",
@@ -261,14 +326,14 @@ export const DEFAULT_ERROR_MESSAGES = {
   [HTTP_STATUS.GATEWAY_TIMEOUT]: "Gateway timeout"
 };
 
-// Exponential backoff config for rate limits (like CLIProxyAPI)
+// Exponential backoff config for rate limits
 export const BACKOFF_CONFIG = {
   base: 1000,              // 1 second base
   max: 2 * 60 * 1000,      // 2 minutes max
   maxLevel: 15             // Cap backoff level
 };
 
-// Error-based cooldown times (aligned with CLIProxyAPI)
+// Error-based cooldown times
 export const COOLDOWN_MS = {
   unauthorized: 2 * 60 * 1000,       // 401 → 30 min
   paymentRequired: 2 * 60 * 1000,    // 402/403 → 30 min

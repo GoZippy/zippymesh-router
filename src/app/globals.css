@@ -3,11 +3,11 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* macOS-inspired Color Palette with Terracotta Primary */
+/* Zippy Mesh – red gradient palette */
 :root {
-  /* Primary - Warm Coral/Terracotta */
-  --color-primary: #D97757;
-  --color-primary-hover: #C56243;
+  /* Primary – Zippy red (logo-aligned) */
+  --color-primary: #E85C4A;
+  --color-primary-hover: #C93C32;
   
   /* Light theme */
   --color-bg: #FBF9F6;
@@ -18,9 +18,9 @@
   --color-text-main: #383733;
   --color-text-muted: #75736E;
   
-  /* Shadows - subtle macOS style */
+  /* Shadows – Zippy red tint */
   --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.02), 0 4px 12px rgba(0, 0, 0, 0.015);
-  --shadow-warm: 0 2px 12px -2px rgba(217, 119, 87, 0.12);
+  --shadow-warm: 0 2px 12px -2px rgba(232, 92, 74, 0.18);
   --shadow-elevated: 0 12px 28px -4px rgba(60, 50, 45, 0.06);
 }
 
@@ -34,9 +34,9 @@
   --color-text-main: #ECEBE8;
   --color-text-muted: #9E9D99;
   
-  /* Dark shadows - subtle macOS style */
+  /* Dark shadows – Zippy red tint */
   --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-warm: 0 2px 12px -2px rgba(217, 119, 87, 0.15);
+  --shadow-warm: 0 2px 12px -2px rgba(232, 92, 74, 0.2);
   --shadow-elevated: 0 12px 28px -4px rgba(0, 0, 0, 0.3);
 }
 
@@ -87,7 +87,7 @@ body {
 
 /* Selection */
 ::selection {
-  background-color: rgba(217, 119, 87, 0.2);
+  background-color: rgba(232, 92, 74, 0.22);
   color: var(--color-primary);
 }
 
@@ -170,12 +170,12 @@ body {
 
 @keyframes border-glow {
   0%, 100% {
-    box-shadow: 0 0 5px rgba(217, 119, 87, 0.3), 0 0 10px rgba(217, 119, 87, 0.2);
-    border-color: rgba(217, 119, 87, 0.5);
+    box-shadow: 0 0 5px rgba(232, 92, 74, 0.35), 0 0 10px rgba(232, 92, 74, 0.2);
+    border-color: rgba(232, 92, 74, 0.5);
   }
   50% {
-    box-shadow: 0 0 10px rgba(217, 119, 87, 0.5), 0 0 20px rgba(217, 119, 87, 0.3);
-    border-color: rgba(217, 119, 87, 0.8);
+    box-shadow: 0 0 10px rgba(232, 92, 74, 0.5), 0 0 20px rgba(232, 92, 74, 0.3);
+    border-color: rgba(232, 92, 74, 0.8);
   }
 }
 
@@ -194,26 +194,3 @@ body {
   background: rgba(30, 30, 30, 0.72);
 }
 
-/* macOS Traffic Lights */
-.traffic-lights {
-  display: flex;
-  gap: 8px;
-}
-
-.traffic-light {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.traffic-light.red {
-  background: #FF5F56;
-}
-
-.traffic-light.yellow {
-  background: #FFBD2E;
-}
-
-.traffic-light.green {
-  background: #27C93F;
-}

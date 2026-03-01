@@ -1,7 +1,7 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
 import { getEquivalentModels } from "../config/modelEquivalence";
 import { updateProviderConnection, getP2pSubscriptions, getPricingForModel, getNodeIdentity } from "@/lib/localDb.js";
-import { appendRequestLog } from "@/lib/usageDb.js";
+import { appendRequestLog, saveRequestUsage, extractProviderUsageFromHeaders } from "@/lib/usageDb.js";
 import { signPayload, verifyPayload } from "@/lib/security.js";
 import { calculateCostFromTokens } from "@/shared/constants/pricing.js";
 import { errorResponse } from "open-sse/utils/error.js";
@@ -200,6 +200,37 @@ async function _executeOrchestratedChat(params) {
                 latency // Store latency in logs too
             });
 
+            const providerUsage = extractProviderUsageFromHeaders(result.providerHeaders);
+            let ourExpectedCostUsd = 0;
+            try {
+                const pricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
+                if (pricing) {
+                    ourExpectedCostUsd = calculateCostFromTokens(result.usage || {}, pricing);
+                }
+            } catch {
+                // Pricing can be unavailable for passthrough models; keep zero
+            }
+
+            await saveRequestUsage({
+                provider: modelInfo.provider,
+                model: modelInfo.model,
+                connectionId: connection.id,
+                latencyMs: latency,
+                tokens: result.usage || {},
+                providerTokens: {
+                    prompt_tokens: providerUsage.providerPromptTokens || 0,
+                    completion_tokens: providerUsage.providerCompletionTokens || 0,
+                    total_tokens: providerUsage.providerTotalTokens || 0,
+                },
+                ourExpectedCostUsd,
+                providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
+                providerReportedCredits: providerUsage.providerReportedCredits || 0,
+                tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
+                billingWindowKey: connection.metadata?.billingWindowKey || null,
+                usageSource: providerUsage.usageSource || "response_body",
+                status: result.status || 200,
+            });
+
             // P2P Billing Integration
             if (modelInfo.provider === "peer") {
                 try {
@@ -313,6 +344,37 @@ async function _executeBatchChat(params, candidates, batchRule) {
                     status: 200,
                     tokens: result.usage,
                     latency
+                });
+
+                const providerUsage = extractProviderUsageFromHeaders(result.providerHeaders);
+                let ourExpectedCostUsd = 0;
+                try {
+                    const pricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
+                    if (pricing) {
+                        ourExpectedCostUsd = calculateCostFromTokens(result.usage || {}, pricing);
+                    }
+                } catch {
+                    // noop
+                }
+
+                await saveRequestUsage({
+                    provider: modelInfo.provider,
+                    model: modelInfo.model,
+                    connectionId: connection.id,
+                    latencyMs: latency,
+                    tokens: result.usage || {},
+                    providerTokens: {
+                        prompt_tokens: providerUsage.providerPromptTokens || 0,
+                        completion_tokens: providerUsage.providerCompletionTokens || 0,
+                        total_tokens: providerUsage.providerTotalTokens || 0,
+                    },
+                    ourExpectedCostUsd,
+                    providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
+                    providerReportedCredits: providerUsage.providerReportedCredits || 0,
+                    tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
+                    billingWindowKey: connection.metadata?.billingWindowKey || null,
+                    usageSource: providerUsage.usageSource || "response_body",
+                    status: result.status || 200,
                 });
 
                 // P2P Billing
