@@ -191,7 +191,11 @@ export function getSqliteDb() {
   try {
     ensureWalletColumns(sqliteDb);
   } catch (e) {
-    // Ignore if already migrated or table missing
+    // Log warning for unexpected errors, but continue - table may already have the column
+    const message = String(e?.message || "");
+    if (!message.includes("no column named wallet_id") && !message.includes("duplicate column name")) {
+      console.warn("Migration warning: ensureWalletColumns failed:", e.message);
+    }
   }
 
   return sqliteDb;

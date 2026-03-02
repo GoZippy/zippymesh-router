@@ -211,25 +211,30 @@ async function _executeOrchestratedChat(params) {
                 // Pricing can be unavailable for passthrough models; keep zero
             }
 
-            await saveRequestUsage({
-                provider: modelInfo.provider,
-                model: modelInfo.model,
-                connectionId: connection.id,
-                latencyMs: latency,
-                tokens: result.usage || {},
-                providerTokens: {
-                    prompt_tokens: providerUsage.providerPromptTokens || 0,
-                    completion_tokens: providerUsage.providerCompletionTokens || 0,
-                    total_tokens: providerUsage.providerTotalTokens || 0,
-                },
-                ourExpectedCostUsd,
-                providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
-                providerReportedCredits: providerUsage.providerReportedCredits || 0,
-                tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
-                billingWindowKey: connection.metadata?.billingWindowKey || null,
-                usageSource: providerUsage.usageSource || "response_body",
-                status: result.status || 200,
-            });
+            // Save usage tracking - don't let failures affect chat response
+            try {
+                await saveRequestUsage({
+                    provider: modelInfo.provider,
+                    model: modelInfo.model,
+                    connectionId: connection.id,
+                    latencyMs: latency,
+                    tokens: result.usage || {},
+                    providerTokens: {
+                        prompt_tokens: providerUsage.providerPromptTokens || 0,
+                        completion_tokens: providerUsage.providerCompletionTokens || 0,
+                        total_tokens: providerUsage.providerTotalTokens || 0,
+                    },
+                    ourExpectedCostUsd,
+                    providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
+                    providerReportedCredits: providerUsage.providerReportedCredits || 0,
+                    tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
+                    billingWindowKey: connection.metadata?.billingWindowKey || null,
+                    usageSource: providerUsage.usageSource || "response_body",
+                    status: result.status || 200,
+                });
+            } catch (usageErr) {
+                log?.warn?.("ORCHESTRATOR", `Usage tracking failed: ${usageErr.message}`);
+            }
 
             // P2P Billing Integration
             if (modelInfo.provider === "peer") {
@@ -357,25 +362,30 @@ async function _executeBatchChat(params, candidates, batchRule) {
                     // noop
                 }
 
-                await saveRequestUsage({
-                    provider: modelInfo.provider,
-                    model: modelInfo.model,
-                    connectionId: connection.id,
-                    latencyMs: latency,
-                    tokens: result.usage || {},
-                    providerTokens: {
-                        prompt_tokens: providerUsage.providerPromptTokens || 0,
-                        completion_tokens: providerUsage.providerCompletionTokens || 0,
-                        total_tokens: providerUsage.providerTotalTokens || 0,
-                    },
-                    ourExpectedCostUsd,
-                    providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
-                    providerReportedCredits: providerUsage.providerReportedCredits || 0,
-                    tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
-                    billingWindowKey: connection.metadata?.billingWindowKey || null,
-                    usageSource: providerUsage.usageSource || "response_body",
-                    status: result.status || 200,
-                });
+                // Save usage tracking - don't let failures affect batch response
+                try {
+                    await saveRequestUsage({
+                        provider: modelInfo.provider,
+                        model: modelInfo.model,
+                        connectionId: connection.id,
+                        latencyMs: latency,
+                        tokens: result.usage || {},
+                        providerTokens: {
+                            prompt_tokens: providerUsage.providerPromptTokens || 0,
+                            completion_tokens: providerUsage.providerCompletionTokens || 0,
+                            total_tokens: providerUsage.providerTotalTokens || 0,
+                        },
+                        ourExpectedCostUsd,
+                        providerReportedCostUsd: providerUsage.providerReportedCostUsd || 0,
+                        providerReportedCredits: providerUsage.providerReportedCredits || 0,
+                        tierAtRequest: connection.metadata?.tier || connection.providerSpecificData?.tier || null,
+                        billingWindowKey: connection.metadata?.billingWindowKey || null,
+                        usageSource: providerUsage.usageSource || "response_body",
+                        status: result.status || 200,
+                    });
+                } catch (usageErr) {
+                    log?.warn?.("ORCHESTRATOR", `Usage tracking failed: ${usageErr.message}`);
+                }
 
                 // P2P Billing
                 if (modelInfo.provider === "peer") {

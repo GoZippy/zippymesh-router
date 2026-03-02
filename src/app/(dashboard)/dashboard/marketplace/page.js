@@ -17,6 +17,7 @@ export default function MarketplacePage() {
     const [intent, setIntent] = useState("code");
     const [activeView, setActiveView] = useState("registry");
     const [spotPriceFilter, setSpotPriceFilter] = useState("all");
+    const [error, setError] = useState(null);
 
     useEffect(() => {
         fetchModels();
@@ -30,6 +31,7 @@ export default function MarketplacePage() {
 
     const fetchModels = async () => {
         setLoading(true);
+        setError(null);
         try {
             let url = "/api/marketplace/models";
             const params = new URLSearchParams();
@@ -41,8 +43,10 @@ export default function MarketplacePage() {
             const res = await fetch(url);
             const data = await res.json();
             if (res.ok) setModels(data.models || []);
+            else setError(data.error || "Failed to load models");
         } catch (error) {
             console.error("Error fetching marketplace models:", error);
+            setError("Failed to connect to marketplace");
         } finally {
             setLoading(false);
         }
@@ -99,6 +103,18 @@ export default function MarketplacePage() {
                 <h1 className="text-2xl font-bold">Global Model Registry</h1>
                 <p className="text-text-muted">Discover and compare models across all your connected providers.</p>
             </div>
+
+            {error && (
+                <Card className="border-red-500 bg-red-50 dark:bg-red-900/20">
+                    <div className="flex items-center justify-between p-4">
+                        <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                            <span>⚠️</span>
+                            <span>{error}</span>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setError(null)}>✕</Button>
+                    </div>
+                </Card>
+            )}
 
             <Card>
                 <div className="flex items-center gap-2 p-4 border-b border-border">
