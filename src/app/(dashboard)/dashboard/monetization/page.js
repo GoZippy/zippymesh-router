@@ -29,6 +29,7 @@ export default function MonetizationPage() {
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
   const [walkthroughStep, setWalkthroughStep] = useState(0);
   const [selectedToAdd, setSelectedToAdd] = useState(null);
   const [draftOffer, setDraftOffer] = useState({
@@ -38,9 +39,10 @@ export default function MonetizationPage() {
   });
 
   async function fetchData() {
+    setError(null);
     try {
       const [bal, modelsRes] = await Promise.all([
-        getWalletBalance(),
+        getWalletBalance().catch(() => ({ balance: 0, currency: "ZIP" })),
         fetch("/api/mesh/offered-models"),
       ]);
       if (bal) setBalance(bal);
@@ -49,9 +51,12 @@ export default function MonetizationPage() {
         setOffered(d.offered || []);
         setAvailable(d.available || []);
         setRecommendations(d.recommendations || []);
+      } else {
+        setError("Could not load models. Add providers first.");
       }
     } catch (e) {
       console.error("Failed to fetch monetization data", e);
+      setError("Failed to load data.");
     } finally {
       setLoading(false);
     }
@@ -134,7 +139,7 @@ export default function MonetizationPage() {
           <div>
             <p className="text-indigo-100 font-medium">Current Balance</p>
             <h2 className="text-4xl font-bold mt-2">
-              {balance.balance.toFixed(4)} <span className="text-xl opacity-80">{balance.currency}</span>
+              {Number(balance?.balance ?? 0).toFixed(4)} <span className="text-xl opacity-80">{balance?.currency ?? "ZIP"}</span>
             </h2>
           </div>
           <Link href="/dashboard/wallet">
@@ -145,10 +150,16 @@ export default function MonetizationPage() {
         </div>
       </Card>
 
+      {error && (
+        <div className="p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-sm">
+          {error} <Link href="/dashboard/providers" className="underline font-medium">Add Providers</Link>
+        </div>
+      )}
+
       {/* Walkthrough: Add Models to Monetize */}
       <Card className="p-6">
         <h3 className="text-xl font-semibold mb-2">Add Models to the Mesh</h3>
-        <p className="text-gray-500 mb-4">
+        <p className="text-gray-500 dark:text-text-muted mb-4">
           Expose models to the network by name only—your provider stays private. Choose from local runtimes (Ollama, LM Studio), controlled nodes, or OAuth/API providers. Costs shown are from your instance.
         </p>
 
@@ -204,9 +215,10 @@ export default function MonetizationPage() {
             </div>
             {canAdd.length === 0 && (
               <p className="text-sm text-text-muted">
-                All available models are already offered. Add providers in{" "}
-                <Link href="/dashboard/providers" className="text-primary underline">Providers</Link> or{" "}
-                <Link href="/dashboard/network" className="text-primary underline">Network</Link>.
+                {available.length === 0
+                  ? "No models in registry. Add providers in "
+                  : "All available models are already offered. Add more in "}
+                <Link href="/dashboard/providers" className="text-primary underline">Providers</Link>.
               </p>
             )}
           </div>
@@ -304,7 +316,7 @@ export default function MonetizationPage() {
                 <div className="flex items-center gap-2">
                   <Select
                     options={PRICING_STRATEGIES}
-                    value={o.pricingStrategy}
+                    value={o.pricingStrategy || "spot+margin"}
                     onChange={(e) => updateOffer(o.canonicalModelId, { pricingStrategy: e.target.value })}
                     selectClassName="py-1 text-xs"
                   />

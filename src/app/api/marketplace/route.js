@@ -1,18 +1,34 @@
 import { NextResponse } from "next/server";
-import { getP2pOffers, getP2pSubscriptions, createP2pSubscription, updateP2pOffers, getProviderNodes } from "@/lib/localDb";
+import { getP2pSubscriptions, createP2pSubscription } from "@/lib/localDb";
 import { getWalletBalance, getWalletEarnings, getWalletTransactions } from "@/lib/sidecar";
+
+const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
 
 /**
  * GET /api/marketplace
- * Returns available offers from peers and current subscriptions.
+ * Returns mesh peers (real P2P nodes) as offers, plus subscriptions and wallet data.
  */
 export async function GET() {
     try {
-        const nodes = await getProviderNodes();
-        const peerNodes = nodes.filter(n => n.type === "peer" || n.type === "local");
+        let offers = [];
+        try {
+            const peersRes = await fetch(`${SIDECAR_URL}/peers`, { cache: "no-store" });
+            if (peersRes.ok) {
+                const peers = await peersRes.json();
+                offers = (Array.isArray(peers) ? peers : []).map((p) => ({
+                    id: p.id || p.peer_id || p.peerId,
+                    name: p.name || `Peer ${(p.id || p.peer_id || "").slice(0, 8)}`,
+                    latency: p.latency_ms ?? p.latency ?? 0,
+                    tps: p.tps ?? 0,
+                    models: p.models || [],
+                    price_config: p.price_config || {},
+                    service_type: p.service_type || "Compute",
+                }));
+            }
+        } catch (e) {
+            console.warn("Marketplace: could not fetch mesh peers", e.message);
+        }
 
-        // Refresh offers from discovered nodes
-        const offers = await updateP2pOffers(peerNodes);
         const subscriptions = await getP2pSubscriptions();
 
         const [earnings, balanceData, transactions] = await Promise.all([
@@ -23,7 +39,7 @@ export async function GET() {
 
         return NextResponse.json({
             success: true,
-            offers: offers || [],
+            offers: offers,
             subscriptions: subscriptions || [],
             earnings: typeof earnings === 'number' ? earnings : 0,
             balance: typeof balanceData?.balance === 'number' ? balanceData.balance : 0,

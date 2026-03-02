@@ -11,9 +11,10 @@ import { ConfirmModal } from "./Modal";
 
 const navItems = [
   { href: "/dashboard/endpoint", label: "Endpoint", icon: "api" },
-  { href: "/marketplace", label: "Marketplace", icon: "storefront" }, // Added Marketplace
+  { href: "/marketplace", label: "Marketplace", icon: "storefront" },
   { href: "/dashboard/network", label: "Network", icon: "hub" },
-  { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet" }, // Added Wallet
+  { href: "/dashboard/monetization", label: "Monetization", icon: "payments" },
+  { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet" },
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
   { href: "/dashboard/routing", label: "Routing", icon: "alt_route" },
   { href: "/dashboard/pools", label: "Pools", icon: "groups" },

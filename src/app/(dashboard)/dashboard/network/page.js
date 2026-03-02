@@ -260,110 +260,131 @@ export default function NetworkPage() {
                         <div className="flex justify-between items-center">
                             <span className="text-text-muted">Known Models</span>
                             <span className="text-2xl font-bold text-text-main">
-                                {new Set(peers.flatMap(p => p.models.map(m => m.name))).size}
+                                {new Set(peers.flatMap(p => (p.models || []).map(m => m.name))).size}
                             </span>
                         </div>
                     </div>
                 </Card>
             </div>
 
-            {/* Mesh Provider Setup */}
+            {/* Offer Models to Mesh */}
             <Card
-                title="Mesh Provider Setup"
-                subtitle={
-                    <>
-                        Select providers to expose, or use{" "}
-                        <Link href="/dashboard/monetization" className="text-primary underline">Monetization</Link>{" "}
-                        to expose models by name only (provider stays private).
-                    </>
-                }
+                title="Offer Models to Mesh"
+                subtitle="Select providers to expose, or configure per-model pricing in Monetization."
                 icon="share"
             >
                 <div className="space-y-4">
-                    <div>
-                        <div className="text-sm font-medium text-text-muted mb-2">Provider Nodes</div>
-                        <div className="flex flex-wrap gap-2">
-                            {providerNodes.length === 0 ? (
-                                <span className="text-sm text-text-muted">No provider nodes. Add them in Providers.</span>
-                            ) : (
-                                providerNodes.map((n) => (
-                                    <label
-                                        key={n.id}
-                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
-                                            exposedProviders.includes(n.id)
-                                                ? "border-primary bg-primary/10"
-                                                : "border-border hover:border-primary/50"
-                                        }`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={exposedProviders.includes(n.id)}
-                                            onChange={() => toggleExposed(n.id)}
-                                            className="rounded"
-                                        />
-                                        <span className="text-sm font-medium">{n.name || n.prefix}</span>
-                                    </label>
-                                ))
-                            )}
+                    {(providerNodes.length === 0 && localRuntimes.length === 0) ? (
+                        <div className="p-6 rounded-lg border border-dashed border-border text-center">
+                            <p className="text-text-muted mb-2">No providers or local runtimes yet.</p>
+                            <p className="text-sm text-text-muted mb-4">
+                                Add providers (OAuth, API keys) or local runtimes (Ollama, LM Studio) first.
+                            </p>
+                            <div className="flex flex-wrap justify-center gap-2">
+                                <Link href="/dashboard/providers">
+                                    <Button variant="outline" size="sm">Add Providers</Button>
+                                </Link>
+                                <Link href="/dashboard/monetization">
+                                    <Button size="sm">Set Up Monetization</Button>
+                                </Link>
+                            </div>
                         </div>
-                    </div>
-                    <div>
-                        <div className="text-sm font-medium text-text-muted mb-2">Local Runtimes</div>
-                        <div className="flex flex-wrap gap-2">
-                            {localRuntimes.map((r) => (
-                                <label
-                                    key={r.id}
-                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
-                                        exposedProviders.includes(r.id)
-                                            ? "border-primary bg-primary/10"
-                                            : "border-border hover:border-primary/50"
-                                    }`}
-                                >
+                    ) : (
+                        <>
+                            <div className="flex items-center justify-between">
+                                <p className="text-sm text-text-muted">
+                                    Select sources to expose, or configure per-model pricing in Monetization.
+                                </p>
+                                <Link href="/dashboard/monetization">
+                                    <Button variant="outline" size="sm">Monetization →</Button>
+                                </Link>
+                            </div>
+                            <div>
+                                <div className="text-sm font-medium text-text-muted mb-2">Provider Nodes</div>
+                                <div className="flex flex-wrap gap-2">
+                                    {providerNodes.length === 0 ? (
+                                        <span className="text-sm text-text-muted">None. Add in Providers.</span>
+                                    ) : (
+                                        providerNodes.map((n) => (
+                                            <label
+                                                key={n.id}
+                                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+                                                    exposedProviders.includes(n.id)
+                                                        ? "border-primary bg-primary/10"
+                                                        : "border-border hover:border-primary/50"
+                                                }`}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={exposedProviders.includes(n.id)}
+                                                    onChange={() => toggleExposed(n.id)}
+                                                    className="rounded"
+                                                />
+                                                <span className="text-sm font-medium">{n.name || n.prefix}</span>
+                                            </label>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="text-sm font-medium text-text-muted mb-2">Local Runtimes</div>
+                                <div className="flex flex-wrap gap-2">
+                                    {localRuntimes.map((r) => (
+                                        <label
+                                            key={r.id}
+                                            className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition ${
+                                                exposedProviders.includes(r.id)
+                                                    ? "border-primary bg-primary/10"
+                                                    : "border-border hover:border-primary/50"
+                                            }`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={exposedProviders.includes(r.id)}
+                                                onChange={() => toggleExposed(r.id)}
+                                                className="rounded"
+                                            />
+                                            <span className="text-sm font-medium">{r.name}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="mt-4 p-3 bg-sidebar/30 rounded-lg border border-border">
+                                <label className="flex items-center gap-2 cursor-pointer">
                                     <input
                                         type="checkbox"
-                                        checked={exposedProviders.includes(r.id)}
-                                        onChange={() => toggleExposed(r.id)}
-                                        className="rounded"
+                                        checked={serviceRegistry.enabled || false}
+                                        onChange={(e) => setServiceRegistry({ ...serviceRegistry, enabled: e.target.checked })}
                                     />
-                                    <span className="text-sm font-medium">{r.name}</span>
+                                    <span className="text-sm">Register with ZippyCoin ServiceRegistry (when L2 is ready)</span>
                                 </label>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="mt-4 p-3 bg-sidebar/30 rounded-lg border border-border">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={serviceRegistry.enabled || false}
-                                onChange={(e) => setServiceRegistry({ ...serviceRegistry, enabled: e.target.checked })}
-                            />
-                            <span className="text-sm">Register with ZippyCoin ServiceRegistry (when L2 is ready)</span>
-                        </label>
-                        {serviceRegistry.enabled && (
-                            <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-                                <Input
-                                    placeholder="Node ID"
-                                    value={serviceRegistry.node_id || ""}
-                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, node_id: e.target.value })}
-                                />
-                                <Input
-                                    placeholder="Region"
-                                    value={serviceRegistry.region || ""}
-                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, region: e.target.value })}
-                                />
-                                <Input
-                                    placeholder="RPC URL"
-                                    value={serviceRegistry.rpc_url || ""}
-                                    onChange={(e) => setServiceRegistry({ ...serviceRegistry, rpc_url: e.target.value })}
-                                />
+                                {serviceRegistry.enabled && (
+                                    <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
+                                        <Input
+                                            placeholder="Node ID"
+                                            value={serviceRegistry.node_id || ""}
+                                            onChange={(e) => setServiceRegistry({ ...serviceRegistry, node_id: e.target.value })}
+                                        />
+                                        <Input
+                                            placeholder="Region"
+                                            value={serviceRegistry.region || ""}
+                                            onChange={(e) => setServiceRegistry({ ...serviceRegistry, region: e.target.value })}
+                                        />
+                                        <Input
+                                            placeholder="RPC URL"
+                                            value={serviceRegistry.rpc_url || ""}
+                                            onChange={(e) => setServiceRegistry({ ...serviceRegistry, rpc_url: e.target.value })}
+                                        />
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
-                    <div className="flex justify-end">
-                        <Button onClick={handleSaveMeshProviders} disabled={savingMesh} loading={savingMesh}>
-                            Publish to Mesh
-                        </Button>
-                    </div>
+                            <div className="flex justify-end">
+                                <Button onClick={handleSaveMeshProviders} disabled={savingMesh} loading={savingMesh}>
+                                    Publish to Mesh
+                                </Button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </Card>
 
@@ -530,7 +551,7 @@ function TableRow({ peer }) {
             </td>
             <td className="px-6 py-4">
                 <div className="flex flex-wrap gap-1">
-                    {peer.models.map((m) => (
+                    {(peer.models || []).map((m) => (
                         <Badge key={m.name} variant="secondary" size="sm">
                             {m.name}
                         </Badge>

@@ -4,6 +4,7 @@ import { cn } from "@/shared/utils/cn";
 
 const variants = {
   default: "bg-black/5 dark:bg-white/10 text-text-muted",
+  secondary: "bg-black/5 dark:bg-white/10 text-text-muted",
   primary: "bg-primary/10 text-primary",
   success: "bg-green-500/10 text-green-600 dark:text-green-400",
   warning: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
