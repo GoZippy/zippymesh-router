@@ -1,14 +1,31 @@
 import { RoutingEngine } from "@/lib/routing/engine.js";
-import { getEquivalentModels } from "../config/modelEquivalence";
-import { updateProviderConnection, getP2pSubscriptions, getPricingForModel, getNodeIdentity } from "@/lib/localDb.js";
+import { getEquivalentModels, getSuggestedAlternatives } from "../config/modelEquivalence";
+import { updateProviderConnection, getP2pSubscriptions, getPricingForModel, getNodeIdentity, addRateLimitSuggestion, getSettings } from "@/lib/localDb.js";
 import { appendRequestLog, saveRequestUsage, extractProviderUsageFromHeaders } from "@/lib/usageDb.js";
 import { signPayload, verifyPayload } from "@/lib/security.js";
 import { calculateCostFromTokens } from "@/shared/constants/pricing.js";
 import { errorResponse } from "open-sse/utils/error.js";
-import { queueManager } from "@/lib/routing/queueManager.js"; // Added queueManager
+import { queueManager } from "@/lib/routing/queueManager.js";
+import { normalizeAlternativesToClientFormat } from "@/lib/alternativesFormat.js";
+import { saveRoutingMemorySuccess } from "@/lib/routingMemory.js";
+import { detectMultimodal } from "@/lib/multimodalDetect.js";
 
 // Instantiate RoutingEngine (Singleton-like)
 const routingEngine = new RoutingEngine();
+
+// Settings cache to avoid dynamic import on every request
+let cachedSettings = null;
+let settingsTimestamp = 0;
+const SETTINGS_CACHE_TTL_MS = 5000; // 5 seconds
+
+async function getCachedSettings() {
+  const now = Date.now();
+  if (!cachedSettings || now - settingsTimestamp > SETTINGS_CACHE_TTL_MS) {
+    cachedSettings = await getSettings();
+    settingsTimestamp = now;
+  }
+  return cachedSettings;
+}
 
 /**
  * Orchestrator Service
@@ -22,14 +39,19 @@ const routingEngine = new RoutingEngine();
  * @returns {Promise<Object[]>} Sorted list of connection candidates
  */
 export async function findBestCandidates(requestedModel, context = {}) {
-    const equivalentModels = getEquivalentModels(requestedModel);
+    const { enableCrossProviderFailover } = context;
+    const equivalentModels = getEquivalentModels(requestedModel, { enableCrossProviderFailover });
 
     // Use Routing Engine to find and rank candidates
     const routes = await routingEngine.findRoute({
         model: requestedModel,
         equivalentModels: equivalentModels,
-        estimatedTokens: context.estimatedTokens || 100, // Default estimate
-        userGroup: context.userGroup || "default"
+        estimatedTokens: context.estimatedTokens || 100,
+        userGroup: context.userGroup || "default",
+        intent: context.intent || null,
+        clientId: context.clientId ?? null,
+        deviceId: context.deviceId ?? null,
+        preferLocalForSimpleTasks: context.preferLocalForSimpleTasks !== false
     });
 
     // Map back to format expected by orchestrator loop
@@ -43,7 +65,7 @@ export async function findBestCandidates(requestedModel, context = {}) {
  * Orchestrate a chat request across multiple candidate accounts
  */
 export async function handleOrchestratedChat(params) {
-    const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent } = params;
+    const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent, clientId, deviceId } = params;
 
     // Wrap in Queue
     return await queueManager.enqueue(async () => {
@@ -58,7 +80,7 @@ export async function handleOrchestratedChat(params) {
  * Internal execution after queueing
  */
 async function _executeOrchestratedChat(params) {
-    const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent } = params;
+    const { body, modelStr, handleChatCore, log, clientRawRequest, userAgent, clientId, deviceId } = params;
 
     // Extract Context for Routing
     let estimatedTokens = 100;
@@ -70,10 +92,18 @@ async function _executeOrchestratedChat(params) {
         estimatedTokens = Math.max(10, Math.ceil(typeof body.prompt === 'string' ? body.prompt.length / 4 : JSON.stringify(body.prompt).length / 4));
     }
 
+    const settings = await getCachedSettings();
+    const { hasImage, hasAudio } = detectMultimodal(body);
     const routingContext = {
         estimatedTokens,
         intent: body.intent || params.intent || null,
-        userGroup: params.user?.group || "default"
+        userGroup: params.user?.group || "default",
+        clientId: params.clientId ?? null,
+        deviceId: params.deviceId ?? null,
+        hasImage: !!hasImage,
+        hasAudio: !!hasAudio,
+        enableCrossProviderFailover: settings.enableCrossProviderFailover !== false,
+        preferLocalForSimpleTasks: settings.preferLocalForSimpleTasks !== false
     };
 
     const candidates = await findBestCandidates(modelStr, routingContext);
@@ -129,6 +159,7 @@ async function _executeOrchestratedChat(params) {
 
     let lastError = null;
     let lastStatus = 503;
+    let lastRetryAfterMs = null;
 
     for (const candidate of finalCandidates) {
         const { connection, modelInfo } = candidate;
@@ -174,6 +205,11 @@ async function _executeOrchestratedChat(params) {
             }
         });
 
+        // Client errors (4xx) are terminal; do not failover
+        if (result.status >= 400 && result.status < 500) {
+            return result.response ?? errorResponse(result.status, result.error || "Bad request");
+        }
+
         if (result.success) {
             const latency = Date.now() - startTime;
             log?.info?.("ORCHESTRATOR", `Success via ${modelInfo.provider}/${modelInfo.model} in ${latency}ms`);
@@ -199,6 +235,18 @@ async function _executeOrchestratedChat(params) {
                 tokens: result.usage,
                 latency // Store latency in logs too
             });
+
+            try {
+                const settings = await getSettings();
+                if (settings?.enableRoutingMemory) {
+                    saveRoutingMemorySuccess({
+                        provider: modelInfo.provider,
+                        model: modelInfo.model,
+                        intent: body?.intent || params?.intent || null,
+                        clientId: params?.clientId || null
+                    });
+                }
+            } catch (_) { /* optional */ }
 
             const providerUsage = extractProviderUsageFromHeaders(result.providerHeaders);
             let ourExpectedCostUsd = 0;
@@ -263,16 +311,33 @@ async function _executeOrchestratedChat(params) {
 
         // Handle failure
         if (params.callbacks?.onFailure) {
-            await params.callbacks.onFailure(connection.id, result.status, result.error, modelInfo.provider);
+            await params.callbacks.onFailure(connection.id, result.status, result.error, modelInfo.provider, result.retryAfterMs);
         }
 
         log?.warn?.("ORCHESTRATOR", `Failover from account ${accountId}... status=${result.status}`);
         lastError = result.error;
         lastStatus = result.status;
+        if (result.retryAfterMs != null) lastRetryAfterMs = result.retryAfterMs;
     }
 
     await appendRequestLog({ model: modelStr, status: lastStatus });
-    return errorResponse(lastStatus, lastError || "All candidates failed");
+    const baseMsg = lastError || "All candidates failed";
+    if (lastStatus === 429) {
+      const rawAlternatives = getSuggestedAlternatives(modelStr);
+      const alternatives = normalizeAlternativesToClientFormat(rawAlternatives);
+      try {
+        await addRateLimitSuggestion(modelStr, rawAlternatives);
+      } catch (e) {
+        log?.warn?.("ORCHESTRATOR", `Failed to save rate limit suggestion: ${e.message}`);
+      }
+      const msg = `${baseMsg} Router tried other providers; consider adding more models or checking Dashboard → Request Logs.`;
+      return errorResponse(lastStatus, msg, { alternatives, retryAfterMs: lastRetryAfterMs ?? undefined });
+    }
+    // 400 (e.g. wrong format) or other: we already tried next candidate; mention failover
+    const hint = lastStatus === 400
+      ? " (Router tried equivalent providers; check Request Logs for which provider returned 400.)"
+      : "";
+    return errorResponse(lastStatus, baseMsg + hint);
 }
 
 /**
