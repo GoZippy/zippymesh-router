@@ -25,6 +25,10 @@ cloud/*
 .DS_Store
 *.pem
 
+# local / workstation only — never ship to public
+.voidspec/
+.vscode/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
@@ -49,6 +53,10 @@ source/*
 .cursor/*
 docs/*
 !docs/ARCHITECTURE.md
+!docs/REPO_ROLES.md
+!docs/OPEN_CORE_MANIFEST.md
+!docs/RELEASE.md
+!docs/DISTRIBUTION_PLAN.md
 test/*
 bin/*
 open-sse/test/*
