@@ -8,11 +8,13 @@ const nextConfig = {
     '*': [
       '**/*/AppData/**',
       '**/AppData/**',
-      '**/.config/**'
+      '**/.config/**',
+      '**/AOMEI*/**',
+      '**/Roaming/AOMEI*/**',
     ],
   },
   outputFileTracingRoot: process.cwd(),
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev }) => {
     // Ignore fs/path modules in browser bundle
     if (!isServer) {
       config.resolve.fallback = {
@@ -21,6 +23,10 @@ const nextConfig = {
         path: false,
       };
     }
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: ['**/node_modules/**', '**/.next/**', '**/AppData/**', '**/AOMEI*/**'],
+    };
     return config;
   },
   async rewrites() {

@@ -4,9 +4,10 @@ import { getPricing } from "@/lib/localDb.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
 import { getProviderSource } from "@/shared/constants/pricing.js";
 
+/** Convert to USD per 1M tokens. Pricing stores $/1M directly. */
 function asUsdPerM(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? number * 1000 : 0;
+  return Number.isFinite(number) ? number : 0;
 }
 
 function scenarioCost(inputPerMUsd, outputPerMUsd, inputWeight = 1, outputWeight = 0.5) {

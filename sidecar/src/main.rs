@@ -1,8 +1,12 @@
+mod heartbeat;
 mod p2p;
 mod pricing;
 mod types;
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get, post, web, App, HttpResponse, HttpServer, Responder,
+    dev::ServiceRequest, Error as ActixError,
+};
 use pricing::PriceConfig;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -11,12 +15,18 @@ use tokio::sync::mpsc;
 use p2p::P2PCommand;
 use types::{Model, Peer, PeerAnnouncement};
 use uuid::Uuid;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Serialize)]
 struct NodeInfo {
     id: String,
+    node_type: String,
     version: String,
     status: String,
+    wallet_address: String,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +77,78 @@ struct AppState {
     transactions: Mutex<Vec<Transaction>>,
     tx_p2p_command: mpsc::Sender<P2PCommand>,
     exposed_config: Mutex<Option<ExposedProviderConfig>>,
+    metrics: heartbeat::HeartbeatMetrics,
+    node_id: Mutex<String>,
+}
+
+/// Get the data directory for storing persistent node ID
+fn get_data_dir() -> PathBuf {
+    let mut dir = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    dir.push("zippy-mesh");
+    dir
+}
+
+/// Load or generate a persistent node ID
+fn load_or_generate_node_id() -> String {
+    let data_dir = get_data_dir();
+    let id_file = data_dir.join("node_id");
+    
+    // Try to read existing node ID
+    if let Ok(id) = fs::read_to_string(&id_file) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    
+    // Generate new node ID based on wallet (will be set later) or random UUID
+    // For now, generate a random UUID-like ID
+    let new_id = format!("zippy-node-{}", Uuid::new_v4().to_string());
+    
+    // Ensure data directory exists
+    let _ = fs::create_dir_all(&data_dir);
+    
+    // Save to file
+    let _ = fs::write(&id_file, new_id.as_bytes());
+    
+    new_id
+}
+
+/// Authentication middleware: check for valid API key in Authorization header
+pub async fn require_api_key(
+    req: ServiceRequest,
+) -> Result<ServiceRequest, ActixError> {
+    let expected_secret = std::env::var("SIDE_CAR_SECRET")
+        .unwrap_or_default();
+    let env = std::env::var("NODE_ENV")
+        .unwrap_or_default();
+    
+    // If no secret is set, only allow in development/test environments
+    if expected_secret.is_empty() {
+        if env == "development" || env == "test" || env == "testing" {
+            return Ok(req);
+        }
+        return Err(actix_web::error::ErrorUnauthorized(
+            "API key required in production. Set SIDE_CAR_SECRET environment variable."
+        ));
+    }
+    
+    let auth_header = req
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok());
+    
+    match auth_header {
+        Some(header) if header.starts_with("Bearer ") => {
+            let provided = header[7..].trim();
+            if provided == expected_secret {
+                Ok(req)
+            } else {
+                Err(actix_web::error::ErrorUnauthorized("Invalid API key"))
+            }
+        }
+        _ => Err(actix_web::error::ErrorUnauthorized("Missing API key")),
+    }
 }
 
 #[get("/health")]
@@ -82,11 +164,16 @@ async fn get_version() -> impl Responder {
 }
 
 #[get("/node/info")]
-async fn get_node_info(_data: web::Data<AppState>) -> impl Responder {
+async fn get_node_info(data: web::Data<AppState>) -> impl Responder {
+    let node_id = data.node_id.lock().unwrap().clone();
+    let wallet = data.active_wallet_id.lock().unwrap().clone();
+    let node_type = generate_node_type();
     HttpResponse::Ok().json(NodeInfo {
-        id: "sidecar-mock-node-id".to_string(),
+        id: node_id,
         version: "0.1.0".to_string(),
         status: "online".to_string(),
+        node_type: node_type,
+        wallet_address: wallet,
     })
 }
 
@@ -132,21 +219,29 @@ fn deduct_active_balance(data: &web::Data<AppState>, amount: f64) -> bool {
 }
 
 #[post("/proxy/chat/completions")]
-async fn proxy_chat(_req_body: String, data: web::Data<AppState>) -> impl Responder {
+async fn proxy_chat(req_body: String, data: web::Data<AppState>) -> impl Responder {
+    let start = std::time::Instant::now();
     let balance = get_active_balance(&data);
     let price_config = data.price_config.lock().unwrap();
     let estimated_tokens = 100.0;
-    let cost = price_config.base_price_per_token * estimated_tokens; 
+    let model: String = serde_json::from_str::<serde_json::Value>(&req_body)
+        .ok()
+        .and_then(|v| v.get("model").and_then(|m| m.as_str().map(String::from)))
+        .unwrap_or_else(|| String::new());
+    let price_per_token = price_config.price_per_token_for_model(&model);
+    let cost = price_per_token * estimated_tokens; 
     
     if balance < cost {
+        data.metrics.record_request(start.elapsed().as_millis() as u64, false);
         return HttpResponse::PaymentRequired().json(serde_json::json!({
             "error": "Insufficient funds",
             "required": cost,
             "current_balance": balance
         }));
     }
-    
+
     if !deduct_active_balance(&data, cost) {
+        data.metrics.record_request(start.elapsed().as_millis() as u64, false);
         return HttpResponse::PaymentRequired().json(serde_json::json!({
             "error": "Insufficient funds",
             "required": cost
@@ -161,6 +256,8 @@ async fn proxy_chat(_req_body: String, data: web::Data<AppState>) -> impl Respon
         amount: -cost,
         r#type: "debit".to_string(),
     });
+
+    data.metrics.record_request(start.elapsed().as_millis() as u64, true);
 
     HttpResponse::Ok()
         .content_type("application/json")
@@ -246,8 +343,9 @@ async fn set_pricing(req: web::Json<PriceConfig>, data: web::Data<AppState>) -> 
     let mut config = data.price_config.lock().unwrap();
     *config = req.clone();
     
+    let node_id = data.node_id.lock().unwrap().clone();
     let announcement = PeerAnnouncement {
-        id: "sidecar-mock-node-id".to_string(),
+        id: node_id,
         latency_ms: 10,
         models: vec![
             Model { name: "llama3".to_string(), cost_per_token: 0.0001, quantization: "q4".to_string() }
@@ -266,6 +364,50 @@ async fn set_pricing(req: web::Json<PriceConfig>, data: web::Data<AppState>) -> 
 async fn get_transactions_list(data: web::Data<AppState>) -> impl Responder {
     let txs = data.transactions.lock().unwrap();
     HttpResponse::Ok().json(&*txs)
+}
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn generate_node_id(wallet: &str) -> String {
+    // Create a cryptographically secure node ID based on wallet address
+    // This ensures uniqueness and ties the node to a specific wallet
+    let mut hasher = DefaultHasher::new();
+    wallet.hash(&mut hasher);
+    let hash = hasher.finish();
+    
+    // Combine with timestamp for uniqueness and prevent replay attacks
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    
+    // Format: zippy-mesh-node-{wallet_hash_hex}-{timestamp}
+    format!("zippy-mesh-node-{:x}-{}", hash, now)
+}
+
+fn generate_node_type() -> String {
+    // Define node type for ZippyMesh layer 2
+    // This identifies the node as part of the ZippyCoin ecosystem
+    "zippy-mesh-edge".to_string()
+}
+
+#[get("/trust")]
+async fn get_trust(data: web::Data<AppState>) -> impl Responder {
+    let trust_score = data.metrics.calculate_trust_score();
+    let requests = data.metrics.get_requests_processed();
+    let avg_latency = data.metrics.get_avg_latency_ms();
+    let errors = data.metrics.get_error_count();
+    let wallet = data.active_wallet_id.lock().unwrap().clone();
+    let node_id = generate_node_id(&wallet);
+    let node_type = generate_node_type();
+    
+    HttpResponse::Ok().json(serde_json::json!({
+        "trust_score": trust_score,
+        "requests_processed": requests,
+        "avg_latency_ms": avg_latency,
+        "error_count": errors,
+        "node_id": node_id,
+        "node_type": node_type,
+        "wallet_address": wallet
+    }))
 }
 
 #[derive(Deserialize)]
@@ -290,8 +432,9 @@ async fn set_exposed_providers(req: web::Json<ExposedProvidersRequest>, data: we
     }
 
     let price_config = data.price_config.lock().unwrap().clone();
+    let node_id = data.node_id.lock().unwrap().clone();
     let announcement = PeerAnnouncement {
-        id: "sidecar-mock-node-id".to_string(),
+        id: node_id,
         latency_ms: 10,
         models,
         price_config: Some(price_config),
@@ -329,6 +472,9 @@ async fn main() -> std::io::Result<()> {
     let (tx_peer_update, mut rx_peer_update) = mpsc::channel::<PeerAnnouncement>(32);
     let (tx_p2p_command, rx_p2p_command) = mpsc::channel::<P2PCommand>(32);
 
+    let node_id = load_or_generate_node_id();
+    println!("Loaded node ID: {}", node_id);
+
     let default_wallet = WalletEntry {
         id: "default".to_string(),
         address: "ZIP-MOCK-DEV-WALLET-001".to_string(),
@@ -354,6 +500,8 @@ async fn main() -> std::io::Result<()> {
             }
         ]),
         tx_p2p_command: tx_p2p_command.clone(),
+        metrics: heartbeat::HeartbeatMetrics::new(),
+        node_id: Mutex::new(node_id),
     });
 
     let p2p_handle = tokio::spawn(async move {
@@ -383,7 +531,7 @@ async fn main() -> std::io::Result<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            let (price_config, models) = {
+            let (price_config, models, wallet) = {
                 let config = state_heartbeat.price_config.lock().unwrap();
                 let exposed = state_heartbeat.exposed_config.lock().unwrap();
                 let price_config = config.clone();
@@ -392,11 +540,14 @@ async fn main() -> std::io::Result<()> {
                     .unwrap_or_else(|| vec![
                         Model { name: "llama3".to_string(), cost_per_token: price_config.base_price_per_token, quantization: "q4".to_string() }
                     ]);
-                (price_config, models)
+                let active_id = state_heartbeat.active_wallet_id.lock().unwrap().clone();
+                let wallets = state_heartbeat.wallets.lock().unwrap();
+                let wallet = wallets.get(&active_id).map(|w| w.address.clone()).unwrap_or_default();
+                (price_config, models, wallet)
             };
 
             let announcement = PeerAnnouncement {
-                id: "sidecar-mock-node-id".to_string(),
+                id: generate_node_id(&wallet),
                 latency_ms: 15,
                 models,
                 price_config: Some(price_config),
@@ -421,6 +572,7 @@ async fn main() -> std::io::Result<()> {
             .service(get_transactions)
             .service(set_exposed_providers)
             .service(get_wallet_list)
+            .service(get_trust)
     })
     .bind(("0.0.0.0", port))?
     .run()

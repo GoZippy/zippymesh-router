@@ -10,10 +10,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=20128
-      - JWT_SECRET=${JWT_SECRET:-zippy_mesh_secret_key_change_me}
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:-123456}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?INITIAL_PASSWORD must be set}
       - DATA_DIR=/app/data
-      - SIDE_CAR_URL=http://zippy-sidecar:8080 # Future integration point
+      - SIDE_CAR_URL=http://zippy-sidecar:9480
     volumes:
       - zippy-data:/app/data
     networks:
@@ -26,7 +26,7 @@ services:
     container_name: zippy-sidecar
     restart: unless-stopped
     ports:
-      - "8081:8081"
+      - "9480:9480"
     networks:
       - zippy-net
     volumes:

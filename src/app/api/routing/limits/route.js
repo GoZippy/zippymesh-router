@@ -1,25 +1,38 @@
 import { NextResponse } from "next/server";
-import { getRateLimitConfigs, updateRateLimitConfig, getProviderConnections } from "@/models";
+import { getRateLimitConfigs, updateRateLimitConfig, getRateLimitState, getProviderConnections } from "@/lib/localDb.js";
 
-// GET /api/routing/limits - Get all rate limit configs
+// GET /api/routing/limits - Get rate limit configs, state, and connection cooldowns
 export async function GET() {
     try {
-        const [configs, connections] = await Promise.all([
+        const [configs, state, connections] = await Promise.all([
             getRateLimitConfigs(),
-            getProviderConnections()
+            getRateLimitState(),
+            getProviderConnections({ isActive: true })
         ]);
 
         // Build a complete list of configs, ensuring every active provider has at least an empty entry
         const allConfigs = { ...configs };
-        const activeConnections = connections.filter(c => c.isActive !== false);
-
-        for (const conn of activeConnections) {
+        for (const conn of connections) {
             if (!allConfigs[conn.provider]) {
                 allConfigs[conn.provider] = { buckets: [] };
             }
         }
 
-        return NextResponse.json({ configs: allConfigs });
+        // Connection cooldowns (rateLimitedUntil)
+        const cooldowns = connections
+            .filter(c => c.rateLimitedUntil && new Date(c.rateLimitedUntil).getTime() > Date.now())
+            .map(c => ({
+                connectionId: c.id,
+                provider: c.provider,
+                rateLimitedUntil: c.rateLimitedUntil,
+                lastError: c.lastError
+            }));
+
+        return NextResponse.json({
+            configs: allConfigs,
+            state: state?.windows || {},
+            cooldowns
+        });
     } catch (error) {
         console.log("Error fetching rate limits:", error);
         return NextResponse.json({ error: "Failed to fetch rate limits" }, { status: 500 });

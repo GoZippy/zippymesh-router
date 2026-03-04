@@ -477,6 +477,7 @@ export default function NetworkPage() {
                                 <tr>
                                     <th className="px-6 py-3">Peer ID</th>
                                     <th className="px-6 py-3">Service</th>
+                                    <th className="px-6 py-3">Trust</th>
                                     <th className="px-6 py-3">Pricing (ZIP/Token)</th>
                                     <th className="px-6 py-3">Models Offered</th>
                                     <th className="px-6 py-3">Latency</th>
@@ -531,13 +532,31 @@ export default function NetworkPage() {
 }
 
 function TableRow({ peer }) {
+    const [trust, setTrust] = useState(null);
+    const peerId = peer.id || peer.peer_id;
+
+    useEffect(() => {
+        if (!peerId) return;
+        fetch(`/api/mesh/trust/${encodeURIComponent(peerId)}`)
+            .then((r) => r.ok ? r.json() : null)
+            .then((d) => d?.trust_score != null && setTrust(d.trust_score))
+            .catch(() => {});
+    }, [peerId]);
+
     return (
         <tr className="border-b border-black/5 dark:border-white/5 last:border-0 hover:bg-black/5 dark:hover:bg-white/5 transition">
             <td className="px-6 py-4 font-mono text-xs text-text-muted">
-                {(peer.id || peer.peer_id || "").substring(0, 16)}...
+                {(peerId || "").substring(0, 16)}...
             </td>
             <td className="px-6 py-4">
                 <Badge variant="outline">{peer.service_type || "Compute"}</Badge>
+            </td>
+            <td className="px-6 py-4">
+                {trust != null ? (
+                    <span className="font-semibold text-primary">{trust}</span>
+                ) : (
+                    <span className="text-text-muted">—</span>
+                )}
             </td>
             <td className="px-6 py-4">
                 <div className="flex flex-col text-xs">

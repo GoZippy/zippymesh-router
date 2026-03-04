@@ -66,7 +66,7 @@ export default function AnalyticsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card title="Latency Comparison (ms)" subtitle="Lower is better" icon="speed">
                     <div className="h-64 mt-4 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 256 }}>
                             <BarChart data={stats.performance} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                                 <XAxis dataKey="name" stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
                                 <YAxis stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
@@ -86,7 +86,7 @@ export default function AnalyticsPage() {
 
                 <Card title="Cost Index (ZIPc/1M)" subtitle="Economic efficiency" icon="payments">
                     <div className="h-64 mt-4 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 256 }}>
                             <BarChart data={stats.performance} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                                 <XAxis dataKey="name" stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />
                                 <YAxis stroke="var(--color-text-muted)" tick={{ fill: 'var(--color-text-muted)' }} fontSize={12} axisLine={false} tickLine={false} />

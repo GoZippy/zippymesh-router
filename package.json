@@ -1,15 +1,19 @@
 {
   "name": "@zippy/mesh",
-  "version": "1.0.0",
+  "version": "0.2.0-alpha",
   "description": "Zippy Mesh - Standalone AI Routing & P2P Mesh",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev -p 20128 --webpack",
-    "build": "next build --webpack",
+    "build": "node scripts/build.cjs",
+    "build:next": "next build --webpack",
     "start": "next start -p 20128",
     "tauri": "tauri",
     "test": "node tests/routerKey.test.js",
-    "test:providers": "node tests/providers.test.js && node tests/providers.functional.test.js && node tests/kilo.routing.test.js && node tests/provider.sync.test.js && node tests/provider.adapters.test.js"
+    "test:providers": "node tests/providers.test.js && node tests/providers.functional.test.js && node tests/kilo.routing.test.js && node tests/provider.sync.test.js && node tests/provider.adapters.test.js",
+    "cli": "node scripts/zippy-cli.mjs",
+    "setup": "node scripts/setup-env.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -36,7 +40,8 @@
     "socks-proxy-agent": "^8.0.5",
     "undici": "^7.19.2",
     "uuid": "^13.0.0",
-    "zustand": "^5.0.10"
+    "zustand": "^5.0.10",
+    "open-sse": "file:./open-sse"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",

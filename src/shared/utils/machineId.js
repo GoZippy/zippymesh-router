@@ -1,4 +1,5 @@
 import { machineIdSync } from 'node-machine-id';
+import crypto from 'crypto';
 
 /**
  * Get consistent machine ID using node-machine-id with salt
@@ -13,7 +14,6 @@ export async function getConsistentMachineId(salt = null) {
   try {
     const rawMachineId = machineIdSync();
     // Create consistent ID using salt
-    const crypto = await import('crypto');
     const hashedMachineId = crypto.createHash('sha256').update(rawMachineId + saltValue).digest('hex');
     // Return only first 16 characters for brevity
     return hashedMachineId.substring(0, 16);

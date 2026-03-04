@@ -4,4 +4,7 @@ target
 .next
 .git
 .env
+.env.*
+data/
+*.db
 npm-debug.log

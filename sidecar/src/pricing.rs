@@ -1,10 +1,25 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ModelPriceOverride {
+    /// Price per token (USD) for this model
+    pub base: f64,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PriceConfig {
     pub base_price_per_token: f64,
     pub min_price_per_token: f64,
     pub congestion_multiplier: f64,
+    #[serde(default)]
+    pub pricing_mode: Option<String>,
+    #[serde(default)]
+    pub margin_percent: Option<f64>,
+    #[serde(default)]
+    pub zip_usd_rate: Option<f64>,
+    #[serde(default)]
+    pub model_overrides: Option<HashMap<String, ModelPriceOverride>>,
 }
 
 impl Default for PriceConfig {
@@ -13,7 +28,32 @@ impl Default for PriceConfig {
             base_price_per_token: 0.0001,
             min_price_per_token: 0.00005,
             congestion_multiplier: 1.0,
+            pricing_mode: None,
+            margin_percent: None,
+            zip_usd_rate: None,
+            model_overrides: None,
         }
+    }
+}
+
+impl PriceConfig {
+    /// Price per token for a given model: model_overrides lookup or base.
+    pub fn price_per_token_for_model(&self, model: &str) -> f64 {
+        if let Some(ref overrides) = self.model_overrides {
+            if let Some(mo) = overrides.get(model) {
+                return mo.base;
+            }
+            let canonical = model
+                .split('/')
+                .last()
+                .unwrap_or(model)
+                .to_lowercase()
+                .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
+            if let Some(mo) = overrides.get(&canonical) {
+                return mo.base;
+            }
+        }
+        self.base_price_per_token
     }
 }
 

@@ -25,15 +25,27 @@ export function buildErrorBody(statusCode, message) {
  * Create error Response object (for non-streaming)
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
+ * @param {object} [options] - Optional: { alternatives?: string[], retryAfterMs?: number }
  * @returns {Response} HTTP Response object
  */
-export function errorResponse(statusCode, message) {
-  return new Response(JSON.stringify(buildErrorBody(statusCode, message)), {
+export function errorResponse(statusCode, message, options = {}) {
+  const body = buildErrorBody(statusCode, message);
+  if (options.alternatives && Array.isArray(options.alternatives) && options.alternatives.length > 0) {
+    body.error.alternatives = options.alternatives;
+    body.error.hint = "Try one of these models in your playbook or pool, or add them to enable auto-failover.";
+  }
+  const headers = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*"
+  };
+  if (statusCode === 429 && options.retryAfterMs != null && options.retryAfterMs > 0) {
+    const retryAfterSec = Math.ceil(options.retryAfterMs / 1000);
+    headers["Retry-After"] = String(retryAfterSec);
+    body.error.retry_after_seconds = retryAfterSec;
+  }
+  return new Response(JSON.stringify(body), {
     status: statusCode,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*"
-    }
+    headers
   });
 }
 
@@ -111,9 +123,16 @@ export async function parseUpstreamError(response, provider = null) {
 
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
   
-  // Parse Antigravity-specific retry time from error message
-  if (provider === "antigravity" && response.status === 429) {
-    retryAfterMs = parseAntigravityRetryTime(messageStr);
+  // Parse retry time: Retry-After header (generic) or Antigravity message
+  if (response.status === 429) {
+    const ra = response.headers?.get?.("retry-after") || response.headers?.get?.("Retry-After");
+    if (ra) {
+      const sec = parseInt(ra, 10);
+      if (!isNaN(sec)) retryAfterMs = sec * 1000;
+    }
+    if (!retryAfterMs && provider === "antigravity") {
+      retryAfterMs = parseAntigravityRetryTime(messageStr);
+    }
   }
 
   return {

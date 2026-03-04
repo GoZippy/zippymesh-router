@@ -100,8 +100,8 @@ export default function MarketplacePage() {
     return (
         <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
-                <h1 className="text-2xl font-bold">Global Model Registry</h1>
-                <p className="text-text-muted">Discover and compare models across all your connected providers.</p>
+                <h1 className="text-2xl font-bold">Model Marketplace</h1>
+                <p className="text-text-muted">Spot pricing (USD per 1M tokens) across providers. Live data when connected; official defaults otherwise.</p>
             </div>
 
             {error && (
@@ -125,7 +125,7 @@ export default function MarketplacePage() {
                         Cost Comparison
                     </Button>
                     <Button variant={activeView === "spot" ? "primary" : "secondary"} size="sm" onClick={() => setActiveView("spot")}>
-                        Spot Price Matrix
+                        Spot Prices
                     </Button>
                     <Button variant={activeView === "intelligence" ? "primary" : "secondary"} size="sm" onClick={() => setActiveView("intelligence")}>
                         Intent Intelligence
@@ -163,7 +163,7 @@ export default function MarketplacePage() {
                                 <th className="px-6 py-4">Model</th>
                                 <th className="px-6 py-4">Provider</th>
                                 <th className="px-6 py-4">Context</th>
-                                <th className="px-6 py-4">Pricing (1M Tokens)</th>
+                                <th className="px-6 py-4">Pricing ($/1M tokens)</th>
                                 <th className="px-6 py-4">Latency</th>
                                 <th className="px-6 py-4">Status</th>
                             </tr>
@@ -202,7 +202,7 @@ export default function MarketplacePage() {
                                                         width={16}
                                                         height={16}
                                                         className="object-contain"
-                                                        onError={(e) => e.target.style.display = 'none'}
+                                                        onError={(e) => { const t = e?.target; if (t) t.style.display = 'none'; }}
                                                     />
                                                 </div>
                                                 <span className="text-sm capitalize">{model.provider}</span>
@@ -215,8 +215,8 @@ export default function MarketplacePage() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col text-xs">
-                                                <span className="text-text-muted">In: <span className="text-text font-medium">${(model.inputPrice * 1000).toFixed(2)}</span></span>
-                                                <span className="text-text-muted">Out: <span className="text-text font-medium">${(model.outputPrice * 1000).toFixed(2)}</span></span>
+                                                <span className="text-text-muted">In: <span className="text-text font-medium">${Number(model.inputPrice || 0).toFixed(2)}</span>/1M</span>
+                                                <span className="text-text-muted">Out: <span className="text-text font-medium">${Number(model.outputPrice || 0).toFixed(2)}</span>/1M</span>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
@@ -249,8 +249,8 @@ export default function MarketplacePage() {
                 <Card padding="none">
                     <div className="p-4 border-b border-border flex flex-col md:flex-row md:items-center gap-3">
                         <div className="flex-1">
-                            <h2 className="text-lg font-semibold">Spot Price Matrix</h2>
-                            <p className="text-sm text-text-muted">Cheapest provider per model (1M input + 500k output tokens). Compare spot prices across providers.</p>
+                            <h2 className="text-lg font-semibold">Spot Price Comparison</h2>
+                            <p className="text-sm text-text-muted">USD per 1M tokens (in/out). Cheapest provider per canonical model. Scenario: 1M input + 500k output.</p>
                         </div>
                         <div className="flex justify-end gap-2">
                             <Select
@@ -274,9 +274,9 @@ export default function MarketplacePage() {
                             <thead>
                                 <tr className="border-b border-border bg-sidebar/50 text-xs font-medium text-text-muted uppercase tracking-wider">
                                     <th className="px-6 py-4">Canonical Model</th>
-                                    <th className="px-6 py-4">Spot Price (USD)</th>
+                                    <th className="px-6 py-4">Spot (1M in + 500k out)</th>
                                     <th className="px-6 py-4">Cheapest Provider</th>
-                                    <th className="px-6 py-4">All Offers</th>
+                                    <th className="px-6 py-4">All Offers ($/1M in / $/1M out)</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -329,8 +329,8 @@ export default function MarketplacePage() {
                 <Card padding="none">
                     <div className="p-4 border-b border-border flex items-center justify-between">
                         <div>
-                            <h2 className="text-lg font-semibold">Canonical Cost Comparison</h2>
-                            <p className="text-sm text-text-muted">Normalized scenario: 1M input + 500k output tokens.</p>
+                            <h2 className="text-lg font-semibold">Cost Comparison</h2>
+                            <p className="text-sm text-text-muted">USD per 1M tokens. Scenario: 1M input + 500k output.</p>
                         </div>
                         <Button icon="sync" variant="secondary" onClick={fetchCosts}>Refresh</Button>
                     </div>

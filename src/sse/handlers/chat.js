@@ -101,17 +101,23 @@ import { compressContext } from "../utils/compression.js";
  * Handle single model chat request with advanced orchestration
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null) {
-  // Extract userAgent from request
+  // Extract userAgent and optional client/device headers from request
   const userAgent = request?.headers?.get("user-agent") || "";
+  const clientId = request?.headers?.get("x-zippy-client-id")?.trim() || undefined;
+  const deviceId = request?.headers?.get("x-zippy-device-id")?.trim() || undefined;
+  const intentHeader = request?.headers?.get("x-zippy-intent")?.trim() || undefined;
 
   // Call the orchestrator to handle multi-account and cross-provider failover
-  return await handleOrchestratedChat({
+  const result = await handleOrchestratedChat({
     body,
     modelStr,
     handleChatCore,
     log,
     clientRawRequest,
     userAgent,
+    clientId,
+    deviceId,
+    intent: intentHeader || body?.intent,
     callbacks: {
       onCredentialsRefreshed: async (newCreds, connectionId) => {
         await updateProviderCredentials(connectionId, {
@@ -125,8 +131,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         await clearAccountError(connectionId, currentConnection);
       },
       // Failure callback for orchestrator to mark accounts as unavailable
-      onFailure: async (connectionId, status, error, provider) => {
-        await markAccountUnavailable(connectionId, status, error, provider);
+      onFailure: async (connectionId, status, error, provider, retryAfterMs) => {
+        await markAccountUnavailable(connectionId, status, error, provider, retryAfterMs);
       }
     },
     // Context compression logic
@@ -140,4 +146,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return body;
     }
   });
+
+  // Orchestrator returns { success, response } on success, or a Response on error
+  return result?.response ?? result;
 }

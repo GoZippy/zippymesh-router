@@ -182,13 +182,29 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         setStep("input");
         window.open(data.authUrl, "_blank");
       } else {
-        // Localhost (non-Codex): Open popup and wait for message
+        // Localhost (non-Codex): Store pending auth in localStorage so callback (in popup) can read it and perform exchange (sessionStorage is per-window so popup cannot read opener's)
+        try {
+          localStorage.setItem(
+            `oauth_pending_${data.state}`,
+            JSON.stringify({
+              provider,
+              redirectUri,
+              codeVerifier: data.codeVerifier,
+              connectionId: connectionId || undefined,
+            })
+          );
+        } catch (e) {
+          console.warn("[OAuthModal] localStorage set failed", e);
+        }
         setStep("waiting");
         popupRef.current = window.open(data.authUrl, "oauth_popup", "width=600,height=700");
 
         // Check if popup was blocked
         if (!popupRef.current) {
           setStep("input");
+          try {
+            localStorage.removeItem(`oauth_pending_${data.state}`);
+          } catch {}
         }
       }
     } catch (err) {
@@ -238,12 +254,20 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     const handleCallback = async (data) => {
       if (callbackProcessedRef.current) return; // Already processed
 
-      const { code, state, error: callbackError, errorDescription } = data;
+      const { code, state, error: callbackError, errorDescription, exchangeDone } = data;
 
       if (callbackError) {
         callbackProcessedRef.current = true;
         setError(errorDescription || callbackError);
         setStep("error");
+        return;
+      }
+
+      // Callback page already performed exchange; just refresh UI
+      if (exchangeDone) {
+        callbackProcessedRef.current = true;
+        setStep("success");
+        onSuccess?.();
         return;
       }
 

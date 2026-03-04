@@ -257,15 +257,19 @@ const PROVIDERS = {
     },
     exchangeToken: async (config, code, redirectUri) => {
       const clientSecret = await resolveOAuthClientSecret("antigravity", config);
+      if (!clientSecret) {
+        throw new Error(
+          "Antigravity OAuth is not configured: set ANTIGRAVITY_CLIENT_SECRET in .env (see .env.example). " +
+          "Get the secret from Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client."
+        );
+      }
       const payload = {
         grant_type: "authorization_code",
         client_id: config.clientId,
         code: code,
         redirect_uri: redirectUri,
+        client_secret: clientSecret,
       };
-      if (clientSecret) {
-        payload.client_secret = clientSecret;
-      }
 
       const response = await fetch(config.tokenUrl, {
         method: "POST",
@@ -361,7 +365,10 @@ const PROVIDERS = {
       expiresIn: tokens.expires_in,
       scope: tokens.scope,
       email: extra?.userInfo?.email,
+      name: extra?.userInfo?.name || extra?.userInfo?.email,
+      displayName: extra?.userInfo?.name || extra?.userInfo?.email,
       projectId: extra?.projectId,
+      providerSpecificData: extra?.projectId ? { projectId: extra.projectId } : undefined,
     }),
   },
 

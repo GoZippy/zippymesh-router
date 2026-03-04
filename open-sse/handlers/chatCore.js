@@ -277,8 +277,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   log?.debug?.("FORMAT", `${sourceFormat} → ${targetFormat} | stream=${stream}`);
 
   // Translate request (pass reqLogger for intermediate logging)
-  let translatedBody = body;
-  translatedBody = translateRequest(sourceFormat, targetFormat, model, body, stream, credentials, provider, reqLogger);
+  let translatedBody;
+  try {
+    translatedBody = translateRequest(sourceFormat, targetFormat, model, body, stream, credentials, provider, reqLogger);
+  } catch (err) {
+    const msg = err?.message || "Unsupported or malformed request body: expected messages or input array.";
+    log?.warn?.("FORMAT", `Translation failed: ${msg}`);
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, msg);
+  }
 
   // Extract toolNameMap for response translation (Claude OAuth)
   const toolNameMap = translatedBody._toolNameMap;

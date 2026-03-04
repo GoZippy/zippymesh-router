@@ -148,9 +148,14 @@ export async function getProviderCredentials(provider, excludeConnectionId = nul
 
 /**
  * Mark account as unavailable — reads backoffLevel from DB, calculates cooldown with exponential backoff, saves new level
+ * @param {string} connectionId
+ * @param {number} status
+ * @param {string} errorText
+ * @param {string|null} provider
+ * @param {number|null} retryAfterMs - Optional: use provider's Retry-After when 429
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, retryAfterMs = null) {
   // Read current connection to get backoffLevel
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
@@ -159,7 +164,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const { shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel);
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
-  const rateLimitedUntil = getUnavailableUntil(cooldownMs);
+  // Prefer provider's Retry-After for 429 when available
+  // Clamp to reasonable bounds (5s-2min) to prevent:
+  // - Excessively long waits (>2min) that hurt UX
+  // - Too-short waits (<5s) that could trigger rate limits again
+  const effectiveCooldown = (status === 429 && retryAfterMs && retryAfterMs > 0)
+    ? Math.min(Math.max(retryAfterMs, 5000), 2 * 60 * 1000)
+    : cooldownMs;
+  const rateLimitedUntil = getUnavailableUntil(effectiveCooldown);
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
 
   await updateProviderConnection(connectionId, {

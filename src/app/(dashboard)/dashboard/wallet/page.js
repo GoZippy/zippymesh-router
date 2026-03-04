@@ -397,6 +397,7 @@ export default function WalletPage() {
 
                     {pricing.pricing_mode === "marketplace-anchored" && (
                         <div className="space-y-4">
+                            <p className="text-sm text-text-muted">Save will refresh per-model prices from the marketplace and apply your margin. The sidecar will use these for P2P billing.</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <Input
                                     label="Margin (%)"

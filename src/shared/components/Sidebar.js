@@ -9,7 +9,8 @@ import { APP_CONFIG } from "@/shared/constants/config";
 import Button from "./Button";
 import { ConfirmModal } from "./Modal";
 
-const navItems = [
+const defaultNavItems = [
+  { href: "/dashboard", label: "Dashboard", icon: "home" },
   { href: "/dashboard/endpoint", label: "Endpoint", icon: "api" },
   { href: "/marketplace", label: "Marketplace", icon: "storefront" },
   { href: "/dashboard/network", label: "Network", icon: "hub" },
@@ -39,8 +40,8 @@ export default function Sidebar({ onClose }) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [navItems, setNavItems] = useState(defaultNavItems);
 
-  // Check if debug mode is enabled
   useEffect(() => {
     fetch("/api/settings")
       .then(res => res.json())
@@ -48,9 +49,23 @@ export default function Sidebar({ onClose }) {
       .catch(() => { });
   }, []);
 
+  useEffect(() => {
+    fetch("/api/plugins/nav")
+      .then(res => res.ok ? res.json() : { navItems: [] })
+      .then(data => {
+        if (data?.navItems?.length) {
+          setNavItems(data.navItems.map((n) => ({ href: n.path, label: n.label, icon: n.icon })));
+        }
+      })
+      .catch(() => { });
+  }, []);
+
   const isActive = (href) => {
+    if (href === "/dashboard") {
+      return pathname === "/dashboard";
+    }
     if (href === "/dashboard/endpoint") {
-      return pathname === "/dashboard" || pathname.startsWith("/dashboard/endpoint");
+      return pathname.startsWith("/dashboard/endpoint");
     }
     return pathname.startsWith(href);
   };

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getP2pSubscriptions, createP2pSubscription } from "@/lib/localDb";
-import { getWalletBalance, getWalletEarnings, getWalletTransactions } from "@/lib/sidecar";
+import { getP2pSubscriptions, createP2pSubscription, getWalletBalance, getWalletTransactions } from "@/lib/localDb";
+import { getWalletEarnings } from "@/lib/sidecar";
 
 const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
 

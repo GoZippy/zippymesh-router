@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listRouterApiKeys, createRouterApiKey } from "@/lib/localDb.js";
+import { listRouterApiKeys, createRouterApiKey, isCloudEnabled } from "@/lib/localDb.js";
 import { isAuthenticated } from "@/lib/auth/login.js";
 import { getSettings } from "@/lib/localDb.js";
 

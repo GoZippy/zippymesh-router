@@ -2,6 +2,8 @@
 
 **Local-first AI endpoint proxy with web dashboard. Smart routing, format translation, and multi-provider fallback.**
 
+Open source router core. Audit the code. Your prompts and keys never leave your control. See [NOTICE.md](NOTICE.md) and [SECURITY.md](SECURITY.md). For code classification (public vs proprietary, distributable vs private), see [docs/DISTRIBUTION_PLAN.md](docs/DISTRIBUTION_PLAN.md).
+
 ---
 
 ## What It Does
@@ -36,11 +38,19 @@ Your prompts, responses, and API keys never leave your control unless you explic
 
 ### Running Tests
 
-A simple sanity check is provided for the router API key logic.  Run:
+Unit tests (no server required):
 
 ```bash
 npm install            # if not already done
-npm run test            # exercises key generation, verification, revocation
+npm run test           # router API key: create, verify, revoke, blacklist
+npm run test:providers # provider config, sync, adapters, Kilo routing
+```
+
+Integration tests (server must be running; uses default password or `INITIAL_PASSWORD`):
+
+```bash
+npm run dev            # in one terminal
+node scripts/run_tests.mjs   # in another; set INITIAL_PASSWORD if needed
 ```
 
 A secondary script (`verify_firewall.js`) attempts to apply default firewall
@@ -54,13 +64,17 @@ node verify_firewall.js
 
 ### From Source
 
+First-time or installer setup (creates `.env` with generated secrets; use `--force` to overwrite):
+
 ```bash
-cp .env.example .env
-# Edit .env — set JWT_SECRET, INITIAL_PASSWORD, DATA_DIR
 npm install
+npm run setup              # creates .env (default password: admin)
+# Or: node scripts/setup-env.mjs --password=yourpassword
 npm run build
 PORT=20128 HOSTNAME=0.0.0.0 npm run start
 ```
+
+To configure manually instead: copy `.env.example` to `.env`, set `JWT_SECRET`, `INITIAL_PASSWORD`, `DATA_DIR`.
 
 Dashboard: `http://localhost:20128/dashboard`
 API endpoint: `http://localhost:20128/v1`
@@ -101,7 +115,7 @@ Your CLI Tool (Claude Code, Codex, Cline...)
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `JWT_SECRET` | **Yes** | JWT signing secret (app refuses to start without it) |
-| `INITIAL_PASSWORD` | Recommended | First login password (default: `123456`) |
+| `INITIAL_PASSWORD` | Recommended | First login password (set in .env; required for first-time setup) |
 | `DATA_DIR` | Recommended | Database location (default: `~/.zippymesh`) |
 | `PORT` | No | Service port (default: framework default) |
 | `API_KEY_SECRET` | Recommended | HMAC secret for generated API keys |
@@ -118,6 +132,20 @@ Your CLI Tool (Claude Code, Codex, Cline...)
 - `GET /v1/models` — List all available models + combos
 - `POST /v1/messages/count_tokens` — Token counting
 - Gemini-style endpoints via `/v1beta/models/*`
+
+Use the exact `id` from `GET /v1/models` as the `model` in `POST /v1/chat/completions`. On 429, the error body may include `error.alternatives` (model IDs in the same format) and `error.retry_after_seconds`; clients can retry with an alternative or wait. For failover suggestions: `GET /api/routing/suggestions?model=alias/modelId` returns equivalent models in client format, `isFree` flag, and recommended `failoverOrder`.
+
+## CLI
+
+With the server running, use the script for list-models, failover suggestions, and health check:
+
+```bash
+npm run cli list-models
+npm run cli suggest-failover --model=anthropic/claude-3-5-sonnet
+npm run cli test
+```
+
+Set `ZIPPY_BASE_URL` to override the base URL (default `http://localhost:20128`).
 
 ## Tech Stack
 

@@ -1,136 +1,146 @@
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
+/**
+ * Shared utilities for sidecar communication
+ * (No localDb import here to avoid pulling Node-only code into client bundle.)
+ */
+
+const DEFAULT_SIDECAR_URL = "http://localhost:9480";
 
 /**
- * Fetch all discovered peers from the Sidecar.
- * @returns {Promise<Array>} List of peers
+ * Get the normalized sidecar base URL from environment or default
+ * @returns {string} Normalized sidecar URL without trailing slash
  */
+export function getSidecarUrl() {
+  const url = process.env.SIDE_CAR_URL || DEFAULT_SIDECAR_URL;
+  return url.replace(/\/$/, "");
+}
+
+/**
+ * Build a sidecar API URL for a given path
+ * @param {string} path - API path (e.g., "/trust", "/node/pricing")
+ * @returns {string} Full URL
+ */
+export function sidecarUrl(path) {
+  const base = getSidecarUrl();
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+
+/**
+ * Fetch from sidecar with standard options
+ * @param {string} path - API path
+ * @param {RequestInit} options - Fetch options
+ * @returns {Promise<Response>}
+ */
+export async function fetchSidecar(path, options = {}) {
+  const url = sidecarUrl(path);
+  const headers = {
+    Accept: "application/json",
+    ...(options.headers || {})
+  };
+  return fetch(url, {
+    ...options,
+    headers
+  });
+}
+
+/**
+ * Fetch from sidecar with timeout
+ * @param {string} path - API path
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @param {RequestInit} options - Additional fetch options
+ * @returns {Promise<Response>}
+ */
+export async function fetchSidecarWithTimeout(path, timeoutMs = 5000, options = {}) {
+  const url = sidecarUrl(path);
+
+  return fetch(url, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      ...options.headers,
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
+/**
+ * Proxy a chat completion request to the sidecar (P2P).
+ * POSTs the payload to sidecar /proxy/chat/completions and returns the Response.
+ * @param {object} p2pPayload - Request body (model, messages, etc.)
+ * @returns {Promise<Response>} Fetch Response from sidecar
+ */
+export async function proxyChatCompletion(p2pPayload) {
+  const url = sidecarUrl("/proxy/chat/completions");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify(p2pPayload),
+  });
+  return res;
+}
+
+/** Return P2P peers from sidecar /peers; [] on failure. */
 export async function getSidecarPeers() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/peers`);
-        if (!res.ok) return [];
-        return await res.json();
-    } catch (error) {
-        console.error("Error fetching sidecar peers:", error);
-        return [];
-    }
+  try {
+    const res = await fetchSidecarWithTimeout("/peers", 3000);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : data?.peers ?? [];
+  } catch {
+    return [];
+  }
 }
 
-/**
- * Find routes (peers) for a specific model.
- * @param {string} modelName 
- * @returns {Promise<Array>} List of peers offering the model
- */
-export async function getSidecarRoutes(modelName) {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/routes?model=${encodeURIComponent(modelName)}`);
-        if (!res.ok) return [];
-        return await res.json();
-    } catch (error) {
-        console.error(`Error fetching routes for ${modelName}:`, error);
-        return [];
-    }
-}
-
-/**
- * Check if Sidecar is healthy.
- */
+/** Sidecar health check; returns { ok: boolean }. */
 export async function getSidecarHealth() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/health`, { signal: AbortSignal.timeout(1000) });
-        return res.ok;
-    } catch {
-        return false;
-    }
+  try {
+    const res = await fetchSidecarWithTimeout("/health", 3000);
+    return { ok: res.ok };
+  } catch {
+    return { ok: false };
+  }
 }
 
-/**
- * Get Sidecar Node Info (Identity, Status).
- * @returns {Promise<object|null>} Node info or null if failed
- */
+/** Sidecar info stub; returns {} when sidecar unavailable. */
 export async function getSidecarInfo() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/node/info`, { signal: AbortSignal.timeout(1000) });
-        if (!res.ok) return null;
-        return await res.json();
-    } catch {
-        return null;
-    }
+  try {
+    const res = await fetchSidecarWithTimeout("/info", 2000);
+    if (!res.ok) return {};
+    return res.json();
+  } catch {
+    return {};
+  }
 }
 
-/**
- * Proxy chat completion to Sidecar.
- * @param {object} payload - Chat completion request body
- * @returns {Promise<Response>} Fetch response
- */
-export async function proxyChatCompletion(payload) {
-    return fetch(`${SIDECAR_URL}/proxy/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    });
-}
-
-/**
- * Open a mock payment channel.
- * @param {string} targetPeerId
- * @param {number} amount
- */
-export async function openPaymentChannel(targetPeerId, amount) {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/payment/open_channel`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target_peer_id: targetPeerId, amount })
-        });
-        if (!res.ok) throw new Error(await res.text());
-        return await res.json();
-    } catch (error) {
-        console.error("Error opening channel:", error);
-        throw error;
-    }
-}
-
-/**
- * Get Wallet Balance.
- */
+/** Stub for UI; use localDb in server routes for real data. */
 export async function getWalletBalance() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/wallet/balance`);
-        if (!res.ok) return { balance: 0, currency: 'ZIP' };
-        return await res.json();
-    } catch (error) {
-        console.error("Error fetching balance:", error);
-        return { balance: 0, currency: 'ZIP' };
-    }
+  return { balance: 0, currency: "ZIP" };
 }
 
-/**
- * Get Wallet Transactions.
- */
+/** Stub for UI; use localDb in server routes for real data. */
 export async function getWalletTransactions() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/wallet/transactions`);
-        if (!res.ok) return [];
-        return await res.json();
-    } catch (error) {
-        console.error("Error fetching transactions:", error);
-        return [];
-    }
+  return [];
 }
 
-/**
- * Get Wallet Earnings.
- */
+/** Wallet earnings stub; returns 0. */
 export async function getWalletEarnings() {
-    try {
-        const res = await fetch(`${SIDECAR_URL}/wallet/earnings`);
-        if (!res.ok) return 0;
-        const data = await res.json();
-        return data.earnings || 0;
-    } catch (error) {
-        console.error("Error fetching earnings:", error);
-        return 0;
-    }
+  return 0;
+}
+
+/** Open payment channel via sidecar; stub throws until sidecar implements. */
+export async function openPaymentChannel(to, amount) {
+  const url = sidecarUrl("/wallet/send");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ to, amount }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `Sidecar wallet/send failed: ${res.status}`);
+  }
+  return res.json();
 }

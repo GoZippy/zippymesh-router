@@ -1,13 +1,48 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import PropTypes from "prop-types";
 import { Card, CardSkeleton, Badge, Button, Input, Modal, Select } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { FREE_PROVIDERS, OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX } from "@/shared/constants/providers";
+import { getProviderSignupUrl, getProviderIconUrl } from "@/shared/constants/provider-urls";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
+
+const STORAGE_KEY = "providers-page-filters";
+const SORT_OPTIONS = [
+  { value: "name-asc", label: "Name A–Z" },
+  { value: "name-desc", label: "Name Z–A" },
+  { value: "type", label: "Provider type" },
+  { value: "connections-desc", label: "Most connected" },
+  { value: "unadded-first", label: "Not yet added first" },
+];
+const TYPE_OPTIONS = [
+  { value: "all", label: "All types" },
+  { value: "oauth", label: "OAuth" },
+  { value: "free", label: "Free" },
+  { value: "apikey", label: "API Key" },
+];
+const STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "added", label: "Added only" },
+  { value: "unadded", label: "Not yet added" },
+  { value: "multiple", label: "Multiple accounts" },
+];
+const MODEL_FAMILY_OPTIONS = [
+  { value: "all", label: "All makers" },
+  { value: "gpt", label: "OpenAI (GPT)" },
+  { value: "claude", label: "Anthropic (Claude)" },
+  { value: "gemini", label: "Google (Gemini)" },
+  { value: "llama", label: "Meta (Llama)" },
+  { value: "qwen", label: "Qwen" },
+  { value: "mistral", label: "Mistral" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "kimi", label: "Kimi" },
+  { value: "glm", label: "GLM" },
+  { value: "other", label: "Other" },
+];
 
 // Shared helper function to avoid code duplication between ProviderCard and ApiKeyProviderCard
 function getStatusDisplay(connected, error, errorCode) {
@@ -33,6 +68,25 @@ function getStatusDisplay(connected, error, errorCode) {
   return parts;
 }
 
+function loadSavedFilters() {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveFilters(filters) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  } catch {
+    // ignore
+  }
+}
+
 export default function ProvidersPage() {
   const [connections, setConnections] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
@@ -42,14 +96,39 @@ export default function ProvidersPage() {
   const [scanning, setScanning] = useState(false);
   const [discoveredCount, setDiscoveredCount] = useState(null);
   const [presets, setPresets] = useState([]);
+  const [models, setModels] = useState([]);
+  const [spotPrices, setSpotPrices] = useState([]);
+  const [spotPricesLoading, setSpotPricesLoading] = useState(false);
+
+  const [sortBy, setSortBy] = useState("name-asc");
+  const [filterType, setFilterType] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterModelFamily, setFilterModelFamily] = useState("all");
+  const [modelSearch, setModelSearch] = useState("");
+
+  useEffect(() => {
+    const saved = loadSavedFilters();
+    if (saved) {
+      setSortBy(saved.sortBy ?? "name-asc");
+      setFilterType(saved.filterType ?? "all");
+      setFilterStatus(saved.filterStatus ?? "all");
+      setFilterModelFamily(saved.filterModelFamily ?? "all");
+      setModelSearch(saved.modelSearch ?? "");
+    }
+  }, []);
+
+  useEffect(() => {
+    saveFilters({ sortBy, filterType, filterStatus, filterModelFamily, modelSearch });
+  }, [sortBy, filterType, filterStatus, filterModelFamily, modelSearch]);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes, presetsRes] = await Promise.all([
+        const [connectionsRes, nodesRes, presetsRes, modelsRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/provider-nodes"),
           fetch("/api/presets/provider-nodes"),
+          fetch("/api/marketplace/models"),
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
@@ -58,6 +137,10 @@ export default function ProvidersPage() {
         if (presetsRes.ok) {
           const presetsData = await presetsRes.json();
           setPresets(presetsData.presets || []);
+        }
+        if (modelsRes.ok) {
+          const modelsData = await modelsRes.json();
+          setModels(modelsData.models || []);
         }
       } catch (error) {
         console.log("Error fetching data:", error);
@@ -167,6 +250,148 @@ export default function ProvidersPage() {
     }, {}),
   };
 
+  const providerModelsMap = useMemo(() => {
+    const map = new Map();
+    for (const m of models) {
+      const family = m.modelFamily || "other";
+      if (!map.has(m.provider)) map.set(m.provider, new Set());
+      map.get(m.provider).add(family);
+    }
+    return map;
+  }, [models]);
+
+  const providerModelsForSearch = useMemo(() => {
+    const map = new Map();
+    for (const m of models) {
+      if (!map.has(m.provider)) map.set(m.provider, []);
+      map.get(m.provider).push({ name: m.name || "", modelId: m.modelId || "" });
+    }
+    return map;
+  }, [models]);
+
+  const allProviders = useMemo(() => {
+    const list = [];
+    for (const [key, info] of Object.entries(OAUTH_PROVIDERS)) {
+      const stats = getProviderStats(key, "oauth");
+      list.push({
+        id: key,
+        name: info.name,
+        provider: info,
+        providerType: "oauth",
+        authType: "oauth",
+        stats,
+        hasConnection: stats.connected > 0,
+        connectionCount: stats.total,
+        hasMultipleAccounts: stats.total >= 2,
+      });
+    }
+    for (const [key, info] of Object.entries(FREE_PROVIDERS)) {
+      const stats = getProviderStats(key, "oauth");
+      list.push({
+        id: key,
+        name: info.name,
+        provider: info,
+        providerType: "free",
+        authType: "oauth",
+        stats,
+        hasConnection: stats.connected > 0,
+        connectionCount: stats.total,
+        hasMultipleAccounts: stats.total >= 2,
+      });
+    }
+    for (const [key, info] of Object.entries(apiKeyProviders)) {
+      const stats = getProviderStats(key, "apikey");
+      list.push({
+        id: key,
+        name: info.name,
+        provider: info,
+        providerType: "apikey",
+        authType: "apikey",
+        stats,
+        hasConnection: stats.connected > 0,
+        connectionCount: stats.total,
+        hasMultipleAccounts: stats.total >= 2,
+      });
+    }
+    return list;
+  }, [connections, providerNodes]);
+
+  const filteredAndSortedProviders = useMemo(() => {
+    let result = [...allProviders];
+
+    if (filterType !== "all") {
+      result = result.filter((p) => p.providerType === filterType);
+    }
+    if (filterStatus === "added") {
+      result = result.filter((p) => p.hasConnection);
+    } else if (filterStatus === "unadded") {
+      result = result.filter((p) => !p.hasConnection);
+    } else if (filterStatus === "multiple") {
+      result = result.filter((p) => p.hasMultipleAccounts);
+    }
+    if (filterModelFamily !== "all") {
+      result = result.filter((p) => {
+        const families = providerModelsMap.get(p.id);
+        if (!families) return true;
+        return families.has(filterModelFamily);
+      });
+    }
+    if (modelSearch.trim()) {
+      const q = modelSearch.trim().toLowerCase();
+      result = result.filter((p) => {
+        const items = providerModelsForSearch.get(p.id);
+        if (!items) return false;
+        return items.some(
+          (x) =>
+            (x.name && x.name.toLowerCase().includes(q)) ||
+            (x.modelId && x.modelId.toLowerCase().includes(q))
+        );
+      });
+    }
+
+    const typeOrder = { oauth: 0, free: 1, apikey: 2 };
+    if (sortBy === "name-asc") {
+      result.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortBy === "name-desc") {
+      result.sort((a, b) => b.name.localeCompare(a.name));
+    } else if (sortBy === "type") {
+      result.sort((a, b) => {
+        const diff = typeOrder[a.providerType] - typeOrder[b.providerType];
+        return diff !== 0 ? diff : a.name.localeCompare(b.name);
+      });
+    } else if (sortBy === "connections-desc") {
+      result.sort((a, b) => {
+        const diff = (b.connectionCount || 0) - (a.connectionCount || 0);
+        return diff !== 0 ? diff : a.name.localeCompare(b.name);
+      });
+    } else if (sortBy === "unadded-first") {
+      result.sort((a, b) => {
+        const diff = (a.hasConnection ? 1 : 0) - (b.hasConnection ? 1 : 0);
+        return diff !== 0 ? diff : a.name.localeCompare(b.name);
+      });
+    }
+    return result;
+  }, [
+    allProviders,
+    filterType,
+    filterStatus,
+    filterModelFamily,
+    modelSearch,
+    sortBy,
+    providerModelsMap,
+    providerModelsForSearch,
+  ]);
+
+  useEffect(() => {
+    if (loading) return;
+    setSpotPricesLoading(true);
+    fetch("/api/marketplace/spot-prices?limit=20")
+      .then((res) => res.json())
+      .then((data) => setSpotPrices(data.models || []))
+      .catch(() => setSpotPrices([]))
+      .finally(() => setSpotPricesLoading(false));
+  }, [loading]);
+
   if (loading) {
     return (
       <div className="flex flex-col gap-8">
@@ -231,41 +456,78 @@ export default function ProvidersPage() {
         </div>
       )}
 
-      {/* OAuth Providers */}
-      <div className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">OAuth Providers</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {Object.entries(OAUTH_PROVIDERS).map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-            />
-          ))}
+      {/* Filter/Sort Toolbar */}
+      <Card padding="sm">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-[140px]">
+              <Select
+                label="Sort"
+                options={SORT_OPTIONS}
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                placeholder=""
+              />
+            </div>
+            <div className="min-w-[120px]">
+              <Select
+                label="Type"
+                options={TYPE_OPTIONS}
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                placeholder=""
+              />
+            </div>
+            <div className="min-w-[140px]">
+              <Select
+                label="Status"
+                options={STATUS_OPTIONS}
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                placeholder=""
+              />
+            </div>
+            <div className="min-w-[140px]">
+              <Select
+                label="Model maker"
+                options={MODEL_FAMILY_OPTIONS}
+                value={filterModelFamily}
+                onChange={(e) => setFilterModelFamily(e.target.value)}
+                placeholder=""
+              />
+            </div>
+            <div className="min-w-[180px] flex-1">
+              <Input
+                label="Model search"
+                placeholder="Filter by model name..."
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+              />
+            </div>
+            {(filterType !== "all" || filterStatus !== "all" || filterModelFamily !== "all" || modelSearch.trim()) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setFilterType("all");
+                  setFilterStatus("all");
+                  setFilterModelFamily("all");
+                  setModelSearch("");
+                }}
+              >
+                Reset filters
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Free Providers */}
-      <div className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">Free Providers</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {Object.entries(FREE_PROVIDERS).map(([key, info]) => (
-            <ProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "oauth")}
-            />
-          ))}
-        </div>
-      </div>
-
-
-      {/* API Key Providers */}
+      {/* Providers Grid */}
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">API Key Providers</h2>
+          <h2 className="text-xl font-semibold">
+            Providers ({filteredAndSortedProviders.length})
+          </h2>
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -304,9 +566,7 @@ export default function ProvidersPage() {
                     <button
                       key={preset.id}
                       onClick={() => {
-                        // Open appropriate modal with prefilled data using custom event dispatch pattern or state handling
                         if (preset.apiType === "openai-compatible") {
-                          // Signal AddOpenAICompatibleModal to prefill data.
                           const event = new CustomEvent('prefill-openai-compatible-modal', { detail: preset });
                           window.dispatchEvent(event);
                           setShowAddCompatibleModal(true);
@@ -324,16 +584,109 @@ export default function ProvidersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {Object.entries(apiKeyProviders).map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-            />
-          ))}
+          {filteredAndSortedProviders.length === 0 ? (
+            <div className="col-span-full flex flex-col items-center justify-center py-12 px-4 rounded-xl border border-border bg-sidebar/30">
+              <span className="material-symbols-outlined text-4xl text-text-muted mb-2">filter_list_off</span>
+              <p className="text-text-muted text-center">No providers match your filters.</p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={() => {
+                  setFilterType("all");
+                  setFilterStatus("all");
+                  setFilterModelFamily("all");
+                  setModelSearch("");
+                }}
+              >
+                Reset filters
+              </Button>
+            </div>
+          ) : (
+            filteredAndSortedProviders.map((item) =>
+              item.authType === "oauth" ? (
+                <ProviderCard
+                  key={item.id}
+                  providerId={item.id}
+                  provider={item.provider}
+                  stats={item.stats}
+                />
+              ) : (
+                <ApiKeyProviderCard
+                  key={item.id}
+                  providerId={item.id}
+                  provider={item.provider}
+                  stats={item.stats}
+                />
+              )
+            )
+          )}
         </div>
       </div>
+
+      {/* Price Comparison Section */}
+      <Card padding="sm">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">Price comparison</h2>
+              <p className="text-sm text-text-muted">
+                Cheapest provider per model (tokens per $1). Compare spot prices across providers.
+              </p>
+            </div>
+            <Link href="/dashboard/marketplace">
+              <Button variant="secondary" size="sm">
+                View full matrix
+              </Button>
+            </Link>
+          </div>
+          {spotPricesLoading ? (
+            <div className="flex items-center justify-center py-8 text-text-muted">
+              <span className="material-symbols-outlined animate-spin-slow">sync</span>
+              <span className="ml-2">Loading prices...</span>
+            </div>
+          ) : spotPrices.length === 0 ? (
+            <p className="text-sm text-text-muted py-4">
+              No pricing data available. Connect providers and sync models to see price comparisons.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-border text-text-muted">
+                    <th className="py-2 pr-4 font-medium">Model</th>
+                    <th className="py-2 pr-4 font-medium">Cheapest</th>
+                    <th className="py-2 pr-4 font-medium">$/1M in</th>
+                    <th className="py-2 pr-4 font-medium">$/1M out</th>
+                    <th className="py-2 font-medium">Tokens/$1 (input)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spotPrices.slice(0, 15).map((row) => {
+                    const cheapest = row.cheapestOffer;
+                    if (!cheapest) return null;
+                    const inputPerMUsd = cheapest.inputPerMUsd;
+                    const outputPerMUsd = cheapest.outputPerMUsd;
+                    const tokensPerDollar =
+                      inputPerMUsd > 0 ? Math.round(1000000 / inputPerMUsd).toLocaleString() : "—";
+                    return (
+                      <tr key={row.canonicalModelId} className="border-b border-border/50">
+                        <td className="py-2 pr-4">
+                          <span className="font-medium">{row.modelDisplayName || row.canonicalModelId}</span>
+                        </td>
+                        <td className="py-2 pr-4">{cheapest.provider}</td>
+                        <td className="py-2 pr-4">${Number(inputPerMUsd).toFixed(2)}</td>
+                        <td className="py-2 pr-4">${Number(outputPerMUsd).toFixed(2)}</td>
+                        <td className="py-2">{tokensPerDollar}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Card>
       <AddOpenAICompatibleModal
         isOpen={showAddCompatibleModal}
         onClose={() => setShowAddCompatibleModal(false)}
@@ -357,6 +710,7 @@ export default function ProvidersPage() {
 function ProviderCard({ providerId, provider, stats }) {
   const { connected, error, errorCode, errorTime, avgLatency, avgTps } = stats;
   const [imgError, setImgError] = useState(false);
+  const signupUrl = getProviderSignupUrl(providerId);
 
   return (
     <Link href={`/dashboard/providers/${providerId}`} className="group">
@@ -421,9 +775,23 @@ function ProviderCard({ providerId, provider, stats }) {
               </div>
             </div>
           </div>
-          <span className="material-symbols-outlined text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-            chevron_right
-          </span>
+          <div className="flex items-center gap-1">
+            {signupUrl && (
+              <a
+                href={signupUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors"
+                title={`Sign up for ${provider.name}`}
+              >
+                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+              </a>
+            )}
+            <span className="material-symbols-outlined text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+              chevron_right
+            </span>
+          </div>
         </div>
       </Card>
     </Link>
@@ -452,16 +820,17 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
   const [imgError, setImgError] = useState(false);
+  const signupUrl = getProviderSignupUrl(providerId);
 
   // Determine icon path: OpenAI Compatible providers use specialized icons
   const getIconPath = () => {
     if (isCompatible) {
-      return provider.apiType === "responses" ? "/providers/oai-r.png" : "/providers/oai-cc.png";
+      return getProviderIconUrl(provider.apiType === "responses" ? "oai-r" : "oai-cc");
     }
     if (isAnthropicCompatible) {
-      return "/providers/anthropic-m.png"; // Use Anthropic icon as base
+      return getProviderIconUrl("anthropic-m");
     }
-    return `/providers/${provider.id}.png`;
+    return getProviderIconUrl(provider.id);
   };
 
   return (
@@ -537,9 +906,23 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
               </div>
             </div>
           </div>
-          <span className="material-symbols-outlined text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
-            chevron_right
-          </span>
+          <div className="flex items-center gap-1">
+            {signupUrl && (
+              <a
+                href={signupUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors"
+                title={`Sign up for ${provider.name}`}
+              >
+                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+              </a>
+            )}
+            <span className="material-symbols-outlined text-text-muted opacity-0 group-hover:opacity-100 transition-opacity">
+              chevron_right
+            </span>
+          </div>
         </div>
       </Card>
     </Link>

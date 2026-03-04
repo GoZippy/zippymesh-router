@@ -104,7 +104,15 @@ export function detectFormat(body) {
     }
   }
 
-  // Default to OpenAI format
+  // Default to OpenAI format; log when classification was ambiguous
+  const shape = [
+    body.messages ? `messages[${body.messages.length}]` : null,
+    body.input ? `input[${body.input.length}]` : null,
+    body.contents ? `contents` : null
+  ].filter(Boolean).join(", ") || Object.keys(body).slice(0, 5).join(", ");
+  if (shape) {
+    console.warn("[detectFormat] Ambiguous body, defaulting to openai. Shape:", shape);
+  }
   return "openai";
 }
 
@@ -264,20 +272,31 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
       case "codex":
       case "qwen":
       case "openai":
-      case "openrouter":
-        headers["Authorization"] = `Bearer ${apiKey || accessToken}`;
+      case "openrouter": {
+        const token = apiKey || accessToken;
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         break;
+      }
   
       case "glm":
       case "kimi":
-      case "minimax":
+      case "minimax": {
         // Claude-compatible API providers use x-api-key
-        headers["x-api-key"] = apiKey;
+        if (apiKey) {
+          headers["x-api-key"] = apiKey;
+        }
         break;
-  
-      default:
-        headers["Authorization"] = `Bearer ${apiKey || accessToken}`;
+      }
+
+      default: {
+        const defaultToken = apiKey || accessToken;
+        if (defaultToken) {
+          headers["Authorization"] = `Bearer ${defaultToken}`;
+        }
         break;
+      }
     }
   }
 

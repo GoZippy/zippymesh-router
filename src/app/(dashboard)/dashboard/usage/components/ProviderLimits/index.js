@@ -1,6 +1,29 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+
+function ProviderAvatar({ provider, className = "" }) {
+  const [imgError, setImgError] = useState(false);
+  return (
+    <div className={`w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden bg-black/5 dark:bg-white/5 ${className}`}>
+      {imgError ? (
+        <span className="text-sm font-bold text-text-muted">
+          {(provider || "PR").slice(0, 2).toUpperCase()}
+        </span>
+      ) : (
+        <Image
+          src={`/providers/${provider}.png`}
+          alt={provider || "Provider"}
+          width={40}
+          height={40}
+          className="object-contain"
+          sizes="40px"
+          onError={() => setImgError(true)}
+        />
+      )}
+    </div>
+  );
+}
 import Image from "next/image";
 import ProviderLimitCard from "./ProviderLimitCard";
 import QuotaTable from "./QuotaTable";
@@ -138,19 +161,38 @@ export default function ProviderLimits() {
         oauthConnections.map((conn) => fetchQuota(conn.id, conn.provider))
       );
 
+      fetchSuggestions();
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error refreshing all providers:", error);
     } finally {
       setRefreshingAll(false);
     }
-  }, [refreshingAll, fetchConnections, fetchQuota]);
+  }, [refreshingAll, fetchConnections, fetchQuota, fetchSuggestions]);
+
+  const [suggestions, setSuggestions] = useState([]);
+
+  // Fetch rate limit suggestions (429 alternatives)
+  const fetchSuggestions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/routing/suggestions");
+      const data = await res.json();
+      if (res.ok && data.suggestions?.length) {
+        setSuggestions(data.suggestions);
+      } else {
+        setSuggestions([]);
+      }
+    } catch {
+      setSuggestions([]);
+    }
+  }, []);
 
   // Initial load
   useEffect(() => {
     const initializeData = async () => {
       setInitialLoading(true);
       await refreshAll();
+      fetchSuggestions();
       setInitialLoading(false);
     };
 
@@ -310,6 +352,30 @@ export default function ProviderLimits() {
 
   return (
     <div className="space-y-6">
+      {/* Rate limit suggestions (429 auto-failover) */}
+      {suggestions.length > 0 && (
+        <Card padding="lg" className="border-amber-500/30 bg-amber-500/5">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-amber-500 text-2xl">lightbulb</span>
+            <div>
+              <h3 className="font-semibold text-text-primary">Recent rate limit suggestions</h3>
+              <p className="text-sm text-text-muted mt-1">
+                You were recently rate limited. Add these models to your playbook or pool for auto-failover:
+              </p>
+              <ul className="mt-2 space-y-1">
+                {suggestions.slice(0, 3).map((s, i) => (
+                  <li key={i} className="text-sm">
+                    <span className="font-medium">{s.model}</span>
+                    {" → "}
+                    {s.alternatives?.slice(0, 3).join(", ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Header Controls */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
@@ -367,16 +433,7 @@ export default function ProviderLimits() {
               <div className="p-6 border-b border-black/10 dark:border-white/10">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
-                      <Image
-                        src={`/providers/${conn.provider}.png`}
-                        alt={conn.provider}
-                        width={40}
-                        height={40}
-                        className="object-contain"
-                        sizes="40px"
-                      />
-                    </div>
+                    <ProviderAvatar provider={conn.provider} />
                     <div>
                       <h3 className="text-base font-semibold text-text-primary capitalize">
                         {conn.provider}

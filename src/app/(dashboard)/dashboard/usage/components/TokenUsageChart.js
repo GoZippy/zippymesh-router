@@ -36,7 +36,7 @@ export default function TokenUsageChart({ data }) {
                 <h3 className="font-semibold text-sm uppercase text-text-muted">Token Usage (24h)</h3>
             </div>
             <div className="flex-1 w-full min-h-0">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 200 }}>
                     <BarChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
                         <XAxis

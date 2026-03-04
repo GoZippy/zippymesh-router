@@ -22,6 +22,9 @@ export const PROVIDER_SOURCE = {
   minimax: "api-key",
   kilo: "api-key",
   kiro: "api-key",
+  deepseek: "api-key",
+  mistral: "api-key",
+  xai: "api-key",
   ollama: "local",
   lmstudio: "local",
   llamacpp: "local",
@@ -29,10 +32,13 @@ export const PROVIDER_SOURCE = {
   cursor_local: "local",
 };
 
-// Default pricing rates for AI models
-// All rates are in dollars per million tokens ($/1M tokens)
-// Based on user-provided pricing for Antigravity models and industry standards for others
-
+/**
+ * Default pricing rates for AI models.
+ * All rates in USD per 1M tokens (input, output).
+ * Sources: provider official docs (openai.com, docs.anthropic.com, ai.google.dev, etc.)
+ * Live sync from OpenRouter/Groq/etc overrides these when available.
+ * Last researched: 2025-03
+ */
 export const DEFAULT_PRICING = {
   // OAuth Providers (using aliases)
 
@@ -394,101 +400,46 @@ export const DEFAULT_PRICING = {
   },
 
   // API Key Providers (alias = id)
+  // source: openai.com/api/pricing
 
-  // OpenAI
   openai: {
-    "gpt-4o": {
-      input: 2.50,
-      output: 10.00,
-      cached: 1.25,
-      reasoning: 15.00,
-      cache_creation: 2.50
-    },
-    "gpt-4o-mini": {
-      input: 0.15,
-      output: 0.60,
-      cached: 0.075,
-      reasoning: 0.90,
-      cache_creation: 0.15
-    },
-    "gpt-4-turbo": {
-      input: 10.00,
-      output: 30.00,
-      cached: 5.00,
-      reasoning: 45.00,
-      cache_creation: 10.00
-    },
-    "o1": {
-      input: 15.00,
-      output: 60.00,
-      cached: 7.50,
-      reasoning: 90.00,
-      cache_creation: 15.00
-    },
-    "o1-mini": {
-      input: 3.00,
-      output: 12.00,
-      cached: 1.50,
-      reasoning: 18.00,
-      cache_creation: 3.00
-    }
+    "gpt-5.2": { input: 1.75, output: 14.00, cached: 0.175, reasoning: 14.00, cache_creation: 1.75 },
+    "gpt-5.2-pro": { input: 21.00, output: 168.00, cached: 21.00, reasoning: 168.00, cache_creation: 21.00 },
+    "gpt-5-mini": { input: 0.25, output: 2.00, cached: 0.025, reasoning: 2.00, cache_creation: 0.25 },
+    "gpt-4o": { input: 2.50, output: 10.00, cached: 1.25, reasoning: 15.00, cache_creation: 2.50 },
+    "gpt-4o-mini": { input: 0.15, output: 0.60, cached: 0.075, reasoning: 0.90, cache_creation: 0.15 },
+    "gpt-4-turbo": { input: 10.00, output: 30.00, cached: 5.00, reasoning: 45.00, cache_creation: 10.00 },
+    "gpt-4.1": { input: 2.50, output: 10.00, cached: 1.25, reasoning: 15.00, cache_creation: 2.50 },
+    "gpt-4.1-mini": { input: 0.80, output: 3.20, cached: 0.20, reasoning: 4.80, cache_creation: 0.80 },
+    "o1": { input: 15.00, output: 60.00, cached: 7.50, reasoning: 90.00, cache_creation: 15.00 },
+    "o1-mini": { input: 3.00, output: 12.00, cached: 1.50, reasoning: 18.00, cache_creation: 3.00 },
+    "o4-mini": { input: 4.00, output: 16.00, cached: 1.00, reasoning: 24.00, cache_creation: 4.00 },
   },
 
-  // Anthropic
+  // Anthropic - source: docs.anthropic.com/en/docs/about-claude/pricing
   anthropic: {
-    "claude-sonnet-4-20250514": {
-      input: 3.00,
-      output: 15.00,
-      cached: 1.50,
-      reasoning: 15.00,
-      cache_creation: 3.00
-    },
-    "claude-opus-4-20250514": {
-      input: 15.00,
-      output: 75.00,
-      cached: 7.50,
-      reasoning: 112.50,
-      cache_creation: 15.00
-    },
-    "claude-3-5-sonnet-20241022": {
-      input: 3.00,
-      output: 15.00,
-      cached: 1.50,
-      reasoning: 15.00,
-      cache_creation: 3.00
-    }
+    "claude-opus-4-6": { input: 5.00, output: 25.00, cached: 0.50, reasoning: 25.00, cache_creation: 6.25 },
+    "claude-opus-4-5": { input: 5.00, output: 25.00, cached: 0.50, reasoning: 25.00, cache_creation: 6.25 },
+    "claude-opus-4-1": { input: 15.00, output: 75.00, cached: 1.50, reasoning: 75.00, cache_creation: 18.75 },
+    "claude-opus-4": { input: 15.00, output: 75.00, cached: 1.50, reasoning: 75.00, cache_creation: 18.75 },
+    "claude-sonnet-4-6": { input: 3.00, output: 15.00, cached: 0.30, reasoning: 15.00, cache_creation: 3.75 },
+    "claude-sonnet-4-5": { input: 3.00, output: 15.00, cached: 0.30, reasoning: 15.00, cache_creation: 3.75 },
+    "claude-sonnet-4": { input: 3.00, output: 15.00, cached: 0.30, reasoning: 15.00, cache_creation: 3.75 },
+    "claude-sonnet-4-20250514": { input: 3.00, output: 15.00, cached: 0.30, reasoning: 15.00, cache_creation: 3.75 },
+    "claude-opus-4-20250514": { input: 5.00, output: 25.00, cached: 0.50, reasoning: 25.00, cache_creation: 6.25 },
+    "claude-haiku-4-5": { input: 1.00, output: 5.00, cached: 0.10, reasoning: 5.00, cache_creation: 1.25 },
+    "claude-haiku-3-5": { input: 0.80, output: 4.00, cached: 0.08, reasoning: 4.00, cache_creation: 1.00 },
+    "claude-haiku-3": { input: 0.25, output: 1.25, cached: 0.03, reasoning: 1.25, cache_creation: 0.30 },
+    "claude-3-5-sonnet-20241022": { input: 3.00, output: 15.00, cached: 0.30, reasoning: 15.00, cache_creation: 3.75 },
   },
 
-  // Gemini
+  // Google Gemini - source: ai.google.dev/gemini-api/docs/pricing
   gemini: {
-    "gemini-3-pro-preview": {
-      input: 2.00,
-      output: 12.00,
-      cached: 0.25,
-      reasoning: 18.00,
-      cache_creation: 2.00
-    },
-    "gemini-2.5-pro": {
-      input: 2.00,
-      output: 12.00,
-      cached: 0.25,
-      reasoning: 18.00,
-      cache_creation: 2.00
-    },
-    "gemini-2.5-flash": {
-      input: 0.30,
-      output: 2.50,
-      cached: 0.03,
-      reasoning: 3.75,
-      cache_creation: 0.30
-    },
-    "gemini-2.5-flash-lite": {
-      input: 0.15,
-      output: 1.25,
-      cached: 0.015,
-      reasoning: 1.875,
-      cache_creation: 0.15
-    }
+    "gemini-3.1-pro-preview": { input: 2.00, output: 12.00, cached: 0.25, reasoning: 18.00, cache_creation: 2.00 },
+    "gemini-3-pro-preview": { input: 2.00, output: 12.00, cached: 0.25, reasoning: 18.00, cache_creation: 2.00 },
+    "gemini-2.5-pro": { input: 1.25, output: 10.00, cached: 0.156, reasoning: 15.00, cache_creation: 1.25 },
+    "gemini-2.5-flash": { input: 0.15, output: 0.60, cached: 0.075, reasoning: 0.90, cache_creation: 0.15 },
+    "gemini-2.5-flash-lite": { input: 0.10, output: 0.40, cached: 0.05, reasoning: 0.60, cache_creation: 0.10 },
   },
 
   // Free-tier providers (zero/near-zero cost)
@@ -525,15 +476,17 @@ export const DEFAULT_PRICING = {
     "command-light": { input: 0.15, output: 0.60, cached: 0.075, reasoning: 0, cache_creation: 0 },
   },
 
-  // OpenRouter
+  // OpenRouter - aggregated; live sync overrides. Fallback for "auto" routing.
   openrouter: {
-    "auto": {
-      input: 2.00,
-      output: 8.00,
-      cached: 1.00,
-      reasoning: 12.00,
-      cache_creation: 2.00
-    }
+    "auto": { input: 2.00, output: 8.00, cached: 1.00, reasoning: 12.00, cache_creation: 2.00 },
+  },
+
+  // DeepSeek - source: api-docs.deepseek.com
+  deepseek: {
+    "deepseek-chat": { input: 0.28, output: 0.42, cached: 0.14, reasoning: 0.42, cache_creation: 0.28 },
+    "deepseek-reasoner": { input: 0.55, output: 2.19, cached: 0.14, reasoning: 2.19, cache_creation: 0.55 },
+    "deepseek-v3.2-chat": { input: 0.28, output: 0.42, cached: 0.14, reasoning: 0.42, cache_creation: 0.28 },
+    "deepseek-v3.2-reasoner": { input: 0.55, output: 2.19, cached: 0.14, reasoning: 2.19, cache_creation: 0.55 },
   },
 
   // GLM

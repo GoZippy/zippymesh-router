@@ -34,8 +34,12 @@ function normalizePricingFromModel(providerId, modelId, model) {
   const pricing = model?.pricing;
   if (!pricing || typeof pricing !== "object") return null;
 
-  // Some OpenAI-compatible gateways expose prompt/completion in USD per token.
-  if (["openrouter", "kilo", "groq", "mistral", "xai", "deepseek", "cerebras", "cohere"].includes(providerId)) {
+  // Providers that expose prompt/completion in USD per token in their models API.
+  const livePricingProviders = [
+    "openrouter", "kilo", "groq", "mistral", "xai", "deepseek", "cerebras", "cohere",
+    "togetherai", "fireworks", "anyscale", "perplexity", "deepinfra", "novita", "ai21", "moonshot",
+  ];
+  if (livePricingProviders.includes(providerId)) {
     const promptTokenUsd = asNumber(pricing.prompt);
     const completionTokenUsd = asNumber(pricing.completion);
     if (promptTokenUsd === null && completionTokenUsd === null) return null;
@@ -99,16 +103,18 @@ async function syncConnection(connection, options = {}) {
     const normalized = normalizeModelRecord(connection.provider, rawModel);
     if (!normalized) continue;
 
-    await registerModel(normalized);
-    registeredModels += 1;
-
     if (options.updatePricingFromModels !== false) {
       const normalizedPricing = normalizePricingFromModel(connection.provider, normalized.modelId, rawModel);
       if (normalizedPricing?.pricing) {
         pricingUpdates[connection.provider] ??= {};
         pricingUpdates[connection.provider][normalizedPricing.modelId] = normalizedPricing.pricing;
+        normalized.inputPrice = normalizedPricing.pricing.input ?? 0;
+        normalized.outputPrice = normalizedPricing.pricing.output ?? 0;
       }
     }
+
+    await registerModel(normalized);
+    registeredModels += 1;
   }
 
   return {

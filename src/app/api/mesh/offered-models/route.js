@@ -7,9 +7,10 @@ import { getProviderSource } from "@/shared/constants/pricing.js";
 
 const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
 
+/** Convert to USD per 1M tokens. Pricing stores $/1M directly. */
 function asUsdPerM(value) {
   const n = Number(value);
-  return Number.isFinite(n) ? n * 1000 : 0;
+  return Number.isFinite(n) ? n : 0;
 }
 
 function scenarioCost(inputPerMUsd, outputPerMUsd, inputWeight = 1, outputWeight = 0.5) {

@@ -9,7 +9,14 @@ import {
 async function withMockedFetch(mockResponse, fn) {
   const originalFetch = global.fetch;
   // Mock fetch returns a function that returns a Promise resolving to the response
-  global.fetch = () => Promise.resolve(mockResponse);
+  global.fetch = (url) => {
+    // Only mock token endpoint to prevent cross-test pollution and catch unexpected calls
+    if (typeof url === 'string' && url.includes('/token')) {
+      return Promise.resolve(mockResponse);
+    }
+    // For non-token URLs, throw to surface unexpected network calls in tests
+    return Promise.reject(new Error(`Unexpected fetch to ${url}`));
+  };
   try {
     await fn();
   } finally {

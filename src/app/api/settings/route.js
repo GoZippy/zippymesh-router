@@ -39,9 +39,9 @@ export async function PATCH(request) {
           return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
         }
       } else {
-        // First time setting password, no current password needed
-        // Allow empty currentPassword or default "123456"
-        if (body.currentPassword && body.currentPassword !== "123456") {
+        // First time setting password: allow empty or INITIAL_PASSWORD from env
+        const initialPassword = process.env.INITIAL_PASSWORD;
+        if (body.currentPassword && initialPassword && body.currentPassword !== initialPassword) {
           return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
         }
       }
@@ -62,7 +62,8 @@ export async function PATCH(request) {
         // So base_price_per_token = pricePer1k / 1000
         const basePrice = body.pricePer1k / 1000;
 
-        await fetch("http://localhost:8081/node/pricing", {
+        const { fetchSidecarWithTimeout } = await import("@/lib/sidecar.js");
+        await fetchSidecarWithTimeout("/node/pricing", 5000, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

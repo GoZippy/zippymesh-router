@@ -14,16 +14,14 @@ export async function POST(request) {
     const { password } = await request.json();
     const settings = await getSettings();
 
-    // Default password is '123456' if not set
     const storedHash = settings.password;
 
     let isValid = false;
     if (storedHash) {
       isValid = await bcrypt.compare(password, storedHash);
     } else {
-      // Use env var or default
-      const initialPassword = process.env.INITIAL_PASSWORD || "123456";
-      isValid = password === initialPassword;
+      const initialPassword = process.env.INITIAL_PASSWORD;
+      isValid = initialPassword ? password === initialPassword : false;
     }
 
     if (isValid) {

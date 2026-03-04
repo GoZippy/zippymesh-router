@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-03-02T21:35:39.117Z",
+  "vms": [
+    {
+      "ip": "10.0.97.100",
+      "name": "genesis-validator",
+      "role": "Validator",
+      "ports": [
+        8545,
+        30303,
+        9042
+      ],
+      "reachable": true,
+      "openPorts": [
+        8545
+      ],
+      "rpcInfo": {
+        "chainId": "0x309",
+        "blockNumber": "0x18e55b",
+        "peerCount": "0x0"
+      }
+    },
+    {
+      "ip": "10.0.97.101",
+      "name": "validator2",
+      "role": "Validator",
+      "ports": [
+        8545,
+        30303,
+        9042
+      ],
+      "reachable": true,
+      "openPorts": [
+        8545
+      ],
+      "rpcInfo": {
+        "chainId": "0x309",
+        "blockNumber": "0x18e532",
+        "peerCount": "0x0"
+      }
+    },
+    {
+      "ip": "10.0.97.102",
+      "name": "validator3",
+      "role": "Validator",
+      "ports": [
+        8545,
+        30303,
+        9042
+      ],
+      "reachable": true,
+      "openPorts": [
+        8545
+      ],
+      "rpcInfo": {
+        "chainId": "0x309",
+        "blockNumber": "0x18e445",
+        "peerCount": "0x0"
+      }
+    },
+    {
+      "ip": "10.0.97.200",
+      "name": "fullnode",
+      "role": "Full Node",
+      "ports": [
+        8545,
+        30303
+      ],
+      "reachable": true,
+      "openPorts": [
+        8545
+      ],
+      "rpcInfo": {
+        "chainId": "0x309",
+        "blockNumber": "0x18e47e",
+        "peerCount": "0x0"
+      }
+    },
+    {
+      "ip": "10.0.97.210",
+      "name": "backend",
+      "role": "Backend API",
+      "ports": [
+        3000,
+        4000,
+        5000
+      ],
+      "reachable": false,
+      "openPorts": [],
+      "rpcInfo": null
+    },
+    {
+      "ip": "10.0.97.220",
+      "name": "monitoring",
+      "role": "Monitoring",
+      "ports": [
+        9090,
+        3000,
+        8080
+      ],
+      "reachable": false,
+      "openPorts": [],
+      "rpcInfo": null
+    }
+  ],
+  "docker": [
+    {
+      "port": 31000,
+      "name": "ZippyMesh API",
+      "isOpen": true
+    },
+    {
+      "port": 31001,
+      "name": "Redis",
+      "isOpen": true
+    },
+    {
+      "port": 31003,
+      "name": "PostgreSQL",
+      "isOpen": true
+    },
+    {
+      "port": 31005,
+      "name": "Orchestrator",
+      "isOpen": true
+    }
+  ],
+  "local": {
+    "httpOpen": true,
+    "discoveryOpen": false
+  }
+}

@@ -9,7 +9,7 @@ export async function GET() {
             return NextResponse.json({
                 balance: 10240.0,
                 currency: "ZIP",
-                address: "ZIP-DEMO-NODE-123456789",
+                address: "ZIP-DEMO",
                 symbol: "ZIPc"
             });
         }

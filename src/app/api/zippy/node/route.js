@@ -1,5 +1,22 @@
 import { NextResponse } from "next/server";
-const zippyNodeManager = require('../../../../../sidecar/zippy-node-manager');
+import path from "path";
+import { createRequire } from "module";
+
+let zippyNodeManager;
+try {
+  const require = createRequire(import.meta.url);
+  const sidecarPath = path.join(process.cwd(), "sidecar", "zippy-node-manager.js");
+  zippyNodeManager = require(sidecarPath);
+} catch {
+  zippyNodeManager = {
+    getLogs: () => [],
+    getStatus: () => ({ running: false, error: "Sidecar manager not loaded" }),
+    start: async () => {},
+    stop: async () => {},
+    dialPeer: async () => ({}),
+    blockPeer: async () => ({}),
+  };
+}
 
 export async function GET(request) {
     const { searchParams } = new URL(request.url);

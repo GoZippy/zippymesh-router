@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card } from "@/shared/components/Card";
-import { Button } from "@/shared/components/Button";
-import { Input } from "@/shared/components/Input";
-import { Select } from "@/shared/components/Select";
+import Card from "@/shared/components/Card";
+import Button from "@/shared/components/Button";
+import Input from "@/shared/components/Input";
+import Select from "@/shared/components/Select";
 import Badge from "@/shared/components/Badge";
 import { getWalletBalance } from "@/lib/sidecar";
 import Link from "next/link";

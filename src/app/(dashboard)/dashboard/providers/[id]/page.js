@@ -7,6 +7,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, Toggle, Select } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { getProviderUrls, getProviderIconUrl } from "@/shared/constants/provider-urls";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
@@ -124,6 +125,12 @@ export default function ProviderDetailPage() {
     fetchConnections();
     fetchAliases();
 
+    // Refetch when tab gains focus (e.g. after OAuth popup closes) so new connection appears even if postMessage was missed
+    const handleFocus = () => fetchConnections();
+    window.addEventListener("focus", handleFocus);
+    const handleVisibility = () => { if (document.visibilityState === "visible") fetchConnections(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+
     // Listen for re-auth requests from edit modal
     const handleReauth = (e) => {
       if (e.detail?.provider === providerId) {
@@ -132,7 +139,11 @@ export default function ProviderDetailPage() {
       }
     };
     window.addEventListener("trigger-oauth-flow", handleReauth);
-    return () => window.removeEventListener("trigger-oauth-flow", handleReauth);
+    return () => {
+      window.removeEventListener("trigger-oauth-flow", handleReauth);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, [fetchConnections, fetchAliases, providerId]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
@@ -180,8 +191,9 @@ export default function ProviderDetailPage() {
   };
 
   const handleOAuthSuccess = useCallback(() => {
-    fetchConnections();
     setShowOAuthModal(false);
+    // Brief delay so server has committed the new connection before we refetch
+    setTimeout(() => fetchConnections(), 400);
   }, [fetchConnections]);
 
   const handleSaveApiKey = async (formData) => {
@@ -391,12 +403,12 @@ export default function ProviderDetailPage() {
   // Determine icon path: OpenAI Compatible providers use specialized icons
   const getHeaderIconPath = () => {
     if (isOpenAICompatible && providerInfo.apiType) {
-      return providerInfo.apiType === "responses" ? "/providers/oai-r.png" : "/providers/oai-cc.png";
+      return getProviderIconUrl(providerInfo.apiType === "responses" ? "oai-r" : "oai-cc");
     }
     if (isAnthropicCompatible) {
-      return "/providers/anthropic-m.png";
+      return getProviderIconUrl("anthropic-m");
     }
-    return `/providers/${providerInfo.id}.png`;
+    return getProviderIconUrl(providerInfo.id);
   };
 
   return (
@@ -431,12 +443,40 @@ export default function ProviderDetailPage() {
               />
             )}
           </div>
-          <div>
+          <div className="flex-1 min-w-0">
             <h1 className="text-3xl font-semibold tracking-tight">{providerInfo.name}</h1>
             <p className="text-text-muted">
               {connections.length} connection{connections.length === 1 ? "" : "s"}
             </p>
           </div>
+          {(() => {
+            const urls = getProviderUrls(providerId);
+            if (!urls?.signupUrl) return null;
+            return (
+              <div className="flex gap-2 shrink-0">
+                <a
+                  href={urls.signupUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-background hover:bg-sidebar text-sm font-medium transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">open_in_new</span>
+                  Sign up
+                </a>
+                {urls.infoUrl && urls.infoUrl !== urls.signupUrl && (
+                  <a
+                    href={urls.infoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-background hover:bg-sidebar text-sm font-medium transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-base">info</span>
+                    Docs
+                  </a>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 

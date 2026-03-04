@@ -44,9 +44,13 @@ export class AntigravityService {
     };
     
     const clientSecret = await resolveOAuthClientSecret("antigravity", this.config);
-    if (clientSecret) {
-      payload.client_secret = clientSecret;
+    if (!clientSecret) {
+      throw new Error(
+        "Antigravity OAuth is not configured: set ANTIGRAVITY_CLIENT_SECRET in .env (see .env.example). " +
+        "Get the secret from Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client."
+      );
     }
+    payload.client_secret = clientSecret;
 
     const response = await fetch(this.config.tokenUrl, {
       method: "POST",

@@ -259,6 +259,14 @@ flowchart TD
 
 Fallback decisions are driven by `open-sse/services/accountFallback.js` using status codes and error-message heuristics.
 
+## Request Flow: Engine vs Orchestrator
+
+- **Chat handler** (`src/sse/handlers/chat.js`): Validates body, resolves combo vs single model, reads optional headers (`X-Zippy-Client-Id`, `X-Zippy-Device-Id`, `X-Zippy-Intent`), and calls the orchestrator.
+- **Orchestrator** (`src/sse/services/orchestrator.js`): Builds routing context (tokens, intent, userGroup, clientId, deviceId, settings). Calls **routing engine** to get an ordered list of candidates. Tries each candidate in order via `handleChatCore`; on 4xx returns immediately; on 5xx/429 calls `onFailure` and tries the next. Returns the first successful response or a 429 with normalized `alternatives` and `Retry-After` when all fail.
+- **Routing engine** (`src/lib/routing/engine.js`): **Playbook selection** (by intent, group, pool, client, device), **candidate gathering** (equivalent models + connections), **rate-limit filtering**, **routing filters** (trust, cost, latency, country, IP), **scoring/sorting**. Optional: **routing memory** bias (when `enableRoutingMemory` is on), **vision boost** for image requests (`hasImage`), **external router** merge when `externalRouterUrl` is set (POST context, receive `suggestedModelIds`, reorder candidates). Optionally appends free-tier candidates when `preferFreeOnRateLimit` is on. Does not perform requests; only returns an ordered list of (connection, provider, model).
+
+Single source for provider/model and alias: `open-sse/config/providerModels.js` (PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS), re-exported by `src/shared/constants/models.js`. Used by GET /v1/models, routing, and 429 alternatives normalization.
+
 ## OAuth Onboarding and Token Refresh Lifecycle
 
 ```mermaid

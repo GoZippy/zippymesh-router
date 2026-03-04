@@ -73,12 +73,39 @@ export function fixToolUseOrdering(messages) {
   return merged;
 }
 
+// Extract text from message content
+function extractTextFromContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.filter(c => c.type === "text").map(c => c.text).join("\n");
+  }
+  return "";
+}
+
 // Prepare request for Claude format endpoints
+// - Extract system-role messages to top-level system (Claude API requires this)
 // - Cleanup cache_control
 // - Filter empty messages
 // - Add thinking block for Anthropic endpoint (provider === "claude")
 // - Fix tool_use/tool_result ordering
 export function prepareClaudeRequest(body, provider = null) {
+  // 0. Claude Messages API: system must be top-level param, not message role
+  if (body.messages?.some(m => m.role === "system")) {
+    const systemParts = [];
+    for (const msg of body.messages) {
+      if (msg.role === "system") {
+        const text = extractTextFromContent(msg.content);
+        if (text) systemParts.push(text);
+      }
+    }
+    body.messages = body.messages.filter(m => m.role !== "system");
+    if (systemParts.length > 0) {
+      const systemText = systemParts.join("\n");
+      const newBlock = { type: "text", text: systemText };
+      body.system = Array.isArray(body.system) ? [...body.system, newBlock] : [newBlock];
+    }
+  }
+
   // 1. System: remove all cache_control, add only to last block with ttl 1h
   if (body.system && Array.isArray(body.system)) {
     body.system = body.system.map((block, i) => {

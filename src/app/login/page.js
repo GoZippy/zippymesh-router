@@ -114,7 +114,7 @@ export default function LoginPage() {
             </Button>
 
             <p className="text-xs text-center text-text-muted mt-2">
-              Default password is <code className="bg-sidebar px-1 rounded">123456</code>
+              Use INITIAL_PASSWORD from .env for first-time login
             </p>
           </form>
         </Card>

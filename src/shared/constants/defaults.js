@@ -98,6 +98,18 @@ export const SMART_PLAYBOOK_TEMPLATES = [
             { type: "filter-in", target: "cerebras", value: "cerebras" },
             { type: "stack", target: "groq,cerebras,openrouter", value: "failover" }
         ]
+    },
+    {
+        id: "tpl-simple-local",
+        name: "Simple Tasks (Local First)",
+        description: "Route generic/simple tasks to local models (Ollama, LM Studio) when available.",
+        trigger: { type: "intent", value: "generic" },
+        rules: [
+            { type: "boost", target: "ollama", value: 50000 },
+            { type: "boost", target: "lmstudio", value: 50000 },
+            { type: "boost", target: "local", value: 50000 },
+            { type: "stack", target: "ollama,lmstudio,openai,anthropic,gemini,groq", value: "failover" }
+        ]
     }
 ];
 
@@ -106,8 +118,15 @@ export const INITIAL_SETTINGS = {
     stickyRoundRobinLimit: 3,
     requireLogin: true,
     requireApiKey: false,
+    enforceDeviceIdVerification: false,
     routingMode: "auto", // auto | playbook | default
     defaultPlaybookId: "pb-balanced-default",
+    enableCrossProviderFailover: true,
+    autoFailoverToEquivalents: true,
+    preferFreeOnRateLimit: false,
+    enableRoutingMemory: false,
+    externalRouterUrl: "", // Optional: POST routing context, receive suggested model order to merge
+    preferLocalForSimpleTasks: true,
     autoDiscovery: true,
     isDemoMode: false,
     dashboardView: "simple",

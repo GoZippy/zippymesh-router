@@ -18,7 +18,8 @@ export async function OPTIONS() {
 
 /**
  * GET /v1/models - OpenAI compatible models list
- * Returns models from all active providers and combos in OpenAI format
+ * Returns models from all active providers and combos in OpenAI format.
+ * Clients must use the exact `id` from this response as the `model` in POST /v1/chat/completions.
  */
 export async function GET() {
   try {

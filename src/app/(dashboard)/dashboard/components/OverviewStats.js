@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 import { Card, CardSkeleton, Badge, Button } from "@/shared/components";
 import BarChart from "@/shared/components/BarChart";
 
@@ -111,7 +112,7 @@ export default function OverviewStats() {
                         <BarChart
                             data={last24h.map(h => h.requests)}
                             colorClass="bg-blue-500/50"
-                            showTooltip={false}
+                            showTooltip={true}
                         />
                     </div>
                 </Card>
@@ -130,7 +131,7 @@ export default function OverviewStats() {
                         <BarChart
                             data={last24h.map(h => h.errors || 0)}
                             colorClass="bg-red-500/50"
-                            showTooltip={false}
+                            showTooltip={true}
                         />
                     </div>
                 </Card>
@@ -146,7 +147,7 @@ export default function OverviewStats() {
                         <BarChart
                             data={last24h.map(h => h.cost)}
                             colorClass="bg-green-500/50"
-                            showTooltip={false}
+                            showTooltip={true}
                         />
                     </div>
                 </Card>
@@ -171,18 +172,49 @@ export default function OverviewStats() {
                         <h3 className="font-semibold text-lg">Throughput</h3>
                         <span className="text-xs text-text-muted">Requests / Hour</span>
                     </div>
-                    <div className="h-48 w-full flex items-end">
-                        <BarChart
-                            data={last24h.map(h => h.requests)}
-                            colorClass="bg-primary/80 hover:bg-primary transition-colors"
-                            height="h-full"
-                        />
-                    </div>
-                    {/* X-Axis Labels (Simplified) */}
-                    <div className="flex justify-between text-xs text-text-muted px-1">
-                        <span>24h ago</span>
-                        <span>12h ago</span>
-                        <span>Now</span>
+                    <div className="h-48 w-full">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 192 }}>
+                            <RechartsBarChart data={last24h} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorThroughput" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0.4} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
+                                <XAxis
+                                    dataKey="timestamp"
+                                    tickFormatter={(t) => new Date(t).getHours() + "h"}
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={40}
+                                />
+                                <YAxis
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    allowDecimals={false}
+                                />
+                                <Tooltip
+                                    content={({ active, payload, label }) =>
+                                        active && payload?.[0] ? (
+                                            <div className="bg-surface border border-border p-3 rounded-lg shadow-lg text-xs text-text-main">
+                                                <p className="font-semibold mb-1">{new Date(label).toLocaleString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>
+                                                <p className="text-primary">Requests: {payload[0].value}</p>
+                                                {payload[0].payload?.errors > 0 && (
+                                                    <p className="text-red-500">Errors: {payload[0].payload.errors}</p>
+                                                )}
+                                            </div>
+                                        ) : null
+                                    }
+                                    cursor={{ fill: "var(--color-bg-alt)", opacity: 0.5 }}
+                                />
+                                <Bar dataKey="requests" fill="url(#colorThroughput)" radius={[4, 4, 0, 0]} maxBarSize={32} />
+                            </RechartsBarChart>
+                        </ResponsiveContainer>
                     </div>
                 </Card>
 
@@ -192,16 +224,99 @@ export default function OverviewStats() {
                         <h3 className="font-semibold text-lg">Cost Efficiency</h3>
                         <span className="text-xs text-text-muted">USD / Hour</span>
                     </div>
-                    <div className="h-48 w-full flex items-end">
-                        <BarChart
-                            data={last24h.map(h => h.cost)}
-                            colorClass="bg-green-500/60 hover:bg-green-500 transition-colors"
-                            height="h-full"
-                        />
+                    <div className="h-48 w-full">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 192 }}>
+                            <AreaChart data={last24h} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorCost" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
+                                <XAxis
+                                    dataKey="timestamp"
+                                    tickFormatter={(t) => new Date(t).getHours() + "h"}
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={30}
+                                />
+                                <YAxis
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickFormatter={(v) => (v >= 0.01 ? `$${v.toFixed(2)}` : v > 0 ? `$${v.toFixed(4)}` : "$0")}
+                                />
+                                <Tooltip
+                                    content={({ active, payload, label }) =>
+                                        active && payload?.[0] ? (
+                                            <div className="bg-surface border border-border p-3 rounded-lg shadow-lg text-xs text-text-main">
+                                                <p className="font-semibold mb-1">{new Date(label).toLocaleString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>
+                                                <p className="text-green-500 dark:text-green-400 font-medium">Cost: ${payload[0].value.toFixed(4)}</p>
+                                                {payload[0].payload?.requests > 0 && (
+                                                    <p className="text-text-muted mt-1">Requests: {payload[0].payload.requests}</p>
+                                                )}
+                                            </div>
+                                        ) : null
+                                    }
+                                    cursor={{ stroke: "var(--color-border)", strokeWidth: 1 }}
+                                />
+                                <Area type="monotone" dataKey="cost" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorCost)" />
+                            </AreaChart>
+                        </ResponsiveContainer>
                     </div>
-                    <div className="flex justify-between text-xs text-text-muted px-1">
-                        <span>24h ago</span>
-                        <span>Now</span>
+                </Card>
+
+                {/* Token Usage Chart */}
+                <Card className="lg:col-span-3 p-6 flex flex-col gap-4">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-lg">Token Usage</h3>
+                        <span className="text-xs text-text-muted">Input / Output per Hour</span>
+                    </div>
+                    <div className="h-48 w-full">
+                        <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 192 }}>
+                            <RechartsBarChart data={last24h} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" opacity={0.5} />
+                                <XAxis
+                                    dataKey="timestamp"
+                                    tickFormatter={(t) => new Date(t).getHours() + "h"}
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    minTickGap={30}
+                                />
+                                <YAxis
+                                    stroke="var(--color-text-muted)"
+                                    tick={{ fill: "var(--color-text-muted)", fontSize: 10 }}
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v)}
+                                />
+                                <Tooltip
+                                    content={({ active, payload, label }) => {
+                                        if (!active || !payload?.length || !payload[0]?.payload) return null;
+                                        const p = payload[0].payload;
+                                        const input = p.promptTokens || 0;
+                                        const output = p.completionTokens || 0;
+                                        return (
+                                            <div className="bg-surface border border-border p-3 rounded-lg shadow-lg text-xs text-text-main">
+                                                <p className="font-semibold mb-1">{new Date(label).toLocaleString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</p>
+                                                <p className="text-blue-500">Input: {input.toLocaleString()}</p>
+                                                <p className="text-green-500">Output: {output.toLocaleString()}</p>
+                                                <p className="text-text-muted mt-1 pt-1 border-t border-border/50">Total: {(input + output).toLocaleString()}</p>
+                                            </div>
+                                        );
+                                    }}
+                                    cursor={{ fill: "var(--color-bg-alt)", opacity: 0.5 }}
+                                />
+                                <Bar dataKey="promptTokens" stackId="a" fill="#3b82f6" radius={[0, 0, 4, 4]} maxBarSize={40} name="Input" />
+                                <Bar dataKey="completionTokens" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} name="Output" />
+                            </RechartsBarChart>
+                        </ResponsiveContainer>
                     </div>
                 </Card>
             </div>

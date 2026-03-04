@@ -3,9 +3,6 @@ import { getRouterApiKey, revokeRouterApiKey, createRouterApiKey } from "@/lib/l
 import { isAuthenticated } from "@/lib/auth/login.js";
 import { getSettings } from "@/lib/localDb.js";
 
-// cloud sync helpers
-const isCloudEnabled = async () => false;
-
 // POST /api/keys/[id]/regenerate - Revoke old key, create new one, return new key
 export async function POST(request, { params }) {
   const auth = await isAuthenticated();

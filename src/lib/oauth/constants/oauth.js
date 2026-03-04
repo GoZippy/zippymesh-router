@@ -63,9 +63,12 @@ export const IFLOW_CONFIG = {
 };
 
 // Antigravity OAuth Configuration (Standard OAuth2 with Google)
+// Dev fallback so Connect works without .env when using open-sse dev credentials
+const ANTIGRAVITY_DEV_SECRET =
+  process.env.NODE_ENV === "development" ? "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" : null;
 export const ANTIGRAVITY_CONFIG = {
   clientId: process.env.ANTIGRAVITY_CLIENT_ID || "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-  clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || "REDACTED_IN_SOURCE",
+  clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || ANTIGRAVITY_DEV_SECRET || "REDACTED_IN_SOURCE",
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenUrl: "https://oauth2.googleapis.com/token",
   userInfoUrl: "https://www.googleapis.com/oauth2/v1/userinfo",

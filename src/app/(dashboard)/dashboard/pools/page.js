@@ -171,11 +171,15 @@ export default function PoolsPage() {
                                                             height={20}
                                                             className="object-contain max-h-[20px] max-w-[20px]"
                                                             onError={(e) => {
-                                                                e.currentTarget.style.display = 'none';
-                                                                e.currentTarget.parentElement.innerText = (provider.textIcon || conn.provider.substring(0, 2)).toUpperCase();
-                                                                e.currentTarget.parentElement.style.color = provider.color;
-                                                                e.currentTarget.parentElement.style.fontSize = '12px';
-                                                                e.currentTarget.parentElement.style.fontWeight = 'bold';
+                                                                const el = e?.currentTarget;
+                                                                const parent = el?.parentElement;
+                                                                if (el) el.style.display = 'none';
+                                                                if (parent) {
+                                                                    parent.innerText = (provider.textIcon || conn.provider.substring(0, 2)).toUpperCase();
+                                                                    parent.style.color = provider.color;
+                                                                    parent.style.fontSize = '12px';
+                                                                    parent.style.fontWeight = 'bold';
+                                                                }
                                                             }}
                                                         />
                                                     </div>

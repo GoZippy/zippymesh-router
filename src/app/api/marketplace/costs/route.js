@@ -3,9 +3,10 @@ import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { getPricing } from "@/lib/localDb.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
 
+/** Convert to USD per 1M tokens. Pricing stores $/1M directly. */
 function asUsdPerM(value) {
   const number = Number(value);
-  return Number.isFinite(number) ? number * 1000 : 0;
+  return Number.isFinite(number) ? number : 0;
 }
 
 export async function GET() {

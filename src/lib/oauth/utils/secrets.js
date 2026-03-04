@@ -38,21 +38,26 @@ export async function resolveOAuthClientSecret(providerName, config) {
     );
   }
 
-  // Fallback to open-sse config (only in development or if explicitly configured)
-  try {
-    const { PROVIDERS: OPEN_SSE_PROVIDERS } = await import("../../../../open-sse/config/constants.js");
-    const fallback = OPEN_SSE_PROVIDERS?.[providerName]?.clientSecret;
-    if (isUsableClientSecret(fallback)) {
-      if (!isDevelopment) {
-        console.warn(
-          `[OAuth] Using fallback client secret for "${providerName}" from open-sse config. ` +
-          `This should be configured in the primary OAuth constants for production.`
-        );
+  // Fallback to open-sse config (only in development - never in production)
+  // Use path from cwd so this works when running from Next compiled output (.next/server).
+  if (isDevelopment) {
+    try {
+      const path = (await import("path")).default;
+      const { pathToFileURL } = await import("url");
+      const constantsPath = path.join(process.cwd(), "open-sse", "config", "constants.js");
+      const { PROVIDERS: OPEN_SSE_PROVIDERS } = await import(pathToFileURL(constantsPath).href);
+      const fallback = OPEN_SSE_PROVIDERS?.[providerName]?.clientSecret;
+      if (isUsableClientSecret(fallback)) {
+        return fallback.trim();
       }
-      return fallback.trim();
+    } catch (error) {
+      // Optional fallback only; ignore if open-sse constants are unavailable.
     }
-  } catch (error) {
-    // Optional fallback only; ignore if open-sse constants are unavailable.
+  } else {
+    console.warn(
+      `[OAuth] Fallback client secret for "${providerName}" blocked in production. ` +
+      `Set OAUTH_${providerName.toUpperCase()}_CLIENT_SECRET environment variable.`
+    );
   }
 
   return null;

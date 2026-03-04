@@ -219,7 +219,7 @@ async function testOAuthConnection(connection) {
           const { openaiToAntigravityRequest } = await import("open-sse/translator/request/openai-to-gemini.js");
           const executor = new AntigravityExecutor();
           const testBody = {
-            model: "gemini-1.5-flash", // Use a light model
+            model: "ag/gemini-2.5-flash", // Use a light antigravity model
             messages: [{ role: "user", content: "hi" }],
             max_tokens: 1,
             stream: false

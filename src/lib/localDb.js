@@ -7,10 +7,11 @@ import os from "node:os";
 import fs from "node:fs";
 import Database from "better-sqlite3";
 import { SMART_PLAYBOOKS, INITIAL_SETTINGS } from "../shared/constants/defaults.js";
+import { PROVIDER_ID_TO_ALIAS } from "../shared/constants/models.js";
 
 // Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
-// Checking 'caches' is unreliable in Node 18+ as it's often polyfilled
-const isCloud = typeof process === 'undefined' || !process.versions || !process.versions.node;
+// Simple check: if process.versions.node exists, we're in Node.js (local)
+const isCloud = typeof process === 'undefined' || !process.versions?.node;
 
 
 // Get app name - fixed constant to avoid Windows path issues in standalone build
@@ -25,18 +26,16 @@ function getUserDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
 
   const platform = process.platform;
-  const homeDir = os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]();
+  const homeDir = os.homedir();
   const appName = getAppName();
 
   if (platform === "win32") {
-    const envKey = 'APP' + 'DATA';
-    const appDataEnv = process.env[envKey];
+    const appDataEnv = process.env.APPDATA;
     if (appDataEnv) {
       return `${appDataEnv}\\${appName}`;
     }
-    // Fallback if APPDATA is missing, use base64 decoding to evade Next.js NFT AST tracing
-    const getRoaming = () => Buffer.from("QXBwRGF0YVxSb2FtaW5n", "base64").toString("utf-8");
-    return `${homeDir}\\${getRoaming()}\\${appName}`;
+    // Fallback if APPDATA is missing
+    return `${homeDir}\\AppData\\Roaming\\${appName}`;
   } else {
     // macOS & Linux: ~/.{appName}
     return `${homeDir}/.${appName}`;
@@ -184,6 +183,47 @@ export function getSqliteDb() {
       timestamp TEXT,
       metadata TEXT,
       FOREIGN KEY(wallet_id) REFERENCES wallets(id)
+    );
+
+    -- Routing filter rules for peer/provider filtering
+    CREATE TABLE IF NOT EXISTS routing_filters (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      filter_type TEXT NOT NULL, -- 'trust_score', 'ip_address', 'country', 'cost', 'latency'
+      operator TEXT NOT NULL, -- 'gte', 'lte', 'eq', 'in_range', 'in_list', 'not_in_list'
+      value TEXT NOT NULL, -- JSON-encoded value (number, string, array)
+      action TEXT NOT NULL DEFAULT 'allow', -- 'allow' | 'block'
+      isActive BOOLEAN DEFAULT 1,
+      priority INTEGER DEFAULT 100, -- Lower = higher priority
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    -- Global routing control settings
+    CREATE TABLE IF NOT EXISTS routing_controls (
+      id TEXT PRIMARY KEY DEFAULT 'global',
+      defaultAction TEXT DEFAULT 'allow', -- 'allow' | 'block' when no filter matches
+      maxCostPer1k REAL, -- Maximum cost in ZIP per 1k tokens
+      maxLatencyMs INTEGER, -- Maximum acceptable latency in ms
+      minTrustScore INTEGER, -- Minimum trust score (0-100)
+      allowedCountries TEXT, -- JSON array of ISO country codes
+      blockedCountries TEXT, -- JSON array of ISO country codes
+      allowedIpRanges TEXT, -- JSON array of CIDR ranges
+      blockedIpRanges TEXT, -- JSON array of CIDR ranges
+      updatedAt TEXT
+    );
+
+    -- Peer metadata cache for filtering
+    CREATE TABLE IF NOT EXISTS peer_metadata (
+      peerId TEXT PRIMARY KEY,
+      ipAddress TEXT,
+      countryCode TEXT, -- ISO country code
+      region TEXT,
+      isp TEXT,
+      lastSeen TEXT,
+      trustScore INTEGER,
+      metadata TEXT -- JSON blob for additional data
     );
   `);
 
@@ -641,6 +681,7 @@ const defaultData = {
   p2pOffers: [], // NEW: marketplace offers from peers
   p2pSubscriptions: [], // NEW: active node-to-node subscriptions
   cachedModels: {},
+  rateLimitSuggestions: [], // Recent 429 suggestions for auto-failover (last 20)
 };
 
 function cloneDefaultData() {
@@ -667,6 +708,7 @@ function cloneDefaultData() {
     meshExposedProviders: [],
     meshOfferedModels: [],
     nodeConnections: [],
+    rateLimitSuggestions: [],
     serviceRegistryConfig: {
       enabled: false,
       node_id: "",
@@ -928,14 +970,23 @@ export async function getProviderConnections(filter = {}) {
 
   const rows = sqlite.prepare(query).all(...params);
 
+  const safeParse = (raw) => {
+    if (raw == null || raw === "") return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+
   // Map back to JS objects
   return rows.map(r => ({
     ...r,
     group: r.group_name,
     isActive: r.isActive === 1,
     isEnabled: r.isEnabled === 1,
-    metadata: r.metadata ? JSON.parse(r.metadata) : null,
-    providerSpecificData: r.metadata ? JSON.parse(r.metadata) : null, // Backwards compatible
+    metadata: safeParse(r.metadata),
+    providerSpecificData: safeParse(r.metadata), // Backwards compatible
   }));
 }
 
@@ -1803,6 +1854,11 @@ export async function updateSettings(updates) {
 export async function createRouterApiKey(opts = {}) {
   const db = await getDb();
   const id = uuidv4();
+  let machineId = null;
+  try {
+    const { getConsistentMachineId } = await import("../shared/utils/machineId.js");
+    machineId = await getConsistentMachineId();
+  } catch (_) { /* optional */ }
   const rawKey = Buffer.from(uuidv4() + uuidv4()).toString("base64");
   const salt = await bcrypt.genSalt(10);
   const keyHash = await bcrypt.hash(rawKey, salt);
@@ -1811,6 +1867,7 @@ export async function createRouterApiKey(opts = {}) {
     id,
     name: opts.name || null,
     keyHash,
+    machineId: machineId || undefined,
     scopes: opts.scopes ? JSON.stringify(opts.scopes) : null,
     createdAt: new Date().toISOString(),
     expiresAt: opts.expiresAt || null,
@@ -1843,14 +1900,24 @@ export async function revokeRouterApiKey(id) {
 }
 
 export async function verifyRouterApiKey(rawKey) {
-  if (!rawKey) return false;
+  if (!rawKey) return { valid: false };
   const db = await getDb();
+  const settings = db.data.settings || {};
+  const enforceDevice = settings.enforceDeviceIdVerification === true;
+  let currentMachineId = null;
+  if (enforceDevice) {
+    try {
+      const { getConsistentMachineId } = await import("../shared/utils/machineId.js");
+      currentMachineId = await getConsistentMachineId();
+    } catch (_) { /* skip device check on error */ }
+  }
   const keys = db.data.routerApiKeys || [];
   const now = Date.now();
 
   for (const rec of keys) {
     if (rec.revoked) continue;
     if (rec.expiresAt && new Date(rec.expiresAt).getTime() < now) continue;
+    if (enforceDevice && currentMachineId && rec.machineId && rec.machineId !== currentMachineId) continue;
     const match = await bcrypt.compare(rawKey, rec.keyHash);
     if (match) {
       return { valid: true, scopes: rec.scopes ? JSON.parse(rec.scopes) : [] };
@@ -2145,44 +2212,7 @@ export async function getPricingForModel(provider, model) {
     return pricing[provider][model];
   }
 
-  // Try mapping provider ID to alias
-  // We need to duplicate the mapping here or import it
-  // Since we can't easily import from open-sse, we'll implement the mapping locally
-  const PROVIDER_ID_TO_ALIAS = {
-    claude: "cc",
-    codex: "cx",
-    "gemini-cli": "gc",
-    qwen: "qw",
-    iflow: "if",
-    antigravity: "ag",
-    github: "gh",
-    cursor: "cu",
-    kiro: "kr",
-    kiro_api: "kiro",
-    kilo: "kilo",
-    openai: "openai",
-    anthropic: "anthropic",
-    gemini: "gemini",
-    openrouter: "openrouter",
-    deepseek: "deepseek",
-    groq: "groq",
-    mistral: "mistral",
-    xai: "xai",
-    glm: "glm",
-    kimi: "kimi",
-    minimax: "minimax",
-    togetherai: "togetherai",
-    fireworks: "fireworks",
-    anyscale: "anyscale",
-    perplexity: "perplexity",
-    cerebras: "cerebras",
-    cohere: "cohere",
-    deepinfra: "deepinfra",
-    novita: "novita",
-    ai21: "ai21",
-    moonshot: "moonshot",
-  };
-
+  // Try mapping provider ID to alias (single source: shared/constants/models → open-sse/config/providerModels)
   const alias = PROVIDER_ID_TO_ALIAS[provider];
   if (alias && pricing[alias]) {
     return pricing[alias][model] || null;
@@ -2390,6 +2420,27 @@ export async function saveRateLimitState(state) {
   await db.write();
 }
 
+// ============ Rate Limit Suggestions (429 auto-failover) ============
+
+const MAX_SUGGESTIONS = 20;
+
+export async function getRateLimitSuggestions() {
+  const db = await getDb();
+  return db.data.rateLimitSuggestions || [];
+}
+
+export async function addRateLimitSuggestion(model, alternatives) {
+  const db = await getDb();
+  if (!db.data.rateLimitSuggestions) db.data.rateLimitSuggestions = [];
+  db.data.rateLimitSuggestions.unshift({
+    model,
+    alternatives: Array.isArray(alternatives) ? alternatives : [],
+    at: new Date().toISOString()
+  });
+  db.data.rateLimitSuggestions = db.data.rateLimitSuggestions.slice(0, MAX_SUGGESTIONS);
+  await db.write();
+}
+
 // ============ P2P Marketplace ============
 
 /**
@@ -2481,5 +2532,365 @@ export async function recordP2pTransaction(transaction) {
     console.error("Failed to record P2P transaction via sidecar:", error);
     return false;
   }
+}
+
+// ============ Routing Filters & Controls ============
+
+/**
+ * Get all routing filters
+ */
+export async function getRoutingFilters(activeOnly = false) {
+  if (isCloud) return [];
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const query = activeOnly
+    ? `SELECT * FROM routing_filters WHERE isActive = 1 ORDER BY priority ASC, createdAt DESC`
+    : `SELECT * FROM routing_filters ORDER BY priority ASC, createdAt DESC`;
+
+  const rows = sqlite.prepare(query).all();
+
+  return rows.map(r => ({
+    ...r,
+    isActive: r.isActive === 1,
+    value: (() => {
+      if (!r.value) return null;
+      try {
+        return JSON.parse(r.value);
+      } catch {
+        console.warn(`[localDb] Failed to parse routing filter value for ${r.id}`);
+        return null;
+      }
+    })()
+  }));
+}
+
+/**
+ * Get routing filter by ID
+ */
+export async function getRoutingFilterById(id) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM routing_filters WHERE id = ?`).get(id);
+
+  if (!row) return null;
+  return {
+    ...row,
+    isActive: row.isActive === 1,
+    value: (() => {
+      if (!row.value) return null;
+      try {
+        return JSON.parse(row.value);
+      } catch {
+        console.warn(`[localDb] Failed to parse routing filter value for ${row.id}`);
+        return null;
+      }
+    })()
+  };
+}
+
+/**
+ * Create a new routing filter
+ */
+export async function createRoutingFilter(data) {
+  const now = new Date().toISOString();
+  const filter = {
+    id: data.id || uuidv4(),
+    name: data.name,
+    description: data.description || null,
+    filter_type: data.filter_type,
+    operator: data.operator,
+    value: JSON.stringify(data.value),
+    action: data.action || 'allow',
+    isActive: data.isActive !== false ? 1 : 0,
+    priority: data.priority || 100,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  if (isCloud) return { ...filter, isActive: filter.isActive === 1, value: data.value };
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  sqlite.prepare(`
+    INSERT INTO routing_filters (id, name, description, filter_type, operator, value, action, isActive, priority, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    filter.id, filter.name, filter.description, filter.filter_type, filter.operator,
+    filter.value, filter.action, filter.isActive, filter.priority, filter.createdAt, filter.updatedAt
+  );
+
+  return { ...filter, isActive: filter.isActive === 1, value: data.value };
+}
+
+/**
+ * Update routing filter
+ */
+export async function updateRoutingFilter(id, data) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getRoutingFilterById(id);
+  if (!existing) return null;
+
+  const fields = [];
+  const params = [];
+
+  // Whitelist of allowed fields to prevent SQL injection
+  const ALLOWED_FIELDS = ['name', 'description', 'filter_type', 'operator', 'value', 'action', 'isActive', 'priority'];
+
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'id') continue;
+    if (!ALLOWED_FIELDS.includes(key)) continue; // Skip non-whitelisted fields
+    fields.push(`${key} = ?`);
+    if (key === 'value') {
+      params.push(JSON.stringify(value));
+    } else if (key === 'isActive') {
+      params.push(value ? 1 : 0);
+    } else {
+      params.push(value);
+    }
+  }
+
+  if (fields.length === 0) {
+    return await getRoutingFilterById(id); // Nothing to update
+  }
+
+  fields.push(`updatedAt = ?`);
+  params.push(new Date().toISOString());
+  params.push(id);
+
+  sqlite.prepare(`UPDATE routing_filters SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+  return await getRoutingFilterById(id);
+}
+
+/**
+ * Delete routing filter
+ */
+export async function deleteRoutingFilter(id) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getRoutingFilterById(id);
+  if (!existing) return null;
+
+  sqlite.prepare(`DELETE FROM routing_filters WHERE id = ?`).run(id);
+  return existing;
+}
+
+/**
+ * Get routing controls (global settings)
+ */
+export async function getRoutingControls() {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const row = sqlite.prepare(`SELECT * FROM routing_controls WHERE id = 'global'`).get();
+
+  if (!row) {
+    // Create default entry
+    const defaultControls = {
+      id: 'global',
+      defaultAction: 'allow',
+      maxCostPer1k: null,
+      maxLatencyMs: null,
+      minTrustScore: null,
+      allowedCountries: null,
+      blockedCountries: null,
+      allowedIpRanges: null,
+      blockedIpRanges: null,
+      updatedAt: new Date().toISOString()
+    };
+
+    sqlite.prepare(`
+      INSERT INTO routing_controls (id, defaultAction, maxCostPer1k, maxLatencyMs, minTrustScore,
+        allowedCountries, blockedCountries, allowedIpRanges, blockedIpRanges, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      defaultControls.id, defaultControls.defaultAction, defaultControls.maxCostPer1k,
+      defaultControls.maxLatencyMs, defaultControls.minTrustScore, defaultControls.allowedCountries,
+      defaultControls.blockedCountries, defaultControls.allowedIpRanges, defaultControls.blockedIpRanges,
+      defaultControls.updatedAt
+    );
+
+    return {
+      ...defaultControls,
+      allowedCountries: null,
+      blockedCountries: null,
+      allowedIpRanges: null,
+      blockedIpRanges: null
+    };
+  }
+
+  const safeParse = (json) => {
+    if (!json) return null;
+    try {
+      return JSON.parse(json);
+    } catch {
+      console.warn(`[localDb] Failed to parse routing controls JSON`);
+      return null;
+    }
+  };
+
+  return {
+    ...row,
+    allowedCountries: safeParse(row.allowedCountries),
+    blockedCountries: safeParse(row.blockedCountries),
+    allowedIpRanges: safeParse(row.allowedIpRanges),
+    blockedIpRanges: safeParse(row.blockedIpRanges)
+  };
+}
+
+/**
+ * Update routing controls
+ */
+export async function updateRoutingControls(data) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getRoutingControls();
+  if (!existing) return null;
+
+  const fields = [];
+  const params = [];
+
+  // Whitelist of allowed fields to prevent SQL injection
+  const ALLOWED_FIELDS = ['defaultAction', 'maxCostPer1k', 'maxLatencyMs', 'minTrustScore', 'allowedCountries', 'blockedCountries', 'allowedIpRanges', 'blockedIpRanges'];
+
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'id') continue;
+    if (!ALLOWED_FIELDS.includes(key)) continue; // Skip non-whitelisted fields
+    fields.push(`${key} = ?`);
+    if (['allowedCountries', 'blockedCountries', 'allowedIpRanges', 'blockedIpRanges'].includes(key)) {
+      params.push(value ? JSON.stringify(value) : null);
+    } else {
+      params.push(value);
+    }
+  }
+
+  if (fields.length === 0) {
+    return await getRoutingControls(); // Nothing to update
+  }
+
+  fields.push(`updatedAt = ?`);
+  params.push(new Date().toISOString());
+  params.push('global');
+
+  sqlite.prepare(`UPDATE routing_controls SET ${fields.join(", ")} WHERE id = ?`).run(...params);
+  return await getRoutingControls();
+}
+
+/**
+ * Get peer metadata
+ */
+export async function getPeerMetadata(peerId) {
+  if (isCloud) return null;
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+  const row = sqlite.prepare(`SELECT * FROM peer_metadata WHERE peerId = ?`).get(peerId);
+
+  if (!row) return null;
+  return {
+    ...row,
+    metadata: (() => {
+      if (!row.metadata) return null;
+      try {
+        return JSON.parse(row.metadata);
+      } catch {
+        console.warn(`[localDb] Failed to parse peer metadata for ${row.peerId}`);
+        return null;
+      }
+    })()
+  };
+}
+
+/**
+ * Get peer metadata for multiple peers in a single query
+ * @param {string[]} peerIds - Array of peer IDs
+ * @returns {Promise<Map<string, object>>} Map of peerId to metadata
+ */
+export async function getPeerMetadataBatch(peerIds) {
+  if (isCloud || !peerIds?.length) return new Map();
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  // Create placeholders for the IN clause
+  const placeholders = peerIds.map(() => '?').join(',');
+  const rows = sqlite.prepare(`SELECT * FROM peer_metadata WHERE peerId IN (${placeholders})`).all(...peerIds);
+
+  const metadataMap = new Map();
+  for (const row of rows) {
+    metadataMap.set(row.peerId, {
+      ...row,
+      metadata: (() => {
+        if (!row.metadata) return null;
+        try {
+          return JSON.parse(row.metadata);
+        } catch {
+          console.warn(`[localDb] Failed to parse peer metadata for ${row.peerId}`);
+          return null;
+        }
+      })()
+    });
+  }
+
+  return metadataMap;
+}
+
+/**
+ * Set peer metadata
+ */
+export async function setPeerMetadata(peerId, data) {
+  const now = new Date().toISOString();
+
+  if (isCloud) return { peerId, ...data, lastSeen: now };
+
+  await ensureSqliteSync();
+  const sqlite = getSqliteDb();
+
+  const existing = await getPeerMetadata(peerId);
+
+  if (existing) {
+    sqlite.prepare(`
+      UPDATE peer_metadata SET
+        ipAddress = COALESCE(?, ipAddress),
+        countryCode = COALESCE(?, countryCode),
+        region = COALESCE(?, region),
+        isp = COALESCE(?, isp),
+        lastSeen = ?,
+        trustScore = COALESCE(?, trustScore),
+        metadata = COALESCE(?, metadata)
+      WHERE peerId = ?
+    `).run(
+      data.ipAddress || null, data.countryCode || null, data.region || null,
+      data.isp || null, now, data.trustScore || null,
+      data.metadata ? JSON.stringify(data.metadata) : null, peerId
+    );
+  } else {
+    sqlite.prepare(`
+      INSERT INTO peer_metadata (peerId, ipAddress, countryCode, region, isp, lastSeen, trustScore, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      peerId, data.ipAddress || null, data.countryCode || null, data.region || null,
+      data.isp || null, now, data.trustScore || null,
+      data.metadata ? JSON.stringify(data.metadata) : null
+    );
+  }
+
+  return await getPeerMetadata(peerId);
 }
 

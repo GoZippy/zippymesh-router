@@ -34,7 +34,7 @@ export default function ZippyStatusBar() {
                     // If in demo mode, override status
                     if (isDemoMode) {
                         setIsConnected(true);
-                        setNodeInfo({ node_id: "demo_node_123456789", status: "running" });
+                        setNodeInfo({ node_id: "demo-node", status: "running" });
                         setNetworkStats({ peerCount: 42, health: 98 });
                         return;
                     }
@@ -49,7 +49,7 @@ export default function ZippyStatusBar() {
                 } else {
                     if (isDemoMode) {
                         setIsConnected(true);
-                        setNodeInfo({ node_id: "demo_node_123456789", status: "running" });
+                        setNodeInfo({ node_id: "demo-node", status: "running" });
                         setNetworkStats({ peerCount: 42, health: 98 });
                     } else {
                         setIsConnected(false);
