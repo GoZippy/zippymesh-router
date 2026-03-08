@@ -57,6 +57,11 @@ docs/*
 !docs/OPEN_CORE_MANIFEST.md
 !docs/RELEASE.md
 !docs/DISTRIBUTION_PLAN.md
+!docs/RUNNING.md
+!docs/SETUP.md
+!docs/API.md
+!docs/PLAYBOOKS.md
+!docs/INSTALLER_MATRIX.md
 test/*
 bin/*
 open-sse/test/*
@@ -65,6 +70,8 @@ RM.md
 cursor/*
 PUBLIC.md
 scripts/*
+!scripts/validate-open-core.cjs
+!scripts/stub-open-core.cjs
 Thanks.md
 PUBLIC.en.md
 PR/*
