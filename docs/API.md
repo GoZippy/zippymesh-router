@@ -278,7 +278,7 @@ Check if the router is running.
 ```json
 {
   "status": "ok",
-  "version": "0.2.0-alpha",
+  "version": "0.3.0-alpha",
   "uptime": 3600
 }
 ```

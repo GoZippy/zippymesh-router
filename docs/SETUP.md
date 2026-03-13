@@ -17,7 +17,7 @@ Download the latest release and extract to a folder:
 
 ```bash
 # Example
-unzip zippymesh-router-v0.2.0.zip -d ~/zippymesh
+unzip zippymesh-router-v0.3.0-alpha.zip -d ~/zippymesh
 cd ~/zippymesh
 ```
 

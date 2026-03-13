@@ -1,12 +1,12 @@
 {
   "name": "@zippy/mesh",
-  "version": "0.2.0-alpha",
+  "version": "0.3.0-alpha",
   "description": "Zippy Mesh - Standalone AI Routing & P2P Mesh",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "next dev -p 20128 --webpack",
-    "build": "node scripts/build.cjs",
+    "build": "npm run build:next",
     "build:next": "next build --webpack",
     "start": "next start -p 20128",
     "tauri": "tauri",
