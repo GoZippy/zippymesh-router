@@ -1,0 +1,37 @@
+name: Sync to GoZippy Private Mirror
+
+# Mirrors full private source to GoZippy/zippymesh-dist on every push to master/main.
+# This keeps the "official" private repo under the GoZippy account in sync with
+# the BookingBill development repo.
+
+on:
+  push:
+    branches:
+      - ZippyMesh_LLM_main
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror to GoZippy/zippymesh-dist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push mirror to GoZippy/zippymesh-dist
+        env:
+          GOZIPPY_PAT: ${{ secrets.GOZIPPY_PAT }}
+        run: |
+          # Configure git to use the PAT for github.com via the credential store
+          # (avoids URL-embedded token being intercepted by Actions' credential helper)
+          git config --global credential.helper store
+          echo "https://x-access-token:${GOZIPPY_PAT}@github.com" > ~/.git-credentials
+
+          git remote add gozippy "https://github.com/GoZippy/zippymesh-dist.git"
+          git push gozippy HEAD:ZippyMesh_LLM_main --force
+          echo "Mirrored to GoZippy/zippymesh-dist"

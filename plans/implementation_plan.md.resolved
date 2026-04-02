@@ -1,0 +1,123 @@
+# VoidSpec: Wire Real AI into Collaborative Review + ZippyMesh Model Entry
+
+## Background
+
+After a full review of all KI artifacts, planning docs (IMMEDIATE_NEXT_STEPS, LAUNCH_STATUS, Project_Fix_Action_Plan), and the live source tree, the next highest-impact step is:
+
+1. **`CollaborativeReviewManager.requestAIReview()`** currently uses a hardcoded `setTimeout(2000)` + regex heuristics (`includes('console.log')`, `includes('any')`) instead of calling the real `AIProviderManager`. This means the "AI Review" button in the extension does nothing real.
+
+2. **[ModelRecommender](file:///k:/Projects/VoidSpec/voidspec-extension/src/ai/modelRecommender.ts#65-720)** does not list `ZippyMesh` / `ZippyFlux` as a provider even though the ZippyFlux modules are already initialized at startup (`workflowImporter`, `dagExecutor`, `budgetTracker`). Adding it lets the recommender route confidential/local tasks to ZippyMesh.
+
+3. **The `voidspec.requestAIReview` command is never registered** in [extension.ts](file:///k:/Projects/VoidSpec/docs/extension.ts) — the button exists in the UI but the command would fail silently.
+
+---
+
+## Proposed Changes
+
+### Collaboration Layer
+
+#### [MODIFY] [collaborativeReviewManager.ts](file:///k:/Projects/VoidSpec/voidspec-extension/src/collaboration/collaborativeReviewManager.ts)
+
+Replace the mocked [requestAIReview()](file:///k:/Projects/VoidSpec/voidspec-extension/src/collaboration/collaborativeReviewManager.ts#87-131) body with a real call to `AIProviderManager`:
+
+- Import `AIProviderManager` at the top.
+- In [requestAIReview(document)](file:///k:/Projects/VoidSpec/voidspec-extension/src/collaboration/collaborativeReviewManager.ts#87-131), call `AIProviderManager.getInstance().getProvider()` to get the active provider.
+- Build a structured review prompt including the full document text + language + filename.
+- Parse the AI response into `{ line, message }` pairs using a simple markdown-list regex (`- Line N:`).
+- Fall back to the existing heuristic output if the provider is unavailable or returns an empty response (graceful degradation).
+
+---
+
+### AI Routing Layer
+
+#### [MODIFY] [modelRecommender.ts](file:///k:/Projects/VoidSpec/voidspec-extension/src/ai/modelRecommender.ts)
+
+Add a `ZippyMesh` entry to [initializeDefaultModels()](file:///k:/Projects/VoidSpec/voidspec-extension/src/ai/modelRecommender.ts#76-303):
+
+```typescript
+{
+  id: 'zippymesh-local',
+  name: 'ZippyMesh (Local)',
+  provider: 'zippymesh',
+  capabilities: {
+    codeGeneration: 0.82, documentation: 0.78, analysis: 0.85,
+    testing: 0.80, refactoring: 0.80, debugging: 0.82,
+    optimization: 0.78, general: 0.80
+  },
+  cost: 0,
+  speed: 0.85,
+  quality: 0.80,
+  contextLength: 32768,
+  supportsStreaming: true,
+  isLocal: true,
+  isAvailable: true,
+  usageCount: 0,
+  averageRating: 0
+}
+```
+
+This ensures ZippyMesh scores highest for `privacy: 'confidential'` projects (free + local = top scores in [calculateCostScore](file:///k:/Projects/VoidSpec/voidspec-extension/src/ai/modelRecommender.ts#378-391) and [calculatePrivacyScore](file:///k:/Projects/VoidSpec/voidspec-extension/src/ai/modelRecommender.ts#403-412)).
+
+---
+
+### Extension Entry Point
+
+#### [MODIFY] [extension.ts](file:///k:/Projects/VoidSpec/voidspec-extension/extension.ts)
+
+Register the missing `voidspec.requestAIReview` command in the `implementedCommands` block:
+
+```typescript
+'voidspec.requestAIReview': async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('No active editor for AI review.');
+        return;
+    }
+    const reviewManager = getCollaborativeReviewManager();
+    if (!reviewManager.hasActiveSession()) {
+        reviewManager.startReviewSession([editor.document.uri.fsPath]);
+    }
+    await reviewManager.requestAIReview(editor.document);
+},
+```
+
+Also add `hasActiveSession()` helper to [CollaborativeReviewManager](file:///k:/Projects/VoidSpec/voidspec-extension/src/collaboration/collaborativeReviewManager.ts#22-162) (trivial: `return this.currentSession !== undefined && this.currentSession.isActive`).
+
+---
+
+### Tests
+
+#### [NEW] [collaborativeReviewManager.test.ts](file:///k:/Projects/VoidSpec/voidspec-extension/tests/unit/collaborativeReviewManager.test.js)
+
+A unit test (following the pattern of [criticalThinkingLoop.test.js](file:///k:/Projects/VoidSpec/voidspec-extension/tests/unit/criticalThinkingLoop.test.js)) that:
+1. Mocks `AIProviderManager.getInstance().getProvider()` to return a mock provider returning a structured review response.
+2. Calls `reviewManager.requestAIReview(mockDocument)`.
+3. Asserts the resulting comments contain the AI-parsed findings (not the hardcoded heuristic strings).
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+```bash
+# From k:\Projects\VoidSpec\voidspec-extension\
+npm run compile
+
+# Run the new unit test (node-based, no extension host needed):
+node tests/unit/collaborativeReviewManager.test.js
+
+# Run existing unit tests:
+node tests/unit/criticalThinkingLoop.test.js
+node tests/unit/editParser.test.js
+```
+
+### Manual Verification
+
+1. Open VS Code with the `voidspec-extension` directory as workspace.
+2. Press `F5` to launch the Extension Development Host.
+3. Open any TypeScript file in the dev host.
+4. Open the Command Palette (`Ctrl+Shift+P`) → **"VoidSpec: Request AI Review"**.
+5. Observe the progress notification "AI Reviewing Code..."
+6. After completion, hover over highlighted lines in the gutter — you should see AI-generated comments (not just `"Consider removing console.log"` / `"Avoid using 'any' type"`).
+7. Open Command Palette → **"VoidSpec: Recommend Model"** → select "code_generation" task type → verify `ZippyMesh (Local)` appears in the list.

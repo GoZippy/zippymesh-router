@@ -1,0 +1,19 @@
+{
+  "name": "zippymesh/ask",
+  "description": "General Q&A, explanations, and documentation tasks. Prioritizes cost-effective models with good instruction following: GLM, Qwen, free tiers. For routine questions and explanations.",
+  "isActive": true,
+  "priority": 100,
+  "trigger": { "type": "intent", "value": "ask" },
+  "rules": [
+    { "type": "sort-by-cheapest", "target": "*" },
+    { "type": "boost", "target": "kilo", "value": 70000 },
+    { "type": "boost", "target": "glm-4", "value": 65000 },
+    { "type": "boost", "target": "qwen-turbo", "value": 60000 },
+    { "type": "boost", "target": "llama-3.3", "value": 55000 },
+    { "type": "boost", "target": "gemini-flash", "value": 50000 },
+    { "type": "boost", "target": "gpt-4o-mini", "value": 45000 },
+    { "type": "boost", "target": "claude-haiku", "value": 40000 },
+    { "type": "boost", "target": "groq", "value": 35000 },
+    { "type": "stack", "target": "kilo,groq,cerebras,github_models,ollama,openai,anthropic", "value": "failover" }
+  ]
+}

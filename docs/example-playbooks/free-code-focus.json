@@ -1,0 +1,17 @@
+{
+  "name": "free/code-focus",
+  "description": "Code generation using only free models. Prioritizes Groq (Llama-3.3), Cerebras, GitHub Models, Ollama local. No paid API calls.",
+  "isActive": true,
+  "priority": 90,
+  "trigger": { "type": "intent", "value": "free_code" },
+  "rules": [
+    { "type": "filter-in", "value": ["groq", "cerebras", "github_models", "kilo", "ollama", "lmstudio"] },
+    { "type": "boost", "target": "llama-3.3-70b", "value": 60000 },
+    { "type": "boost", "target": "llama-3.1-70b", "value": 55000 },
+    { "type": "boost", "target": "qwen-2.5-coder", "value": 50000 },
+    { "type": "boost", "target": "deepseek-coder", "value": 48000 },
+    { "type": "boost", "target": "codestral", "value": 45000 },
+    { "type": "boost", "target": "mixtral", "value": 40000 },
+    { "type": "stack", "target": "groq,cerebras,github_models,kilo,ollama,lmstudio", "value": "failover" }
+  ]
+}

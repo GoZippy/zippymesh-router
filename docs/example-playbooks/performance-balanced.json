@@ -1,0 +1,16 @@
+{
+  "name": "performance-balanced",
+  "description": "A balanced approach between cost and latency for general purpose use. Uses OAuth providers first, then API providers.",
+  "isActive": true,
+  "priority": 0,
+  "rules": [
+    { "type": "boost", "target": "antigravity", "value": 50000 },
+    { "type": "boost", "target": "claude", "value": 48000 },
+    { "type": "boost", "target": "cursor", "value": 45000 },
+    { "type": "boost", "target": "qwen", "value": 40000 },
+    { "type": "boost", "target": "openai", "value": 35000 },
+    { "type": "boost", "target": "anthropic", "value": 33000 },
+    { "type": "boost", "target": "gemini", "value": 30000 },
+    { "type": "stack", "target": "antigravity,claude,cursor,qwen,openai,anthropic,gemini", "value": "failover" }
+  ]
+}

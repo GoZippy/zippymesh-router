@@ -1,0 +1,51 @@
+to {
+    "_comment": "ZippyMesh Node Operator Policy — edit this file to configure your node.",
+    "node_info": {
+        "name": "My ZippyMesh Node",
+        "wallet_address": "zpc1REPLACE_WITH_YOUR_ADDRESS",
+        "rpc_url": "http://localhost:8545",
+        "public": true
+    },
+    "allowed_models": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-3-5-sonnet-20241022",
+        "gemini-2.0-flash",
+        "p2p/llama3",
+        "p2p/mistral",
+        "p2p/codestral"
+    ],
+    "pricing": {
+        "default_price_per_1k_tokens_zpc": 0.001,
+        "model_overrides": {
+            "p2p/llama3": 0.0005,
+            "p2p/codestral": 0.0008,
+            "gpt-4o": 0.005
+        },
+        "free_tier_tokens_per_day": 10000
+    },
+    "rate_limits": {
+        "requests_per_minute_per_ip": 30,
+        "requests_per_minute_global": 200,
+        "tokens_per_day_per_wallet": 500000,
+        "max_concurrent_requests": 20
+    },
+    "content_policy": {
+        "guardrails_config": "config/guardrails.config.json",
+        "block_categories": [
+            "violence",
+            "pii",
+            "illegal"
+        ],
+        "redact_categories": [
+            "pii-email",
+            "pii-phone"
+        ]
+    },
+    "network": {
+        "p2p_port": 30303,
+        "api_port": 20128,
+        "announce_to_mesh": true,
+        "gossip_interval_seconds": 30
+    }
+}

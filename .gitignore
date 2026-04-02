@@ -1,0 +1,117 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+# Tauri build artifacts (generated — do not commit)
+/src-tauri/resources/
+/src-tauri/binaries/*.exe
+/src-tauri/binaries/*.bin
+/src-tauri/target/
+/.next-win-retry-*/
+/out/
+
+# production
+/build
+cloud/*
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+.bin/*
+data/
+logs/*
+source/*
+.cursor/*
+docs/*
+!docs/ARCHITECTURE.md
+!docs/REPO_ROLES.md
+!docs/OPEN_CORE_MANIFEST.md
+!docs/RELEASE.md
+!docs/RUNNING.md
+!docs/PLAYBOOKS.md
+!docs/PUBLIC_RELEASE_CHECKLIST.md
+!docs/example-playbooks/
+!docs/example-playbooks/*.json
+!docs/DISTRIBUTION_PLAN.md
+!docs/STANDALONE_README.md
+!docs/WALLET_BACKUP_AND_INSTALLER_SAFETY.md
+!docs/INSTALLER_AND_SECURE_STORAGE.md
+!docs/oauth-setup.md
+!docs/zippymesh-licensing-bundle/
+!docs/zippymesh-licensing-bundle/*.md
+!docs/project_status.md
+test/*
+bin/*
+open-sse/test/*
+RM.vn.md
+RM.md
+cursor/*
+PUBLIC.md
+scripts/*
+!scripts/validate-open-core.cjs
+!scripts/build.cjs
+!scripts/prepare-standalone.cjs
+!scripts/setup-env.mjs
+!scripts/package-release.cjs
+!scripts/check-env.js
+!scripts/upgrade.sh
+!scripts/upgrade.ps1
+!scripts/build-community.sh
+!scripts/test-routing.sh
+!scripts/zippy-cli.mjs
+!scripts/build-tauri-frontend.cjs
+!scripts/zippy-launcher.cjs
+!scripts/build-sidecar.cjs
+Thanks.md
+PUBLIC.en.md
+PR/*
+package-lock.json
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+README1.md
+
+# Backup files
+*.bak
+# Claude AI directories
+.claude/
+
+# Community dist
+/community-dist/
+
+# Additional build artifacts
+.voidspec/
+experiments/zmlr-lite/node_modules/
+sidecar/target/
