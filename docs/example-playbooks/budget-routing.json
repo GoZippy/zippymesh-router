@@ -1,0 +1,13 @@
+{
+  "name": "budget-routing",
+  "description": "Routes requests to free or low-cost providers like Groq, Cerebras, and GitHub Models first.",
+  "isActive": true,
+  "priority": 50,
+  "rules": [
+    { "type": "filter-in", "value": ["groq", "cerebras", "github_models", "kilo", "ollama"] },
+    { "type": "sort-by-cheapest", "target": "*" },
+    { "type": "boost", "target": "groq", "value": 10000 },
+    { "type": "boost", "target": "cerebras", "value": 10000 },
+    { "type": "stack", "target": "groq,cerebras,github_models,kilo,ollama", "value": "failover" }
+  ]
+}

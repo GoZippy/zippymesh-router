@@ -1,0 +1,20 @@
+{
+  "name": "zippymesh/code-focus",
+  "description": "High-quality code generation prioritizing top-tier coding models. Uses Claude Sonnet 4.5, DeepSeek V3, Qwen-Coder with intelligent fallback. Triggered by 'code' intent.",
+  "isActive": true,
+  "priority": 200,
+  "trigger": { "type": "intent", "value": "code" },
+  "rules": [
+    { "type": "boost", "target": "claude-sonnet-4-5", "value": 80000 },
+    { "type": "boost", "target": "claude-3-5-sonnet", "value": 75000 },
+    { "type": "boost", "target": "deepseek-coder", "value": 70000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 68000 },
+    { "type": "boost", "target": "qwen-2.5-coder", "value": 65000 },
+    { "type": "boost", "target": "qwen3-coder", "value": 65000 },
+    { "type": "boost", "target": "gpt-4o", "value": 60000 },
+    { "type": "boost", "target": "gpt-4-turbo", "value": 55000 },
+    { "type": "boost", "target": "codestral", "value": 50000 },
+    { "type": "boost", "target": "llama-3.3", "value": 45000 },
+    { "type": "stack", "target": "anthropic,deepinfra,openai,groq,ollama,lmstudio", "value": "failover" }
+  ]
+}

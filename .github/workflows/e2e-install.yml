@@ -1,0 +1,56 @@
+name: E2E Install & Routing Tests
+
+on:
+  push:
+    branches: [ ZippyMesh_LLM_main, dev_beta ]
+  pull_request:
+    branches: [ ZippyMesh_LLM_main, dev_beta ]
+
+jobs:
+  e2e-tests:
+    timeout-minutes: 15
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js 24
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright Browsers
+      run: npx playwright install --with-deps chromium
+
+    - name: Prebuild Next.js app
+      env:
+        JWT_SECRET: e2e-build-placeholder-not-used-at-runtime
+        NODE_ENV: production
+      run: npm run build
+
+    - name: Start ZippyMesh Server in background
+      env:
+        PORT: 20128
+        JWT_SECRET: "e2e_test_secret_dont_use_in_prod"
+        DATA_DIR: "./.zippy-e2e-data"
+      run: |
+        npm run start &
+        # Wait for the health endpoint to respond within 30s
+        timeout 30 bash -c 'until curl -s http://localhost:20128/api/setup/status > /dev/null; do sleep 1; done'
+        echo "ZippyMesh Server is up and running"
+
+    - name: Run Playwright tests
+      env:
+        BASE_URL: "http://localhost:20128"
+        DATA_DIR: "./.zippy-e2e-data"
+      run: npx playwright test tests/e2e/zmlr.spec.cjs
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: playwright-report/
+        retention-days: 7

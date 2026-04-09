@@ -1,0 +1,19 @@
+{
+  "name": "zippymesh/Fast-Code",
+  "description": "Low-latency code generation for quick edits and simple tasks. Prioritizes Groq, Cerebras, and local models for speed. Fallback for code-focus when speed matters more than depth.",
+  "isActive": true,
+  "priority": 150,
+  "trigger": { "type": "intent", "value": "fast_code" },
+  "rules": [
+    { "type": "sort-by-fastest", "target": "*" },
+    { "type": "boost", "target": "groq", "value": 80000 },
+    { "type": "boost", "target": "cerebras", "value": 75000 },
+    { "type": "boost", "target": "ollama", "value": 70000 },
+    { "type": "boost", "target": "lmstudio", "value": 70000 },
+    { "type": "boost", "target": "llama-3.3", "value": 60000 },
+    { "type": "boost", "target": "qwen-2.5-coder", "value": 55000 },
+    { "type": "boost", "target": "deepseek-coder-v2-lite", "value": 50000 },
+    { "type": "boost", "target": "codestral", "value": 45000 },
+    { "type": "stack", "target": "groq,cerebras,ollama,lmstudio,fireworks,togetherai", "value": "failover" }
+  ]
+}

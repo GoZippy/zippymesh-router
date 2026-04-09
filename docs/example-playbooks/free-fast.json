@@ -1,0 +1,15 @@
+{
+  "name": "free/fast",
+  "description": "Ultra-fast free inference. Uses Groq and Cerebras for maximum speed. Good for quick iterations and simple tasks.",
+  "isActive": true,
+  "priority": 85,
+  "trigger": { "type": "intent", "value": "free_fast" },
+  "rules": [
+    { "type": "filter-in", "value": ["groq", "cerebras"] },
+    { "type": "sort-by-fastest", "target": "*" },
+    { "type": "boost", "target": "llama-3.3-70b", "value": 50000 },
+    { "type": "boost", "target": "llama-3.1-8b", "value": 45000 },
+    { "type": "boost", "target": "gemma", "value": 40000 },
+    { "type": "stack", "target": "groq,cerebras", "value": "failover" }
+  ]
+}

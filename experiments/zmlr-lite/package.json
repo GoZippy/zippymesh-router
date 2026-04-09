@@ -1,0 +1,21 @@
+{
+  "name": "zmlr-lite",
+  "version": "0.0.1",
+  "description": "Lightweight ZMLR API experiment - Hono + Node/Bun",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "dev:bun": "bun run src/index.js",
+    "start": "node src/index.js",
+    "compile": "bun build ./src/index.js --compile --outfile=zmlr-lite --target=bun-linux-x64"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}

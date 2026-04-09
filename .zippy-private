@@ -1,0 +1,11 @@
+src/lib/discovery/p2pDiscovery.js
+src/lib/zippycoin-wallet.js
+src/lib/trustScore.js
+src/lib/wallet-management.js
+src/lib/routing/engine.js
+src/lib/sidecar.js
+open-sse/handlers/chatCore.js
+open-sse/translator/index.js
+src/app/(dashboard)/dashboard/wallet/
+src/app/(dashboard)/dashboard/monetization/
+src/app/(dashboard)/dashboard/network/

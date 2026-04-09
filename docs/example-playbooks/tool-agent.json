@@ -1,0 +1,18 @@
+{
+  "name": "zippymesh/tool-agent",
+  "description": "Agentic tool-calling tasks. Prioritizes models with reliable function calling: GPT-4o (best tools), Claude (structured output), Gemini (multimodal). For MCP, function calls, APIs.",
+  "isActive": true,
+  "priority": 165,
+  "trigger": { "type": "intent", "value": "tool_use" },
+  "rules": [
+    { "type": "boost", "target": "gpt-4o", "value": 85000 },
+    { "type": "boost", "target": "gpt-4-turbo", "value": 80000 },
+    { "type": "boost", "target": "claude-sonnet", "value": 75000 },
+    { "type": "boost", "target": "claude-3-5-sonnet", "value": 73000 },
+    { "type": "boost", "target": "gemini-2.5-pro", "value": 70000 },
+    { "type": "boost", "target": "claude-opus", "value": 65000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 55000 },
+    { "type": "boost", "target": "llama-3.3-70b", "value": 45000 },
+    { "type": "stack", "target": "openai,anthropic,gemini,groq,deepinfra", "value": "failover" }
+  ]
+}

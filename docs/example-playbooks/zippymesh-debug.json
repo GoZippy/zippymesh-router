@@ -1,0 +1,18 @@
+{
+  "name": "zippymesh/debug",
+  "description": "Debugging, troubleshooting, and error analysis. Prioritizes models with strong reasoning about code behavior: Claude (excellent at tracing), DeepSeek, GPT-4. For issue investigation.",
+  "isActive": true,
+  "priority": 170,
+  "trigger": { "type": "intent", "value": "debug" },
+  "rules": [
+    { "type": "boost", "target": "claude-sonnet", "value": 80000 },
+    { "type": "boost", "target": "claude-3-5-sonnet", "value": 78000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 70000 },
+    { "type": "boost", "target": "deepseek-coder", "value": 68000 },
+    { "type": "boost", "target": "gpt-4o", "value": 65000 },
+    { "type": "boost", "target": "glm-4-thinking", "value": 55000 },
+    { "type": "boost", "target": "qwen-2.5-coder", "value": 50000 },
+    { "type": "boost", "target": "codestral", "value": 45000 },
+    { "type": "stack", "target": "anthropic,deepinfra,openai,fireworks,ollama", "value": "failover" }
+  ]
+}

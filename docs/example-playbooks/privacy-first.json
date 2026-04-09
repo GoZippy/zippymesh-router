@@ -1,0 +1,10 @@
+{
+  "name": "privacy-first",
+  "description": "Strictly routes to local models (Ollama, LM Studio) to ensure zero data leakage.",
+  "isActive": true,
+  "priority": 100,
+  "rules": [
+    { "type": "filter-in", "value": ["ollama", "lmstudio"] },
+    { "type": "stack", "target": "ollama,lmstudio", "value": "failover" }
+  ]
+}

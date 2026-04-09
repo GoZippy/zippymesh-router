@@ -1,0 +1,17 @@
+{
+  "name": "urgent/premium",
+  "description": "Maximum quality for critical tasks. Prioritizes top-tier paid models: Claude Opus/Sonnet, GPT-4, Gemini Pro. Use when accuracy matters more than cost.",
+  "isActive": true,
+  "priority": 250,
+  "trigger": { "type": "intent", "value": "urgent" },
+  "rules": [
+    { "type": "boost", "target": "claude-opus", "value": 95000 },
+    { "type": "boost", "target": "claude-sonnet", "value": 90000 },
+    { "type": "boost", "target": "gpt-5", "value": 88000 },
+    { "type": "boost", "target": "gpt-4o", "value": 85000 },
+    { "type": "boost", "target": "gemini-2.5-pro", "value": 80000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 70000 },
+    { "type": "boost", "target": "qwen-max", "value": 65000 },
+    { "type": "stack", "target": "anthropic,openai,gemini,deepinfra,openrouter", "value": "failover" }
+  ]
+}

@@ -1,0 +1,78 @@
+name: Build Tauri Apps
+
+# Triggered when a GitHub Release is published, or manually.
+# Builds the full-featured desktop installer on each platform using the
+# complete private source tree (NOT the community edition — the desktop
+# app ships with the full routing engine and P2P stack).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install system dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf \
+            squashfs-tools
+
+      - name: install npm dependencies
+        run: npm ci
+
+      - name: build Next.js standalone
+        # Produces .next/standalone/ and copies it to src-tauri/resources/standalone/
+        env:
+          JWT_SECRET: build-time-placeholder-not-used-at-runtime
+          NODE_ENV: production
+        run: npm run build:tauri-frontend
+
+      - name: build zippy-node sidecar (Node SEA binary)
+        # Produces src-tauri/binaries/zippy-node-{triple}[.exe]
+        run: node scripts/build-sidecar.cjs
+
+      - name: build and bundle Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ad-hoc signing for macOS — produces unsigned .dmg without requiring
+          # an Apple Developer certificate. Users will see a security warning
+          # but can open the app via right-click → Open.
+          APPLE_SIGNING_IDENTITY: "-"
+          # linuxdeploy and AppRun are themselves AppImages; on Ubuntu 22.04 runners
+          # FUSE is not available, so extract-and-run mode is required.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        with:
+          tagName: zmlr-v__VERSION__
+          releaseName: 'ZippyMesh LLM Router v__VERSION__'
+          releaseBody: |
+            See the assets below to download and install this version.
+
+            **Windows**: download `ZippyMesh_*_x64-setup.exe`
+            **macOS**: download `ZippyMesh_*.dmg`
+            **Linux**: download `ZippyMesh_*.AppImage` or `.deb`
+          releaseDraft: true
+          prerelease: false

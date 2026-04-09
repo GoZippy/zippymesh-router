@@ -1,0 +1,18 @@
+{
+  "name": "zippymesh/orchestrator",
+  "description": "Multi-agent coordination, task decomposition, and workflow automation. Prioritizes tool-capable models with strong planning: GPT-4 (tools), Claude (reasoning), Gemini (multimodal). For agentic workflows.",
+  "isActive": true,
+  "priority": 175,
+  "trigger": { "type": "intent", "value": "orchestrator" },
+  "rules": [
+    { "type": "boost", "target": "gpt-4o", "value": 80000 },
+    { "type": "boost", "target": "gpt-4-turbo", "value": 75000 },
+    { "type": "boost", "target": "claude-sonnet", "value": 72000 },
+    { "type": "boost", "target": "claude-3-5-sonnet", "value": 70000 },
+    { "type": "boost", "target": "gemini-2.5-pro", "value": 65000 },
+    { "type": "boost", "target": "claude-opus", "value": 60000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 55000 },
+    { "type": "boost", "target": "qwen-max", "value": 50000 },
+    { "type": "stack", "target": "openai,anthropic,gemini,deepinfra,openrouter", "value": "failover" }
+  ]
+}
