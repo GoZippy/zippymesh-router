@@ -1,47 +1,91 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { Card, CardSkeleton, Badge, Button } from "@/shared/components";
+import { Card, CardSkeleton, Badge } from "@/shared/components";
 import BarChart from "@/shared/components/BarChart";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
+import SetupChecklist from "./SetupChecklist";
 
 export default function OverviewStats() {
     const [stats, setStats] = useState(null);
+    const [routingStats, setRoutingStats] = useState(null);
     const [sidecarStatus, setSidecarStatus] = useState("checking");
+    const [sidecarError, setSidecarError] = useState("");
     const [loading, setLoading] = useState(true);
+    const [sidecarPollInterval, setSidecarPollInterval] = useState(10000);
+    const [providerSummary, setProviderSummary] = useState(null); // { total, active, broken }
 
-    // Poll for updates every 10s
-    useEffect(() => {
-        fetchStats();
-        const interval = setInterval(fetchStats, 10000);
-        return () => clearInterval(interval);
-    }, []);
-
-    const fetchStats = async () => {
+    const fetchStats = useCallback(async () => {
         try {
             // Fetch usage stats
-            const res = await fetch("/api/usage/history");
-            if (res.ok) {
-                const data = await res.json();
+            const usageResponse = await safeFetchJson("/api/usage/history");
+            if (usageResponse.ok) {
+                const data = usageResponse.data;
                 setStats(data);
             }
 
+            // Fetch provider connections for status banner
+            const providersResponse = await safeFetchJson("/api/providers");
+            if (providersResponse.ok) {
+                const conns = providersResponse.data?.connections || [];
+                const active = conns.filter(
+                    (c) => c.testStatus === "active" || c.testStatus === "success" || c.testStatus === "unavailable"
+                ).length;
+                const broken = conns.filter(
+                    (c) => c.testStatus === "error" || c.testStatus === "expired"
+                ).length;
+                setProviderSummary({ total: conns.length, active, broken });
+            }
+
+            // Fetch routing stats (1 hour window)
+            const routingRes = await safeFetchJson("/api/routing/metrics?hours=1");
+            if (routingRes.ok) setRoutingStats(routingRes.data);
+
             // Fetch sidecar health
-            const sidecarRes = await fetch("/api/sidecar/health");
-            if (sidecarRes.ok) {
-                const data = await sidecarRes.json();
+            const sidecarResponse = await safeFetchJson("/api/sidecar/health");
+            if (sidecarResponse.ok) {
+                const data = sidecarResponse.data;
                 setSidecarStatus(data.status);
+                setSidecarError("");
+                setSidecarPollInterval(10000);
             } else {
                 setSidecarStatus("disconnected");
+                setSidecarError(formatRequestError("Sidecar health check failed", sidecarResponse, "Sidecar service unavailable"));
+                setSidecarPollInterval((current) => Math.min((current || 10000) * 2, 60000));
             }
         } catch (error) {
             console.error("Failed to fetch overview stats:", error);
             setSidecarStatus("disconnected");
+            setSidecarError(formatRequestError("Failed to fetch overview stats", error));
+            setSidecarPollInterval((current) => Math.min((current || 10000) * 2, 60000));
         } finally {
             setLoading(false);
         }
+    }, []);
+
+    const isSidecarConnected = sidecarStatus === "connected";
+    const sidecarLabel = isSidecarConnected
+        ? "Sidecar: Online"
+        : sidecarStatus === "checking"
+            ? "Sidecar: Checking"
+            : "Sidecar: Offline";
+    const sidecarNeedsReconnect = sidecarStatus !== "connected";
+
+    const handleSidecarReconnect = () => {
+        setSidecarStatus("checking");
+        setSidecarError("");
+        setSidecarPollInterval(10000);
+        fetchStats();
     };
+
+    // Poll for updates with adaptive sidecar error backoff
+    useEffect(() => {
+        fetchStats();
+        const interval = setInterval(fetchStats, sidecarPollInterval);
+        return () => clearInterval(interval);
+    }, [fetchStats, sidecarPollInterval]);
 
     if (loading) {
         return (
@@ -52,6 +96,7 @@ export default function OverviewStats() {
                     <CardSkeleton />
                     <CardSkeleton />
                 </div>
+                <CardSkeleton />
                 <CardSkeleton />
             </div>
         );
@@ -85,6 +130,7 @@ export default function OverviewStats() {
 
     return (
         <div className="flex flex-col gap-6">
+            <SetupChecklist />
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -100,6 +146,81 @@ export default function OverviewStats() {
                 <div className="text-sm text-text-muted">Last 24 Hours</div>
 
             </div>
+
+            {!isSidecarConnected && (
+                <Card className="p-4 border-amber-500/30 bg-amber-500/5 flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-2">
+                        <span className="material-symbols-outlined text-amber-500 text-xl">cloud_off</span>
+                        <div className="text-sm">
+                            <p className="font-semibold text-text-primary">{sidecarLabel}</p>
+                            {sidecarError && <p className="text-text-muted mt-0.5">{sidecarError}</p>}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => fetchStats()}
+                        title={sidecarError || "Retry sidecar health check"}
+                        className="text-xs px-3 py-1.5 rounded-md border border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                    >
+                        Retry check
+                    </button>
+                </Card>
+            )}
+
+            {/* Provider status banners */}
+            {providerSummary !== null && providerSummary.total === 0 && (
+                <Card className="p-4 border-primary/30 bg-primary/5 flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined text-primary text-xl shrink-0">rocket_launch</span>
+                        <div className="text-sm">
+                            <p className="font-semibold">Get started — no providers connected yet</p>
+                            <p className="text-text-muted mt-0.5">
+                                Add your first provider to start routing LLM requests. Takes under 5 minutes.
+                            </p>
+                        </div>
+                    </div>
+                    <Link
+                        href="/dashboard/providers"
+                        className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-primary/40 text-primary hover:bg-primary/10 font-medium transition-colors"
+                    >
+                        Add a provider
+                    </Link>
+                </Card>
+            )}
+
+            {providerSummary !== null && providerSummary.total > 0 && providerSummary.active === 0 && providerSummary.broken > 0 && (
+                <Card className="p-4 border-red-500/30 bg-red-500/5 flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined text-red-500 text-xl shrink-0">warning</span>
+                        <div className="text-sm">
+                            <p className="font-semibold text-red-600 dark:text-red-400">
+                                Your connections need attention
+                            </p>
+                            <p className="text-text-muted mt-0.5">
+                                {providerSummary.broken} provider connection{providerSummary.broken !== 1 ? "s are" : " is"} reporting errors. No requests can be routed until at least one is fixed.
+                            </p>
+                        </div>
+                    </div>
+                    <Link
+                        href="/dashboard/providers"
+                        className="shrink-0 text-xs px-3 py-1.5 rounded-md border border-red-500/40 text-red-700 dark:text-red-300 hover:bg-red-500/10 font-medium transition-colors"
+                    >
+                        Fix connections
+                    </Link>
+                </Card>
+            )}
+
+            {providerSummary !== null && providerSummary.total > 0 && (
+                <div className="flex items-center gap-2 text-sm text-text-muted">
+                    <span className="material-symbols-outlined text-[16px] text-green-500">hub</span>
+                    <span>
+                        <strong className="text-text-main">{providerSummary.active}</strong> provider{providerSummary.active !== 1 ? "s" : ""} active
+                        {providerSummary.broken > 0 && (
+                            <>, <strong className="text-red-500">{providerSummary.broken}</strong> with errors</>
+                        )}
+                    </span>
+                </div>
+            )}
 
             {/* KPI Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -163,6 +284,34 @@ export default function OverviewStats() {
                     </div>
                 </Card>
             </div>
+
+            {/* Routing Intelligence Widget */}
+            {routingStats?.totalRequests > 0 && (
+                <Card className="p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted">Routing Intelligence (1h)</h3>
+                        <Badge variant="secondary" size="sm">Live</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                        <div>
+                            <p className="text-text-muted text-xs">Routed</p>
+                            <p className="font-bold text-lg">{routingStats.totalRequests}</p>
+                        </div>
+                        <div>
+                            <p className="text-text-muted text-xs">Success</p>
+                            <p className="font-bold text-lg">{routingStats.successRate?.toFixed(0)}%</p>
+                        </div>
+                        <div>
+                            <p className="text-text-muted text-xs">Top Intent</p>
+                            <p className="font-bold text-lg text-primary">{Object.entries(routingStats.byIntent||{}).sort((a,b)=>b[1]-a[1])[0]?.[0]||'—'}</p>
+                        </div>
+                        <div>
+                            <p className="text-text-muted text-xs">Top Model</p>
+                            <p className="font-bold text-sm truncate">{routingStats.topModels?.[0]?.model?.split('/').pop()||'—'}</p>
+                        </div>
+                    </div>
+                </Card>
+            )}
 
             {/* Main Charts Area */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -390,9 +539,21 @@ export default function OverviewStats() {
                         </div>
                         <div className="flex justify-between items-center text-sm">
                             <span className="text-text-muted">Zippy Mesh</span>
-                            <Badge variant={sidecarStatus === "connected" ? "success" : "destructive"}>
-                                {sidecarStatus === "connected" ? "Online" : "Offline"}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                                <Badge variant={sidecarStatus === "connected" ? "success" : "destructive"}>
+                                    {sidecarStatus === "connected" ? "Online" : "Offline"}
+                                </Badge>
+                                {sidecarNeedsReconnect && (
+                                    <button
+                                        type="button"
+                                        onClick={handleSidecarReconnect}
+                                        title={sidecarError || "Retry sidecar health check"}
+                                        className="text-[11px] px-2 py-1 rounded-md border border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                                    >
+                                        Retry check
+                                    </button>
+                                )}
+                            </div>
                         </div>
                         <div className="flex justify-between items-center text-sm">
                             <span className="text-text-muted">Environment</span>

@@ -1,15 +1,16 @@
 
 import { NextResponse } from "next/server";
 import { getRoutingPlaybooks, createRoutingPlaybook } from "@/models";
+import { apiError } from "@/lib/apiErrors.js";
 
 // GET /api/routing/playbooks - List all playbooks
-export async function GET() {
+export async function GET(request) {
     try {
         const playbooks = await getRoutingPlaybooks();
         return NextResponse.json({ playbooks });
     } catch (error) {
         console.log("Error fetching playbooks:", error);
-        return NextResponse.json({ error: "Failed to fetch playbooks" }, { status: 500 });
+        return apiError(request, 500, "Failed to fetch playbooks");
     }
 }
 
@@ -20,7 +21,7 @@ export async function POST(request) {
         const { name, description, rules, isActive, priority } = body;
 
         if (!name) {
-            return NextResponse.json({ error: "Name is required" }, { status: 400 });
+            return apiError(request, 400, "Name is required");
         }
 
         const newPlaybook = await createRoutingPlaybook({
@@ -34,6 +35,6 @@ export async function POST(request) {
         return NextResponse.json({ playbook: newPlaybook }, { status: 201 });
     } catch (error) {
         console.log("Error creating playbook:", error);
-        return NextResponse.json({ error: "Failed to create playbook" }, { status: 500 });
+        return apiError(request, 500, "Failed to create playbook");
     }
 }

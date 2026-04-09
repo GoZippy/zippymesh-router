@@ -4,6 +4,7 @@ import { cn } from "@/shared/utils/cn";
 
 export default function Input({
   label,
+  id,
   type = "text",
   placeholder,
   value,
@@ -17,10 +18,11 @@ export default function Input({
   inputClassName,
   ...props
 }) {
+  const inputId = id || (label ? label.toLowerCase().replace(/[^a-z0-9]+/g, "-") : undefined);
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {label && (
-        <label className="text-sm font-medium text-text-main">
+        <label htmlFor={inputId} className="text-sm font-medium text-text-main">
           {label}
           {required && <span className="text-red-500 ml-1">*</span>}
         </label>
@@ -32,6 +34,7 @@ export default function Input({
           </div>
         )}
         <input
+          id={inputId}
           type={type}
           placeholder={placeholder}
           value={value}

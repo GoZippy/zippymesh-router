@@ -8,6 +8,7 @@ import Badge from "./Badge";
 import { CardSkeleton } from "./Loading";
 import TokenUsageChart from "@/app/(dashboard)/dashboard/usage/components/TokenUsageChart";
 import CostTrendChart from "@/app/(dashboard)/dashboard/usage/components/CostTrendChart";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 function SortIcon({ field, currentSort, currentOrder }) {
   if (currentSort !== field) return <span className="ml-1 opacity-20">↕</span>;
@@ -50,6 +51,7 @@ export default function UsageStats() {
 
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [viewMode, setViewMode] = useState("tokens"); // 'tokens' or 'costs'
   const [refreshInterval, setRefreshInterval] = useState(5000); // Start with 5s
@@ -132,11 +134,13 @@ export default function UsageStats() {
 
   const fetchStats = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
+    if (showLoading) setError("");
     try {
-      const res = await fetch("/api/usage/history");
-      if (res.ok) {
-        const data = await res.json();
+      const response = await safeFetchJson("/api/usage/history");
+      if (response.ok) {
+        const data = response.data;
         setStats(data);
+        setError("");
 
         // Smart polling: adjust interval based on activity
         const currentTotal = data.totalRequests || 0;
@@ -148,9 +152,16 @@ export default function UsageStats() {
           setRefreshInterval((prev) => Math.min(prev * 2, 60000)); // Max 60s
         }
         setPrevTotalRequests(currentTotal);
+      } else {
+        setError(formatRequestError("Failed to load usage statistics", response));
       }
     } catch (error) {
       console.error("Failed to fetch usage stats:", error);
+      setError(
+        error?.message
+          ? `Failed to load usage statistics: ${error.message}`
+          : "Failed to load usage statistics."
+      );
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -195,7 +206,20 @@ export default function UsageStats() {
 
   if (!stats)
     return (
-      <div className="text-text-muted">Failed to load usage statistics.</div>
+      <div className="flex items-center justify-between rounded-lg border border-border bg-bg-subtle p-4">
+        <span className="text-text-muted">
+          {error || "Failed to load usage statistics."}
+        </span>
+        {error && (
+          <button
+            type="button"
+            onClick={() => fetchStats(true)}
+            className="ml-4 px-3 py-1 rounded border border-border hover:bg-bg-hover"
+          >
+            Retry now
+          </button>
+        )}
+      </div>
     );
 
   // Format number with commas

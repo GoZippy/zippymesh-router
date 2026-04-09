@@ -1,4 +1,5 @@
 import { PROVIDERS, OAUTH_ENDPOINTS } from "../config/constants.js";
+import { emitProviderLifecycleEvent } from "@/lib/lifecycleEvents.js";
 
 // Token expiry buffer (refresh if expires within 5 minutes)
 export const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -20,6 +21,11 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
   }
 
   try {
+    await emitProviderLifecycleEvent("provider.token.refresh.start", {
+      provider,
+      detail: { type: "oauth" },
+    });
+
     const response = await fetch(config.refreshUrl, {
       method: "POST",
       headers: {
@@ -40,15 +46,19 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
         status: response.status,
         error: errorText,
       });
+      await emitProviderLifecycleEvent("provider.token.refresh.failure", {
+        provider,
+        status: response.status,
+        detail: { type: "oauth", error: errorText },
+      });
       return null;
     }
 
     const tokens = await response.json();
-    
-    log?.info?.("TOKEN_REFRESH", `Successfully refreshed token for ${provider}`, {
-      hasNewAccessToken: !!tokens.access_token,
-      hasNewRefreshToken: !!tokens.refresh_token,
-      expiresIn: tokens.expires_in,
+
+    await emitProviderLifecycleEvent("provider.token.refresh.success", {
+      provider,
+      detail: { type: "oauth" },
     });
 
     return {
@@ -57,6 +67,10 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
       expiresIn: tokens.expires_in,
     };
   } catch (error) {
+    await emitProviderLifecycleEvent("provider.token.refresh.failure", {
+      provider,
+      detail: { type: "oauth", error: error.message },
+    });
     log?.error?.("TOKEN_REFRESH", `Error refreshing token for ${provider}`, {
       error: error.message,
     });

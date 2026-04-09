@@ -1,5 +1,5 @@
 import { getProviderCredentials, markAccountUnavailable, clearAccountError } from "../services/auth.js";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { getModelInfo, getComboModels, resolvePlaybookIntent } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat } from "open-sse/services/combo.js";
@@ -7,6 +7,8 @@ import { HTTP_STATUS } from "open-sse/config/constants.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { checkSafety } from "../../utils/guardrails.js";
+import { generateRequestId } from "@/lib/usageDb.js";
+import { emitProviderLifecycleEvent } from "@/lib/lifecycleEvents.js";
 
 /**
  * Handle chat completion request
@@ -14,19 +16,25 @@ import { checkSafety } from "../../utils/guardrails.js";
  * Format detection and translation handled by translator
  */
 export async function handleChat(request, clientRawRequest = null) {
+  const headerRequestId = request?.headers?.get?.("x-request-id");
+  const requestId = (typeof headerRequestId === "string" && headerRequestId.trim()
+    ? headerRequestId.trim()
+    : generateRequestId()
+  ).slice(0, 128);
+
   let body;
   try {
     body = await request.json();
   } catch {
     log.warn("CHAT", "Invalid JSON body");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body", { requestId });
   }
 
   // Guardrailing
   const safety = checkSafety(body);
   if (!safety.safe) {
     log.warn("SAFETY", safety.reason);
-    return errorResponse(HTTP_STATUS.FORBIDDEN, safety.reason);
+    return errorResponse(HTTP_STATUS.FORBIDDEN, safety.reason, { requestId });
   }
 
   // API key authentication (optional depending on settings)
@@ -41,7 +49,7 @@ export async function handleChat(request, clientRawRequest = null) {
   } catch (err) {
     log.warn("AUTH", err.message);
     const status = err.code || HTTP_STATUS.UNAUTHORIZED;
-    return errorResponse(status, err.message);
+    return errorResponse(status, err.message, { requestId });
   }
 
   // Build clientRawRequest for logging (if not provided)
@@ -52,6 +60,7 @@ export async function handleChat(request, clientRawRequest = null) {
       body,
       headers: Object.fromEntries(request.headers.entries())
     };
+    clientRawRequest.headers["x-request-id"] = requestId;
   }
 
   // Log request endpoint and model
@@ -62,7 +71,7 @@ export async function handleChat(request, clientRawRequest = null) {
   const msgCount = body.messages?.length || body.input?.length || 0;
   const toolCount = body.tools?.length || 0;
   const effort = body.reasoning_effort || body.reasoning?.effort || null;
-  log.request("POST", `${url.pathname} | ${modelStr} | ${msgCount} msgs${toolCount ? ` | ${toolCount} tools` : ""}${effort ? ` | effort=${effort}` : ""}`);
+  log.request("POST", `${url.pathname} | ${modelStr} | ${msgCount} msgs${toolCount ? ` | ${toolCount} tools` : ""}${effort ? ` | effort=${effort}` : ""} | req=${requestId}`);
 
   // Log API key (masked)
   const apiKey = request.headers.get("Authorization");
@@ -75,7 +84,21 @@ export async function handleChat(request, clientRawRequest = null) {
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model", { requestId });
+  }
+
+  // Check if model is a playbook name (zippymesh/*, free/*, etc.)
+  // If so, extract intent and route via playbook-based auto-routing
+  const playbookInfo = resolvePlaybookIntent(modelStr);
+  if (playbookInfo.isPlaybook) {
+    log.info("CHAT", `Playbook model "${modelStr}" -> intent: ${playbookInfo.intent || "default"}`);
+    
+    // Inject intent into body for orchestrator routing
+    body.intent = playbookInfo.intent || body.intent;
+    body._playbookName = playbookInfo.playbookName;
+    
+    // Route using "auto" as the model - let routing engine pick based on playbook
+    return handleSingleModelChat(body, "auto", clientRawRequest, request, requestId);
   }
 
   // Check if model is a combo (has multiple models with fallback)
@@ -85,13 +108,13 @@ export async function handleChat(request, clientRawRequest = null) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request),
+      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, requestId),
       log
     });
   }
 
   // Single model request
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request);
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, requestId);
 }
 
 import { handleOrchestratedChat } from "../services/orchestrator.js";
@@ -100,7 +123,7 @@ import { compressContext } from "../utils/compression.js";
 /**
  * Handle single model chat request with advanced orchestration
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, requestId = null) {
   // Extract userAgent and optional client/device headers from request
   const userAgent = request?.headers?.get("user-agent") || "";
   const clientId = request?.headers?.get("x-zippy-client-id")?.trim() || undefined;
@@ -114,25 +137,50 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     handleChatCore,
     log,
     clientRawRequest,
+    requestId,
     userAgent,
     clientId,
     deviceId,
     intent: intentHeader || body?.intent,
     callbacks: {
-      onCredentialsRefreshed: async (newCreds, connectionId) => {
+      onCredentialsRefreshed: async (newCreds, connectionId, currentConnection) => {
         await updateProviderCredentials(connectionId, {
           accessToken: newCreds.accessToken,
           refreshToken: newCreds.refreshToken,
           providerSpecificData: newCreds.providerSpecificData,
           testStatus: "active"
         });
+        await emitProviderLifecycleEvent("provider.refresh", {
+          requestId,
+          connectionId,
+          provider: currentConnection?.provider || "unknown",
+          detail: { source: "chat_orchestrator" },
+        });
       },
       onRequestSuccess: async (connectionId, currentConnection) => {
         await clearAccountError(connectionId, currentConnection);
+        await emitProviderLifecycleEvent("provider.recover", {
+          requestId,
+          connectionId,
+          provider: currentConnection?.provider || "unknown",
+          status: 200,
+          detail: { source: "chat_orchestrator" },
+        });
       },
       // Failure callback for orchestrator to mark accounts as unavailable
       onFailure: async (connectionId, status, error, provider, retryAfterMs) => {
         await markAccountUnavailable(connectionId, status, error, provider, retryAfterMs);
+        await emitProviderLifecycleEvent("provider.fail", {
+          requestId,
+          connectionId,
+          provider: provider || "unknown",
+          status,
+          detail: {
+            retryAfterMs: retryAfterMs ?? null,
+            error: typeof error === "string" ? error : (error?.message || "provider request failed"),
+            source: "chat_orchestrator",
+          },
+        });
       }
     },
     // Context compression logic
@@ -147,6 +195,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
   });
 
-  // Orchestrator returns { success, response } on success, or a Response on error
-  return result?.response ?? result;
+  // Orchestrator returns { success, response, responseCostUsd? } on success, or error Response
+  const out = result?.response ?? result;
+  if (out && result?.responseCostUsd != null && result.response instanceof Response) {
+    const res = result.response;
+    const headers = new Headers(res.headers);
+    headers.set("X-Zippy-Response-Cost", String(result.responseCostUsd));
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  }
+  return out;
 }

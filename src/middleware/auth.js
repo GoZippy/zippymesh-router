@@ -47,7 +47,30 @@ export function jwtAuthMiddleware(req, res, next) {
     }
 
     try {
-        req.jwtClaims = jwt.verify(token, JWT_SECRET);
+        const claims = jwt.verify(token, JWT_SECRET);
+
+        // Dilithium key-type pass-through stub.
+        // When a token carries keyType: "dilithium" it was issued for a
+        // post-quantum wallet.  Full ML-DSA-65 verification requires a
+        // Node.js binding for FIPS 204 (e.g. liboqs) which is not yet
+        // bundled.  Until then we log a warning and allow the request
+        // through, the same as any other valid JWT.
+        //
+        // TODO (production): once wallet-generator emits real Dilithium keys,
+        // replace the pass-through below with:
+        //   const { MlDsa65 } = require('@noble/post-quantum/ml-dsa');
+        //   const pk = Buffer.from(claims.dilithium_pk, 'hex');   // from JWT
+        //   const sig = Buffer.from(req.headers['x-dilithium-sig'] || '', 'hex');
+        //   if (!MlDsa65.verify(pk, Buffer.from(token), sig))
+        //     return res.status(401).json({ error: 'Invalid Dilithium signature' });
+        if (claims.keyType === 'dilithium') {
+            console.warn(
+                `[Auth] Dilithium JWT accepted without post-quantum verification for wallet ${claims.wallet_address}. ` +
+                'Full ML-DSA-65 verification is pending liboqs integration.'
+            );
+        }
+
+        req.jwtClaims = claims;
         next();
     } catch (err) {
         const expired = err.name === 'TokenExpiredError';
@@ -76,12 +99,34 @@ export function issueTokenHandler(req, res) {
         });
     }
 
+    // SECURITY WARNING: Dilithium signature verification is NOT implemented.
+    // The signature field is accepted but never validated. Any wallet_address
+    // with any signature will receive a valid JWT. This MUST be replaced before
+    // production deployment.
+    //
+    // What needs to be implemented:
+    //   1. Obtain the ZippyCoin public key for the given wallet_address (on-chain lookup).
+    //   2. Use a post-quantum Dilithium library (e.g. liboqs Node.js binding) to verify
+    //      that `signature` is a valid Dilithium signature over `message` by that key.
+    //   3. Reject (HTTP 401) if verification fails.
+    //
     // TODO (production): verify Dilithium signature
     // const isValid = dilithiumVerify(wallet_address, message, signature);
     // if (!isValid) return res.status(401).json({ error: 'Invalid wallet signature' });
+    console.warn(
+        '[Auth] SECURITY BYPASS: Dilithium signature verification is not implemented. ' +
+        `Issuing JWT for wallet ${wallet_address} without verifying signature. ` +
+        'Do NOT use this build in production.'
+    );
+
+    // Detect whether the wallet uses a Dilithium (post-quantum) key.
+    // The wallet-generator sets keyType: "dilithium" in the token request body.
+    // Classic wallets omit the field or set it to "ed25519".
+    const keyType = req.body?.keyType || 'ed25519';
 
     const payload = {
         wallet_address,
+        keyType,
         scope: 'api:full',
         iat: Math.floor(Date.now() / 1000),
     };

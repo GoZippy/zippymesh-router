@@ -2,15 +2,44 @@
  * @file guardrails.js
  * @description Config-file-driven guardrail rule engine for ZippyMesh LLM Router (Task 2.3.1).
  * Supports keyword, regex, and length rules with block/redact/truncate actions.
- * Rules are loaded from config/guardrails.config.json and hot-reloaded on file change.
+ * Rules are loaded from DATA_DIR/guardrails.config.json or config/guardrails.config.json.
  */
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.resolve(__dirname, '../../../config/guardrails.config.json');
+
+// Resolve config path: prefer DATA_DIR, fall back to project config folder
+function getConfigPath() {
+    // Check DATA_DIR first (user data directory)
+    if (process.env.DATA_DIR) {
+        const dataPath = path.join(process.env.DATA_DIR, 'guardrails.config.json');
+        if (fs.existsSync(dataPath)) return dataPath;
+    }
+    
+    // Check platform-specific app data
+    const appName = process.env.ZIPPY_APP_NAME || 'zippy-mesh';
+    let appDataPath;
+    if (process.platform === 'win32') {
+        appDataPath = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), appName);
+    } else {
+        appDataPath = path.join(os.homedir(), `.${appName}`);
+    }
+    const appDataConfigPath = path.join(appDataPath, 'guardrails.config.json');
+    if (fs.existsSync(appDataConfigPath)) return appDataConfigPath;
+    
+    // Fall back to project-relative config folder
+    const projectConfig = path.resolve(__dirname, '../../../config/guardrails.config.json');
+    if (fs.existsSync(projectConfig)) return projectConfig;
+    
+    // Return preferred path for error message (will fail gracefully)
+    return appDataConfigPath;
+}
+
+const CONFIG_PATH = getConfigPath();
 
 let _config = null;
 let _compiledRules = [];

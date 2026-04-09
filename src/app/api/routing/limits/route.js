@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getRateLimitConfigs, updateRateLimitConfig, getRateLimitState, getProviderConnections } from "@/lib/localDb.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 // GET /api/routing/limits - Get rate limit configs, state, and connection cooldowns
-export async function GET() {
+export async function GET(request) {
     try {
         const [configs, state, connections] = await Promise.all([
             getRateLimitConfigs(),
@@ -35,7 +36,7 @@ export async function GET() {
         });
     } catch (error) {
         console.log("Error fetching rate limits:", error);
-        return NextResponse.json({ error: "Failed to fetch rate limits" }, { status: 500 });
+        return apiError(request, 500, "Failed to fetch rate limits");
     }
 }
 
@@ -46,7 +47,7 @@ export async function POST(request) {
         const { providerId, config } = body;
 
         if (!providerId || !config) {
-            return NextResponse.json({ error: "Provider ID and config are required" }, { status: 400 });
+            return apiError(request, 400, "Provider ID and config are required");
         }
 
         const updated = await updateRateLimitConfig(providerId, config);
@@ -54,6 +55,6 @@ export async function POST(request) {
         return NextResponse.json({ config: updated });
     } catch (error) {
         console.log("Error updating rate limit:", error);
-        return NextResponse.json({ error: "Failed to update rate limit" }, { status: 500 });
+        return apiError(request, 500, "Failed to update rate limit");
     }
 }

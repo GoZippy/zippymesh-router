@@ -1,35 +1,70 @@
 import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES } from "../config/constants.js";
 
+const MAX_REQUEST_ID_LENGTH = 128;
+
+function normalizeRequestId(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_REQUEST_ID_LENGTH);
+}
+
+function withRequestIdMetadata(metadata, requestId) {
+  const normalizedRequestId = normalizeRequestId(requestId);
+  const nextMetadata = metadata && typeof metadata === "object" ? { ...metadata } : {};
+  const metadataRequestId = normalizeRequestId(nextMetadata.request_id);
+  const finalRequestId = normalizedRequestId || metadataRequestId;
+  if (finalRequestId) {
+    nextMetadata.request_id = finalRequestId;
+  }
+  return { requestId: finalRequestId, metadata: nextMetadata };
+}
+
 /**
- * Build OpenAI-compatible error response body
+ * Build OpenAI-compatible error response body (LiteLLM-style: optional code override, retry metadata).
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
+ * @param {object} [options] - Optional: { code?, metadata?, num_retries?, max_retries? }
  * @returns {object} Error response object
  */
-export function buildErrorBody(statusCode, message) {
-  const errorInfo = ERROR_TYPES[statusCode] || 
-    (statusCode >= 500 
+export function buildErrorBody(statusCode, message, options = {}) {
+  const errorInfo = ERROR_TYPES[statusCode] ||
+    (statusCode >= 500
       ? { type: "server_error", code: "internal_server_error" }
       : { type: "invalid_request_error", code: "" });
 
-  return {
+  const code = options.code ?? errorInfo.code;
+  const { requestId, metadata } = withRequestIdMetadata(options.metadata, options.requestId);
+  const body = {
     error: {
       message: message || DEFAULT_ERROR_MESSAGES[statusCode] || "An error occurred",
       type: errorInfo.type,
-      code: errorInfo.code
+      code: code || ""
     }
   };
+  if (requestId) body.error.request_id = requestId;
+  if (options.num_retries != null) body.error.num_retries = options.num_retries;
+  if (options.max_retries != null) body.error.max_retries = options.max_retries;
+  if (Object.keys(metadata).length > 0) body.error.metadata = metadata;
+  return body;
 }
 
 /**
  * Create error Response object (for non-streaming)
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
- * @param {object} [options] - Optional: { alternatives?: string[], retryAfterMs?: number }
+ * @param {object} [options] - Optional: { alternatives?, retryAfterMs?, code?, metadata?, num_retries?, max_retries? }
  * @returns {Response} HTTP Response object
  */
 export function errorResponse(statusCode, message, options = {}) {
-  const body = buildErrorBody(statusCode, message);
+  const { requestId } = withRequestIdMetadata(options.metadata, options.requestId);
+  const body = buildErrorBody(statusCode, message, {
+    code: options.code,
+    metadata: options.metadata,
+    requestId,
+    num_retries: options.num_retries,
+    max_retries: options.max_retries
+  });
   if (options.alternatives && Array.isArray(options.alternatives) && options.alternatives.length > 0) {
     body.error.alternatives = options.alternatives;
     body.error.hint = "Try one of these models in your playbook or pool, or add them to enable auto-failover.";
@@ -43,6 +78,9 @@ export function errorResponse(statusCode, message, options = {}) {
     headers["Retry-After"] = String(retryAfterSec);
     body.error.retry_after_seconds = retryAfterSec;
   }
+  if (requestId) {
+    headers["X-Request-ID"] = requestId;
+  }
   return new Response(JSON.stringify(body), {
     status: statusCode,
     headers
@@ -55,8 +93,8 @@ export function errorResponse(statusCode, message, options = {}) {
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
  */
-export async function writeStreamError(writer, statusCode, message) {
-  const errorBody = buildErrorBody(statusCode, message);
+export async function writeStreamError(writer, statusCode, message, options = {}) {
+  const errorBody = buildErrorBody(statusCode, message, options);
   const encoder = new TextEncoder();
   await writer.write(encoder.encode(`data: ${JSON.stringify(errorBody)}\n\n`));
 }
@@ -122,7 +160,7 @@ export async function parseUpstreamError(response, provider = null) {
   }
 
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
-  
+
   // Parse retry time: Retry-After header (generic) or Antigravity message
   if (response.status === 429) {
     const ra = response.headers?.get?.("retry-after") || response.headers?.get?.("Retry-After");
@@ -135,10 +173,24 @@ export async function parseUpstreamError(response, provider = null) {
     }
   }
 
+  // Detect context-window exceeded (LiteLLM-style semantic code)
+  let code;
+  const lower = messageStr.toLowerCase();
+  if (response.status === 400 && (
+    lower.includes("context_length") ||
+    lower.includes("context length") ||
+    lower.includes("maximum context") ||
+    lower.includes("token limit") ||
+    lower.includes("too many tokens")
+  )) {
+    code = "context_window_exceeded";
+  }
+
   return {
     statusCode: response.status,
     message: messageStr,
-    retryAfterMs
+    retryAfterMs,
+    code
   };
 }
 
@@ -147,21 +199,27 @@ export async function parseUpstreamError(response, provider = null) {
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
  * @param {number|null} retryAfterMs - Optional retry-after time in milliseconds
+ * @param {object} [opts] - Optional: { code? } for semantic error code (e.g. context_window_exceeded)
  * @returns {{ success: false, status: number, error: string, response: Response, retryAfterMs?: number }}
  */
-export function createErrorResult(statusCode, message, retryAfterMs = null) {
+export function createErrorResult(statusCode, message, retryAfterMs = null, opts = {}) {
+  const responseOpts = {};
+  if (retryAfterMs != null && retryAfterMs > 0) responseOpts.retryAfterMs = retryAfterMs;
+  if (opts.code) responseOpts.code = opts.code;
+  if (opts.requestId) responseOpts.requestId = opts.requestId;
+  if (opts.metadata && typeof opts.metadata === "object") responseOpts.metadata = opts.metadata;
+
   const result = {
     success: false,
     status: statusCode,
     error: message,
-    response: errorResponse(statusCode, message)
+    response: errorResponse(statusCode, message, responseOpts)
   };
-  
-  // Add retryAfterMs if available (for Antigravity quota errors)
-  if (retryAfterMs) {
-    result.retryAfterMs = retryAfterMs;
-  }
-  
+
+  if (retryAfterMs) result.retryAfterMs = retryAfterMs;
+  if (opts.code) result.code = opts.code;
+  if (opts.requestId) result.requestId = opts.requestId;
+
   return result;
 }
 
@@ -173,19 +231,13 @@ export function createErrorResult(statusCode, message, retryAfterMs = null) {
  * @param {string} retryAfterHuman - Human-readable retry info e.g. "reset after 30s"
  * @returns {Response}
  */
-export function unavailableResponse(statusCode, message, retryAfter, retryAfterHuman) {
+export function unavailableResponse(statusCode, message, retryAfter, retryAfterHuman, options = {}) {
   const retryAfterSec = Math.max(Math.ceil((new Date(retryAfter).getTime() - Date.now()) / 1000), 1);
   const msg = `${message} (${retryAfterHuman})`;
-  return new Response(
-    JSON.stringify({ error: { message: msg } }),
-    {
-      status: statusCode,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfterSec)
-      }
-    }
-  );
+  return errorResponse(statusCode, msg, {
+    ...options,
+    retryAfterMs: retryAfterSec * 1000
+  });
 }
 
 /**

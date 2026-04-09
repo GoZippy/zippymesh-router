@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { createProviderNode, getProviderNodes } from "@/models";
 import { OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX } from "@/shared/constants/providers";
 import { generateId } from "@/shared/utils";
@@ -12,13 +13,13 @@ const ANTHROPIC_COMPATIBLE_DEFAULTS = {
 };
 
 // GET /api/provider-nodes - List all provider nodes
-export async function GET() {
+export async function GET(request) {
   try {
     const nodes = await getProviderNodes();
     return NextResponse.json({ nodes });
   } catch (error) {
     console.log("Error fetching provider nodes:", error);
-    return NextResponse.json({ error: "Failed to fetch provider nodes" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch provider nodes");
   }
 }
 
@@ -29,11 +30,11 @@ export async function POST(request) {
     const { name, prefix, apiType, baseUrl, type } = body;
 
     if (!name?.trim()) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return apiError(request, 400, "Name is required");
     }
 
     if (!prefix?.trim()) {
-      return NextResponse.json({ error: "Prefix is required" }, { status: 400 });
+      return apiError(request, 400, "Prefix is required");
     }
 
     // Determine type
@@ -41,7 +42,7 @@ export async function POST(request) {
 
     if (nodeType === "openai-compatible") {
       if (!apiType || !["chat", "responses"].includes(apiType)) {
-        return NextResponse.json({ error: "Invalid OpenAI compatible API type" }, { status: 400 });
+        return apiError(request, 400, "Invalid OpenAI compatible API type");
       }
 
       const node = await createProviderNode({
@@ -73,9 +74,9 @@ export async function POST(request) {
       return NextResponse.json({ node }, { status: 201 });
     }
 
-    return NextResponse.json({ error: "Invalid provider node type" }, { status: 400 });
+    return apiError(request, 400, "Invalid provider node type");
   } catch (error) {
     console.log("Error creating provider node:", error);
-    return NextResponse.json({ error: "Failed to create provider node" }, { status: 500 });
+    return apiError(request, 500, "Failed to create provider node");
   }
 }

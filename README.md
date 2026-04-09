@@ -1,166 +1,234 @@
-# Zippy Mesh - AI Routing & Endpoint Proxy
+# ZippyMesh LLM Router
 
-**Local-first AI endpoint proxy with web dashboard. Smart routing, format translation, and multi-provider fallback.**
+**One endpoint. Any AI model. Smart routing.**
 
-Open source router core. Audit the code. Your prompts and keys never leave your control. See [NOTICE.md](NOTICE.md) and [SECURITY.md](SECURITY.md). For code classification (public vs proprietary, distributable vs private), see [docs/DISTRIBUTION_PLAN.md](docs/DISTRIBUTION_PLAN.md).
+ZippyMesh LLM Router (ZMLR) is an OpenAI-compatible local gateway that routes AI requests across multiple providers — Ollama, OpenAI, Anthropic, Groq, Google Gemini, Kilo, and more. Drop it in front of any OpenAI-compatible client and get intelligent model selection, cost controls, fallback chains, and a full dashboard — without changing your app.
+
+[![License: Source-Available](https://img.shields.io/badge/license-source--available-blue)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/node-20%2B-green)](https://nodejs.org/)
 
 ---
 
-## What It Does
+## Features
 
-ZippyMesh sits between your CLI tools (Claude Code, Codex, Cline, etc.) and upstream AI providers. It provides:
+- **OpenAI-compatible** — works with Cursor, Claude Code, LangChain, LiteLLM, and any `/v1/chat/completions` client
+- **Smart routing** — intent detection (`X-Intent: code`), constraint headers, automatic fallback chains
+- **Multi-provider** — Ollama (local), OpenAI, Anthropic, Groq, Gemini, Kilo, OpenRouter, and more
+- **Dashboard** — provider management, routing playbooks, virtual keys, analytics, cost simulator
+- **Virtual keys** — per-team API keys with token budgets, rate limits, and GDPR-clean purge
+- **Prompt cache** — exact-match and semantic caching to reduce costs and latency
+- **ZippyVault** — local AES-256-GCM encrypted credential store (early access)
+- **ZippyCoin mesh** — P2P node monetization and billing via ZippyCoin (early alpha / testnet only)
 
-- **Single OpenAI-compatible endpoint** (`/v1/*`) for all your tools
-- **Smart fallback** — auto-route through subscription, cheap, and free tiers
-- **Format translation** — OpenAI, Claude, Gemini formats translated seamlessly
-- **Multi-account support** — round-robin or priority-based routing
-- **Auto token refresh** — OAuth tokens refreshed automatically
-- **Custom combos** — build fallback chains across providers
-- **Usage tracking** — token counts, cost estimation, request logs
-- **Service Discovery** — auto-validation of credentials and health checks
-- **Context Compression** — smart summarization to fit context limits
-- **Web dashboard** — manage providers, keys (including local router API keys), combos, and settings
-- **API key security** — create scoped API tokens, enable enforcement via settings, and auto-blacklist abusive clients
-- **Firewall integration** — optional helper to apply host firewall rules (UFW/Defender/pf) when blacklisting
+---
 
-## Privacy & Telemetry
+## Quick start
 
-ZippyMesh is designed with privacy as a core principle. Unlike some similar routing proxies, ZippyMesh:
+### Requirements
 
-- **No built-in telemetry** — the router does not phone home, send usage analytics to external servers, or collect data beyond what you configure locally
-- **Local-first** — all provider credentials, usage data, and configuration stay on your machine
-- **Optional cloud sync** — if you enable cloud sync, data is sent only to endpoints you explicitly configure (`NEXT_PUBLIC_CLOUD_URL`)
-- **Transparent** — usage logs and request logs are stored locally and only when you enable `ENABLE_REQUEST_LOGS`
+- **Node.js 20+** (LTS recommended) — [nodejs.org](https://nodejs.org/)
+- **npm 10+**
 
-Your prompts, responses, and API keys never leave your control unless you explicitly route them through upstream providers you connect. See [docs/PRIVACY.md](docs/PRIVACY.md) for details.
-
-## Quick Start
-
-### Running Tests
-
-Unit tests (no server required):
+### Install from source
 
 ```bash
-npm install            # if not already done
-npm run test           # router API key: create, verify, revoke, blacklist
-npm run test:providers # provider config, sync, adapters, Kilo routing
-```
-
-Integration tests (server must be running; uses default password or `INITIAL_PASSWORD`):
-
-```bash
-npm run dev            # in one terminal
-node scripts/run_tests.mjs   # in another; set INITIAL_PASSWORD if needed
-```
-
-A secondary script (`verify_firewall.js`) attempts to apply default firewall
-rules and blacklist an example IP.  It is meant for manual verification on a
-supported host; it will not harm your configuration if run as a normal user.
-
-```bash
-node verify_firewall.js
-```
-
-
-### From Source
-
-First-time or installer setup (creates `.env` with generated secrets; use `--force` to overwrite):
-
-```bash
+git clone https://github.com/GoZippy/zippymesh-router.git
+cd zippymesh-router
 npm install
-npm run setup              # creates .env (default password: admin)
-# Or: node scripts/setup-env.mjs --password=yourpassword
-npm run build
-PORT=20128 HOSTNAME=0.0.0.0 npm run start
 ```
 
-To configure manually instead: copy `.env.example` to `.env`, set `JWT_SECRET`, `INITIAL_PASSWORD`, `DATA_DIR`.
-
-Dashboard: `http://localhost:20128/dashboard`
-API endpoint: `http://localhost:20128/v1`
-
-### Docker
+### Configure
 
 ```bash
-docker build -t zippy-mesh .
-docker run -d \
-  --name zippy-mesh \
-  -p 20128:20128 \
-  --env-file .env \
-  -v zippymesh-data:/app/data \
-  zippy-mesh
+cp .env.example .env
 ```
 
-## How It Works
+Edit `.env` and set at minimum:
 
-```
-Your CLI Tool (Claude Code, Codex, Cline...)
-    │
-    │ http://localhost:20128/v1
-    ↓
-┌─────────────────────────────────────────┐
-│         ZippyMesh (Smart Router)        │
-│  • Format translation (OpenAI ↔ Claude) │
-│  • Quota tracking & auto token refresh  │
-│  • Account fallback & combo routing     │
-└──────┬──────────────────────────────────┘
-       │
-       ├─→ [Tier 1] Subscriptions (Claude, Codex, Gemini CLI)
-       ├─→ [Tier 2] Cheap APIs (GLM, MiniMax, Kimi)
-       └─→ [Tier 3] Free providers (iFlow, Qwen, Kiro)
+```env
+JWT_SECRET=<run: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+INITIAL_PASSWORD=your-dashboard-password
 ```
 
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JWT_SECRET` | **Yes** | JWT signing secret (app refuses to start without it) |
-| `INITIAL_PASSWORD` | Recommended | First login password (set in .env; required for first-time setup) |
-| `DATA_DIR` | Recommended | Database location (default: `~/.zippymesh`) |
-| `PORT` | No | Service port (default: framework default) |
-| `API_KEY_SECRET` | Recommended | HMAC secret for generated API keys |
-| `ENABLE_FIREWALL` | No | When true, router attempts to configure OS firewall on blacklist events |
-| `MACHINE_ID_SALT` | Recommended | Salt for stable machine ID hashing |
-| `ENABLE_REQUEST_LOGS` | No | Enable request/response debug logs |
-| `NEXT_PUBLIC_BASE_URL` | No | Internal base URL for self-referencing API calls |
-
-## API Compatibility
-
-- `POST /v1/chat/completions` — OpenAI-compatible chat
-- `POST /v1/messages` — Anthropic-compatible messages
-- `POST /v1/responses` — OpenAI Responses API
-- `GET /v1/models` — List all available models + combos
-- `POST /v1/messages/count_tokens` — Token counting
-- Gemini-style endpoints via `/v1beta/models/*`
-
-Use the exact `id` from `GET /v1/models` as the `model` in `POST /v1/chat/completions`. On 429, the error body may include `error.alternatives` (model IDs in the same format) and `error.retry_after_seconds`; clients can retry with an alternative or wait. For failover suggestions: `GET /api/routing/suggestions?model=alias/modelId` returns equivalent models in client format, `isFree` flag, and recommended `failoverOrder`.
-
-## CLI
-
-With the server running, use the script for list-models, failover suggestions, and health check:
+### Run
 
 ```bash
-npm run cli list-models
-npm run cli suggest-failover --model=anthropic/claude-3-5-sonnet
-npm run cli test
+npm run dev        # development (hot reload)
+# or
+npm start          # production standalone
 ```
 
-Set `ZIPPY_BASE_URL` to override the base URL (default `http://localhost:20128`).
+Dashboard opens at **http://localhost:20128/dashboard**
 
-## Tech Stack
+---
 
-- **Runtime**: Node.js 20+
-- **Framework**: Next.js 16
-- **UI**: React 19 + Tailwind CSS 4
-- **Database**: LowDB (JSON file-based)
-- **Streaming**: Server-Sent Events (SSE)
-- **Auth**: OAuth 2.0 (PKCE) + JWT + API Keys
+## Usage
+
+Point any OpenAI client at `http://localhost:20128/v1`:
+
+```bash
+curl http://localhost:20128/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"auto","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+### Smart routing headers
+
+```bash
+# Route by intent
+curl ... -H "X-Intent: code"
+
+# Prefer free/local models
+curl ... -H "X-Prefer-Free: true"
+
+# Latency constraint
+curl ... -H "X-Max-Latency-Ms: 2000"
+```
+
+Response includes routing metadata:
+```
+x-selected-model: openai/gpt-4o
+x-routing-intent: code
+x-routing-score: 92
+```
+
+---
+
+## Configuration
+
+See `.env.example` for all options. Key settings:
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET` | Required. 32+ char secret for dashboard auth |
+| `INITIAL_PASSWORD` | Dashboard login password |
+| `PORT` | HTTP port (default: 20128) |
+| `OPENROUTER_API_KEY` | Access 300+ models via a single key |
+| `NEXT_PUBLIC_ZIPPYCOIN_RPC_URL` | ZippyCoin node RPC (testnet only) |
+
+---
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
+```
+Client (any OpenAI-compatible tool)
+        │  POST /v1/chat/completions
+        ▼
+  ZippyMesh LLM Router
+  ├── Smart Router (intent, constraints, scoring)
+  ├── Provider Registry (Ollama, OpenAI, Anthropic, Groq, …)
+  ├── Fallback Engine (automatic retry on failure)
+  ├── Prompt Cache (exact + semantic)
+  ├── Virtual Key Enforcement (budget, rate limits)
+  └── Request Tracer (analytics, SLA, audit log)
+        │
+        ▼
+  Upstream AI Provider
+```
 
+### Open-core model
+
+This repository is the **open-core** edition: UI, configuration, API scaffolding, and docs. The full routing engine and translation layer are in the private `zippymesh-dist` repository and distributed as the prebuilt product. See [`docs/OPEN_CORE_MANIFEST.md`](docs/OPEN_CORE_MANIFEST.md) for the exact split.
+
+---
+
+## Community build
+
+The community build strips proprietary routing internals and replaces them with open stubs:
+
+```bash
+npm run build:community
+```
+
+Output in `community-dist/`. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for details.
+
+---
+
+## MCP server
+
+ZMLR includes an MCP (Model Context Protocol) server for AI agents:
+
+```bash
+# In your MCP client config:
+{
+  "mcpServers": {
+    "zmlr": {
+      "url": "http://localhost:20128/mcp"
+    }
+  }
+}
+```
+
+Tools: `list_models`, `recommend_model`, `validate_model`, `execute_with_routing`
+
+---
+
+<<<<<<< HEAD
+=======
+## AutoClaw AI Agent Skills
+
+**AutoClaw** is a VS Code extension from Zippy Technologies that adds persistent background agents,
+autonomous build workflows, and multi-agent teams to any AI-powered IDE.
+
+AutoClaw and ZippyMesh LLM Router are designed to work together:
+
+| AutoClaw Feature | How ZippyMesh Helps |
+|---|---|
+| MAteam (multi-agent) | Parallel burst routing prevents rate limits across 4 agent calls |
+| KDream (background monitoring) | Long-running sessions don't exhaust a single provider |
+| AutoBuild (scheduled workflows) | Cost-optimized routing for automated CI/CD tasks |
+
+### Connecting AutoClaw to ZippyMesh
+
+1. Install the [AutoClaw extension](https://marketplace.visualstudio.com/items?itemName=ZippyTechnologiesLLC.autoclaw)
+   in VS Code, Cursor, KiloCode, or any compatible IDE
+2. Point your IDE's AI extension base URL to `http://localhost:20128/v1`
+3. AutoClaw's KDream Dashboard will automatically detect ZippyMesh and show its status
+
+### MAteam Parallel Routing Playbook
+
+For optimal MAteam performance, use the included `multi-agent-burst` playbook with these headers:
+```
+X-Session-Parallel: true
+X-Session-Id: <unique-session-id>
+X-Intent: multi-agent
+```
+
+This distributes each agent call across free providers (Groq → Gemini → GitHub Models → Cerebras → Ollama)
+ensuring no single provider is exhausted.
+
+### Learn More
+- [AutoClaw on GitHub](https://github.com/GoZippy/autoclaw)
+- [AutoClaw on VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=ZippyTechnologiesLLC.autoclaw)
+
+---
+
+>>>>>>> origin/ZippyMesh_LLM_main
+## ZippyCoin / P2P mesh
+
+Wallet, network, and node monetization features are **early alpha / testnet only**. ZMLR works fully without them. See the [Early Alpha banner](#) in the dashboard for details.
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+**Source-Available — Zippy Technologies Source-Available Commercial Install License v1.1**
+
+- **Personal and educational use:** free
+- **Commercial use:** USD $1,000 per install
+- **Derivative works:** must be disclosed to Zippy Technologies LLC
+
+See [LICENSE](LICENSE) for full terms.
+Commercial licensing: **Support@GoZippy.com**
+
+---
+
+## Support
+
+- **Website:** [zippymesh.com](https://zippymesh.com)
+- **Issues:** [github.com/GoZippy/zippymesh-router/issues](https://github.com/GoZippy/zippymesh-router/issues)
+- **Email:** Support@GoZippy.com
+
+---
+
+*ZippyMesh LLM Router — © 2026 Zippy Technologies LLC. All rights reserved.*

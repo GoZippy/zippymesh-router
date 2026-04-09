@@ -1,6 +1,7 @@
 import { fetchProviderModels } from "./models.js";
-import { registerModel } from "../modelRegistry.js";
+import { registerModel, reconcileProviderModelLifecycle } from "../modelRegistry.js";
 import { getProviderConnections, getSettings, updateSettings, updatePricing } from "../localDb.js";
+import { emitProviderLifecycleEvent } from "../lifecycleEvents.js";
 
 let syncInFlight = null;
 
@@ -36,7 +37,7 @@ function normalizePricingFromModel(providerId, modelId, model) {
 
   // Providers that expose prompt/completion in USD per token in their models API.
   const livePricingProviders = [
-    "openrouter", "kilo", "groq", "mistral", "xai", "deepseek", "cerebras", "cohere",
+    "openrouter", "kilo", "kiro", "groq", "mistral", "xai", "deepseek", "cerebras", "cohere",
     "togetherai", "fireworks", "anyscale", "perplexity", "deepinfra", "novita", "ai21", "moonshot",
   ];
   if (livePricingProviders.includes(providerId)) {
@@ -85,7 +86,7 @@ function normalizeModelRecord(providerId, model) {
     name,
     description: model?.description || null,
     contextWindow,
-    isFree: modelId.includes(":free") || toBool(model?.free) || isFreeByPrice,
+    isFree: modelId.includes(":free") || toBool(model?.free) || toBool(model?.isFree) || isFreeByPrice,
     isPreview: toBool(model?.is_preview) || String(modelId).includes("preview"),
     isPremium: toBool(model?.is_premium),
     metadata: model,
@@ -98,6 +99,7 @@ async function syncConnection(connection, options = {}) {
   const models = Array.isArray(rawModels) ? rawModels : [];
   const pricingUpdates = {};
   let registeredModels = 0;
+  const discoveredModelIds = [];
 
   for (const rawModel of models) {
     const normalized = normalizeModelRecord(connection.provider, rawModel);
@@ -114,6 +116,7 @@ async function syncConnection(connection, options = {}) {
     }
 
     await registerModel(normalized);
+    discoveredModelIds.push(normalized.modelId);
     registeredModels += 1;
   }
 
@@ -125,6 +128,7 @@ async function syncConnection(connection, options = {}) {
     fetchedModels: models.length,
     registeredModels,
     pricingModels: Object.keys(pricingUpdates[connection.provider] || {}).length,
+    discoveredModelIds,
     pricingUpdates,
   };
 }
@@ -139,7 +143,7 @@ export async function syncProviderCatalog(options = {}) {
   } = options;
 
   const settings = await getSettings();
-  const intervalMinutes = Math.max(5, Number(settings.providerCatalogSyncIntervalMinutes || 180));
+  const intervalMinutes = Math.max(5, Number(settings.providerCatalogSyncIntervalMinutes || 30));
   const lastSyncAt = settings.providerCatalogLastSyncedAt ? Date.parse(settings.providerCatalogLastSyncedAt) : null;
   const now = Date.now();
   const staleMs = intervalMinutes * 60_000;
@@ -168,23 +172,204 @@ export async function syncProviderCatalog(options = {}) {
   const results = [];
   const warnings = [];
   const mergedPricing = {};
+  const providerRuns = new Map();
+  const previousHealth = settings.providerCatalogSyncHealth || {};
+  const providerHealth = { ...previousHealth };
+
+  // 1. Pre-sync Oracle models if ORACLE_SYNC_ENABLED is true
+  if (toBool(settings.ORACLE_SYNC_ENABLED)) {
+    try {
+      const oracleRes = await fetch("http://localhost:20200/v1/models", {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (oracleRes.ok) {
+        const oracleData = await oracleRes.json();
+        const oracleModels = oracleData.data || [];
+        for (const m of oracleModels) {
+          if (!m.id) continue;
+          await registerModel({
+             id: m.id,
+             name: m.name || m.id,
+             provider: "oracle",
+             source: "oracle",
+             tier: "local",
+             capabilities: {
+               chat: true,
+               vision: false,
+             },
+          });
+        }
+        results.push({ provider: "oracle", fetchedModels: oracleModels.length, registeredModels: oracleModels.length });
+        providerRuns.set("oracle", {
+          provider: "oracle",
+          connectionsAttempted: 1,
+          connectionsSucceeded: 1,
+          connectionErrors: [],
+          modelsRegistered: oracleModels.length,
+          pricingModels: 0,
+          discoveredModelIds: new Set(oracleModels.map(m => m.id))
+        });
+      }
+    } catch (err) {
+      warnings.push({ provider: "oracle", error: "Oracle sync failed: " + err.message });
+    }
+  }
+
+  // 1. Pre-sync Oracle models if ORACLE_SYNC_ENABLED is true
+  if (toBool(settings.ORACLE_SYNC_ENABLED)) {
+    try {
+      const oracleRes = await fetch("http://localhost:20200/v1/models", {
+        signal: AbortSignal.timeout(5000)
+      });
+      if (oracleRes.ok) {
+        const oracleData = await oracleRes.json();
+        const oracleModels = oracleData.data || [];
+        for (const m of oracleModels) {
+          if (!m.id) continue;
+          await registerModel({
+             id: m.id,
+             name: m.name || m.id,
+             provider: "oracle",
+             source: "oracle",
+             tier: "local",
+             capabilities: {
+               chat: true,
+               vision: false,
+             },
+          });
+        }
+        results.push({ provider: "oracle", fetchedModels: oracleModels.length, registeredModels: oracleModels.length });
+        providerRuns.set("oracle", {
+          provider: "oracle",
+          connectionsAttempted: 1,
+          connectionsSucceeded: 1,
+          connectionErrors: [],
+          modelsRegistered: oracleModels.length,
+          pricingModels: 0,
+          discoveredModelIds: new Set(oracleModels.map(m => m.id))
+        });
+      }
+    } catch (err) {
+      warnings.push({ provider: "oracle", error: "Oracle sync failed: " + err.message });
+    }
+  }
+
+  const getProviderRun = (provider) => {
+    if (providerRuns.has(provider)) return providerRuns.get(provider);
+    const state = {
+      provider,
+      connectionsAttempted: 0,
+      connectionsSucceeded: 0,
+      connectionErrors: [],
+      modelsRegistered: 0,
+      pricingModels: 0,
+      discoveredModelIds: new Set(),
+    };
+    providerRuns.set(provider, state);
+    return state;
+  };
 
   for (const connection of connections) {
+    const providerState = getProviderRun(connection.provider);
+    providerState.connectionsAttempted += 1;
+    await emitProviderLifecycleEvent("provider.sync.start", {
+      provider: connection.provider,
+      connectionId: connection.id,
+      detail: { triggeredBy },
+    });
     try {
       const result = await syncConnection(connection, { updatePricingFromModels });
       results.push(result);
+      providerState.connectionsSucceeded += 1;
+      providerState.modelsRegistered += result.registeredModels || 0;
+      providerState.pricingModels += result.pricingModels || 0;
+      for (const modelId of result.discoveredModelIds || []) {
+        providerState.discoveredModelIds.add(modelId);
+      }
 
       for (const [providerId, entries] of Object.entries(result.pricingUpdates || {})) {
         mergedPricing[providerId] ??= {};
         Object.assign(mergedPricing[providerId], entries);
       }
+      await emitProviderLifecycleEvent("provider.sync.success", {
+        provider: connection.provider,
+        connectionId: connection.id,
+        detail: {
+          fetchedModels: result.fetchedModels || 0,
+          registeredModels: result.registeredModels || 0,
+          pricingModels: result.pricingModels || 0,
+        },
+      });
     } catch (error) {
-      warnings.push({
+      const warning = {
         connectionId: connection.id,
         provider: connection.provider,
         error: error?.message || String(error),
+      };
+      warnings.push(warning);
+      providerState.connectionErrors.push(warning);
+      await emitProviderLifecycleEvent("provider.sync.failure", {
+        provider: connection.provider,
+        connectionId: connection.id,
+        status: 500,
+        detail: { error: warning.error },
       });
     }
+  }
+
+  const providerSummaries = [];
+  const syncedAt = new Date().toISOString();
+  for (const [provider, providerState] of providerRuns.entries()) {
+    let reconciliation = null;
+    const hadSuccess = providerState.connectionsSucceeded > 0;
+    if (hadSuccess) {
+      reconciliation = await reconcileProviderModelLifecycle(provider, Array.from(providerState.discoveredModelIds));
+    }
+
+    const previous = previousHealth[provider] || {};
+    const consecutiveFailureCount = hadSuccess
+      ? 0
+      : ((Number(previous.consecutiveFailureCount) || 0) + 1);
+
+    providerHealth[provider] = {
+      ...previous,
+      lastRunAt: syncedAt,
+      consecutiveFailureCount,
+      connectionsAttempted: providerState.connectionsAttempted,
+      connectionsSucceeded: providerState.connectionsSucceeded,
+      lastAttemptedModels: providerState.discoveredModelIds.size,
+      lastError: providerState.connectionErrors.length > 0
+        ? providerState.connectionErrors[providerState.connectionErrors.length - 1].error
+        : null,
+      lastFailureAt: hadSuccess ? null : syncedAt,
+      lastSuccessAt: hadSuccess ? syncedAt : (previous.lastSuccessAt || null),
+      warningCount: providerState.connectionErrors.length,
+      status: hadSuccess ? (providerState.connectionsSucceeded < providerState.connectionsAttempted ? "partial_success" : "success") : "failed",
+    };
+
+    if (reconciliation) {
+      providerHealth[provider].reconciliation = reconciliation;
+    }
+
+    await emitProviderLifecycleEvent("provider.health.update", {
+      provider,
+      detail: {
+        status: providerHealth[provider].status,
+        warningCount: providerHealth[provider].warningCount,
+        consecutiveFailureCount: providerHealth[provider].consecutiveFailureCount,
+        lastAttemptedModels: providerHealth[provider].lastAttemptedModels,
+      },
+    });
+
+    providerSummaries.push({
+      provider,
+      connectionsAttempted: providerState.connectionsAttempted,
+      connectionsSucceeded: providerState.connectionsSucceeded,
+      modelsRegistered: providerState.modelsRegistered,
+      pricingModelsUpdated: providerState.pricingModels,
+      warnings: providerState.connectionErrors.length,
+      reconciled: reconciliation,
+    });
   }
 
   if (Object.keys(mergedPricing).length > 0) {
@@ -193,21 +378,27 @@ export async function syncProviderCatalog(options = {}) {
 
   const summary = {
     triggeredBy,
-    syncedAt: new Date().toISOString(),
+    syncedAt,
     connectionsConsidered: connections.length,
     connectionsSynced: results.length,
     modelsRegistered: results.reduce((acc, r) => acc + (r.registeredModels || 0), 0),
     pricingModelsUpdated: Object.values(mergedPricing).reduce((acc, byModel) => acc + Object.keys(byModel || {}).length, 0),
     warningCount: warnings.length,
+    providersConsidered: providerRuns.size,
+    providerSummaries,
   };
 
   await updateSettings({
     providerCatalogLastSyncedAt: summary.syncedAt,
     providerCatalogLastSyncSummary: summary,
+    providerCatalogSyncHealth: providerHealth,
   });
 
   return { skipped: false, summary, results, warnings };
 }
+
+/** Max jitter (ms) before starting auto sync to avoid thundering herd when many triggers fire. */
+const AUTO_SYNC_JITTER_MS = 30_000;
 
 export async function maybeAutoRefreshProviderCatalog() {
   if (syncInFlight) return syncInFlight;
@@ -217,7 +408,14 @@ export async function maybeAutoRefreshProviderCatalog() {
     return { skipped: true, reason: "auto_sync_disabled" };
   }
 
-  syncInFlight = syncProviderCatalog({ force: false, triggeredBy: "auto" })
+  // Single-flight: one catalog sync at a time. Jitter before starting to spread load.
+  const jitterMs = Math.floor(Math.random() * (AUTO_SYNC_JITTER_MS + 1));
+  syncInFlight = (async () => {
+    if (jitterMs > 0) {
+      await new Promise((r) => setTimeout(r, jitterMs));
+    }
+    return syncProviderCatalog({ force: false, triggeredBy: "auto" });
+  })()
     .catch((error) => ({
       skipped: false,
       error: error?.message || String(error),
@@ -229,7 +427,7 @@ export async function maybeAutoRefreshProviderCatalog() {
   return syncInFlight;
 }
 
-// Exported for tests.
+// Exported for tests and for provider-specific sync (e.g. Kiro) that need to register raw model lists.
 export const __internal = {
   normalizePricingFromModel,
   normalizeModelRecord,

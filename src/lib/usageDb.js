@@ -208,7 +208,7 @@ function firstDefinedNumber(...values) {
   return undefined;
 }
 
-function generateRequestId() {
+export function generateRequestId() {
   try {
     if (globalThis?.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   } catch {
@@ -352,6 +352,10 @@ export async function getUsageHistory(filter = {}) {
     history = history.filter(h => h.model === filter.model);
   }
 
+  if (filter.connectionId) {
+    history = history.filter(h => h.connectionId === filter.connectionId);
+  }
+
   if (filter.startDate) {
     const start = new Date(filter.startDate).getTime();
     history = history.filter(h => new Date(h.timestamp).getTime() >= start);
@@ -363,6 +367,76 @@ export async function getUsageHistory(filter = {}) {
   }
 
   return history;
+}
+
+/**
+ * Get per-connection usage stats for the pool table (last 24h + last model, uptime, errors, latency).
+ * Persisted in local usage DB; used by Global Account Pool table.
+ * @param {string[]} connectionIds - Optional list of connection IDs to include
+ * @returns {Promise<Record<string, { lastModel: string, lastUsedAt: string|null, calls24h: number, tokensIn24h: number, tokensOut24h: number, errors24h: number, uptimePct: number|null, avgLatencyMs24h: number|null }>>}
+ */
+export async function getPoolStatsByConnection(connectionIds = null) {
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+  const history = await getUsageHistory({ startDate, endDate });
+  const byConn = {};
+
+  for (const entry of history) {
+    const cid = entry.connectionId || entry.connection_id || "unknown";
+    if (connectionIds && !connectionIds.includes(cid)) continue;
+    if (!byConn[cid]) {
+      byConn[cid] = {
+        lastModel: null,
+        lastUsedAt: null,
+        calls24h: 0,
+        tokensIn24h: 0,
+        tokensOut24h: 0,
+        errors24h: 0,
+        success24h: 0,
+        latencySumMs: 0,
+        latencyCount: 0,
+      };
+    }
+    const row = byConn[cid];
+    const status = Number(entry.status);
+    const isSuccess = status >= 200 && status < 300;
+    const isError = status >= 400 || status === 0;
+
+    row.calls24h += 1;
+    if (isSuccess) row.success24h += 1;
+    if (isError) row.errors24h += 1;
+    row.tokensIn24h += entry.ourPromptTokens ?? entry.tokens?.prompt_tokens ?? 0;
+    row.tokensOut24h += entry.ourCompletionTokens ?? entry.tokens?.completion_tokens ?? 0;
+    if (entry.latencyMs != null && Number.isFinite(entry.latencyMs)) {
+      row.latencySumMs += entry.latencyMs;
+      row.latencyCount += 1;
+    }
+    const ts = entry.timestamp ? new Date(entry.timestamp).getTime() : 0;
+    if (!row.lastUsedAt || ts > new Date(row.lastUsedAt).getTime()) {
+      row.lastUsedAt = entry.timestamp;
+      row.lastModel = entry.model || null;
+    }
+  }
+
+  // Normalize: uptimePct and avgLatencyMs24h; drop internal fields
+  const out = {};
+  for (const [cid, row] of Object.entries(byConn)) {
+    out[cid] = {
+      lastModel: row.lastModel,
+      lastUsedAt: row.lastUsedAt,
+      calls24h: row.calls24h,
+      tokensIn24h: row.tokensIn24h,
+      tokensOut24h: row.tokensOut24h,
+      errors24h: row.errors24h,
+      uptimePct: row.calls24h > 0
+        ? Math.round((row.success24h / row.calls24h) * 100)
+        : null,
+      avgLatencyMs24h: row.latencyCount > 0
+        ? Math.round(row.latencySumMs / row.latencyCount)
+        : null,
+    };
+  }
+  return out;
 }
 
 /**
@@ -381,9 +455,9 @@ function formatLogDate(date = new Date()) {
 
 /**
  * Append to log.txt
- * Format: datetime(dd-mm-yyyy h:m:s) | model | provider | account | tokens sent | tokens received | status
+ * Format: datetime(dd-mm-yyyy h:m:s) | model | provider | account | tokens sent | tokens received | status | request_id
  */
-export async function appendRequestLog({ model, provider, connectionId, tokens, status }) {
+export async function appendRequestLog({ model, provider, connectionId, tokens, status, requestId }) {
   if (isCloud) return; // Skip logging in Workers
 
   try {
@@ -404,8 +478,9 @@ export async function appendRequestLog({ model, provider, connectionId, tokens, 
 
     const sent = tokens?.prompt_tokens !== undefined ? tokens.prompt_tokens : "-";
     const received = tokens?.completion_tokens !== undefined ? tokens.completion_tokens : "-";
+    const requestTag = requestId ? String(requestId).trim().slice(0, 128) : "-";
 
-    const line = `${timestamp} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${status}\n`;
+    const line = `${timestamp} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${status} | ${requestTag}\n`;
 
     if (!fs.existsSync(LOG_FILE)) {
       fs.writeFileSync(LOG_FILE, "");

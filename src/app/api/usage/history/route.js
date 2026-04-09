@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getUsageStats } from "@/lib/usageDb";
 import { getSettings } from "@/lib/localDb";
+import { apiError } from "@/lib/apiErrors.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
     const settings = await getSettings();
 
-    if (settings.isDemoMode) {
+    if (settings?.isDemoMode === true) {
       // Return simulated data for layout validation
       const now = new Date();
       const currentMinuteStart = new Date(Math.floor(now.getTime() / 60000) * 60000);
@@ -61,7 +62,7 @@ export async function GET() {
     return NextResponse.json(stats);
   } catch (error) {
     console.error("Error fetching usage stats:", error);
-    return NextResponse.json({ error: "Failed to fetch usage stats" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch usage stats");
   }
 }
 

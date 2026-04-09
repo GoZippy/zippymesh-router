@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { readFile, readdir } from "fs/promises";
+import path from "path";
 
 /**
  * GET /api/oauth/kiro/auto-import
@@ -30,7 +31,7 @@ export async function GET() {
     const kiroTokenFile = "kiro-auth-token.json";
     if (files.includes(kiroTokenFile)) {
       try {
-        const content = await readFile(join(cachePath, kiroTokenFile), "utf-8");
+        const content = await readFile(path.join(cachePath, kiroTokenFile), "utf-8");
         const data = JSON.parse(content);
         if (data.refreshToken && data.refreshToken.startsWith("aorAAAAAG")) {
           refreshToken = data.refreshToken;
@@ -47,7 +48,7 @@ export async function GET() {
         if (!file.endsWith(".json")) continue;
 
         try {
-          const content = await readFile(join(cachePath, file), "utf-8");
+          const content = await readFile(path.join(cachePath, file), "utf-8");
           const data = JSON.parse(content);
 
           // Look for Kiro refresh token (starts with aorAAAAAG)

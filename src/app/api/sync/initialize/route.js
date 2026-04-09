@@ -1,36 +1,23 @@
 import { NextResponse } from "next/server";
-import initializeCloudSync from "@/shared/services/initializeCloudSync";
-
-let syncInitialized = false;
+// NOTE: Cloud sync has been removed for security. The initializeCloudSync import
+// previously pointed to a cloud scheduler that no longer exists. The route now
+// returns a graceful "not available" response instead of crashing at import time.
+// If local provider sync is needed on startup, call initLocalProviderConnections
+// from @/lib/localDb directly.
 
 // POST /api/sync/initialize - Run startup initialization
 export async function POST(request) {
-  try {
-    if (syncInitialized) {
-      return NextResponse.json({
-        message: "Already initialized"
-      });
-    }
-
-    await initializeCloudSync();
-    syncInitialized = true;
-
-    return NextResponse.json({
-      success: true,
-      message: "Initialization complete"
-    });
-  } catch (error) {
-    console.log("Error during initialization:", error);
-    return NextResponse.json({
-      error: "Failed to initialize"
-    }, { status: 500 });
-  }
+  // Cloud sync is not available in this build.
+  return NextResponse.json({
+    success: false,
+    message: "Cloud sync is not available in this build"
+  });
 }
 
 // GET /api/sync/status - Check initialization status
 export async function GET(request) {
   return NextResponse.json({
-    initialized: syncInitialized,
-    message: syncInitialized ? "Initialized" : "Not initialized"
+    initialized: false,
+    message: "Cloud sync is not available in this build"
   });
 }

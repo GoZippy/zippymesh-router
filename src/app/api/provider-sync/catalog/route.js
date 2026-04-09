@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getProviderCatalog } from "@/lib/providers/catalog.js";
 import { PROVIDERS as RUNTIME_PROVIDER_CONFIG } from "../../../../../open-sse/config/constants.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 function getRuntimeEndpointMap() {
   const map = {};
@@ -14,7 +15,7 @@ function getRuntimeEndpointMap() {
   return map;
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
     const catalog = getProviderCatalog();
     return NextResponse.json({
@@ -25,7 +26,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error building provider catalog:", error);
-    return NextResponse.json({ error: "Failed to build provider catalog" }, { status: 500 });
+    return apiError(request, 500, "Failed to build provider catalog");
   }
 }
 

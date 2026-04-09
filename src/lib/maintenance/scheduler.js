@@ -1,6 +1,9 @@
 import { connectionTester } from "./connectionTester.js";
 import { modelDiscovery } from "./discovery.js";
-import { getProviderConnections, getSettings } from "../localDb.js";
+import { getProviderConnections, getSettings, purgeOldTraces } from "../localDb.js";
+import { tokenRefreshJob } from "./tokenRefreshJob.js";
+import { syncProviderCatalog } from "../providers/sync.js";
+import { checkSlaBreaches } from "../slaMonitor.js";
 
 /**
  * Maintenance Scheduler
@@ -10,6 +13,9 @@ export class MaintenanceScheduler {
     constructor() {
         this.nightlyTimer = null;
         this.healthCheckTimer = null;
+        this.tokenRefreshTimer = null;
+        this.providerCatalogRefreshTimer = null;
+        this.slaMonitorTimer = null;
     }
 
     /**
@@ -23,6 +29,18 @@ export class MaintenanceScheduler {
 
         // Schedule periodic health checks (every 30 mins)
         this.startHealthChecks(30 * 60 * 1000);
+
+        // Schedule proactive token refresh (every 20 minutes).
+        // The job applies a 2-hour threshold for standard OAuth tokens and a
+        // 25-minute threshold for GitHub Copilot tokens, so running every 20
+        // minutes is sufficient to catch both.
+        this.startTokenRefresh(20 * 60 * 1000);
+
+        // Schedule provider catalog refresh (every 15 minutes)
+        this.startProviderCatalogRefresh(15 * 60 * 1000);
+
+        // Schedule SLA monitor (every 5 minutes)
+        this.startSlaMonitor(5 * 60 * 1000);
     }
 
     /**
@@ -55,10 +73,51 @@ export class MaintenanceScheduler {
     }
 
     /**
+     * Start the background token refresh job
+     */
+    startTokenRefresh(intervalMs) {
+        if (this.tokenRefreshTimer) clearInterval(this.tokenRefreshTimer);
+        this.tokenRefreshTimer = setInterval(() => tokenRefreshJob.run(), intervalMs);
+        console.log(`[Maintenance] Background token refresh scheduled every ${intervalMs / 60000} minutes.`);
+    }
+
+    /**
+     * Start the provider catalog refresh job
+     */
+    startProviderCatalogRefresh(intervalMs) {
+        if (this.providerCatalogRefreshTimer) clearInterval(this.providerCatalogRefreshTimer);
+        this.providerCatalogRefreshTimer = setInterval(async () => {
+            const settings = await getSettings();
+            if (settings.autoProviderCatalogSync === false) return;
+            await syncProviderCatalog({ force: false, triggeredBy: 'scheduler' });
+        }, intervalMs);
+        console.log(`[Maintenance] Provider catalog refresh scheduled every ${intervalMs / 60000} minutes.`);
+    }
+
+    /**
+     * Start the SLA monitor job
+     */
+    startSlaMonitor(intervalMs) {
+        if (this.slaMonitorTimer) clearInterval(this.slaMonitorTimer);
+        this.slaMonitorTimer = setInterval(() => checkSlaBreaches(), intervalMs);
+        console.log(`[Maintenance] SLA monitor scheduled every ${intervalMs / 60000} minutes.`);
+    }
+
+    /**
      * Run full maintenance: connection tests, model discovery, deprecation detection
      */
     async runFullMaintenance() {
         console.log("[Maintenance] Running FULL maintenance task...");
+        
+        // Purge old data based on retention policy
+        try {
+            const settings = await getSettings();
+            const deleted = purgeOldTraces(settings.traceRetentionDays ?? 30);
+            console.log(`[Maintenance] Purged ${deleted} old traces (Retention: ${settings.traceRetentionDays ?? 30} days).`);
+        } catch (e) {
+            console.warn("[Maintenance] Error running data retention purge:", e);
+        }
+
         const connections = await getProviderConnections({ isActive: true });
 
         for (const conn of connections) {
@@ -99,6 +158,9 @@ export class MaintenanceScheduler {
     stop() {
         if (this.nightlyTimer) clearTimeout(this.nightlyTimer);
         if (this.healthCheckTimer) clearInterval(this.healthCheckTimer);
+        if (this.tokenRefreshTimer) clearInterval(this.tokenRefreshTimer);
+        if (this.providerCatalogRefreshTimer) clearInterval(this.providerCatalogRefreshTimer);
+        if (this.slaMonitorTimer) clearInterval(this.slaMonitorTimer);
     }
 }
 

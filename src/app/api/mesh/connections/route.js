@@ -5,22 +5,25 @@ import {
   updateNodeConnection,
   getWallets,
 } from "@/lib/localDb.js";
+import { apiError, withStandardHeaders, getRequestIdFromRequest } from "@/lib/apiErrors.js";
 
-export async function GET() {
+export async function GET(request) {
+  const requestId = getRequestIdFromRequest(request);
   try {
     const connections = await getNodeConnections();
     const wallets = await getWallets();
-    return NextResponse.json({
+    return withStandardHeaders(NextResponse.json({
       connections,
       wallets,
-    });
+    }), requestId);
   } catch (error) {
     console.error("Error fetching connections:", error);
-    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch");
   }
 }
 
 export async function POST(request) {
+  const requestId = getRequestIdFromRequest(request);
   try {
     const body = await request.json();
     const { peer_id, wallet_ids, contract_terms, action } = body;
@@ -31,18 +34,18 @@ export async function POST(request) {
         contract_terms: contract_terms || null,
       });
       const connections = await getNodeConnections();
-      return NextResponse.json({ connections });
+      return withStandardHeaders(NextResponse.json({ connections }), requestId);
     }
 
     if (Array.isArray(body.connections)) {
       await setNodeConnections(body.connections);
       const connections = await getNodeConnections();
-      return NextResponse.json({ connections });
+      return withStandardHeaders(NextResponse.json({ connections }), requestId);
     }
 
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    return apiError(request, 400, "Invalid request");
   } catch (error) {
     console.error("Error updating connections:", error);
-    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    return apiError(request, 500, "Failed to save");
   }
 }

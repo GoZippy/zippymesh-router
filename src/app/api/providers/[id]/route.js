@@ -4,7 +4,9 @@ import { getProviderConnectionById, updateProviderConnection, deleteProviderConn
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { toSafeProviderConnection } from "@/shared/utils/providerSecurity";
+import { apiError } from "@/lib/apiErrors";
 
 // GET /api/providers/[id] - Get single connection
 export async function GET(request, { params }) {
@@ -13,20 +15,15 @@ export async function GET(request, { params }) {
     const connection = await getProviderConnectionById(id);
 
     if (!connection) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      return apiError(request, 404, "Connection not found");
     }
 
-    // Hide sensitive fields
-    const result = { ...connection };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    const result = toSafeProviderConnection(connection);
 
     return NextResponse.json({ connection: result });
   } catch (error) {
     console.log("Error fetching connection:", error);
-    return NextResponse.json({ error: "Failed to fetch connection" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch connection");
   }
 }
 
@@ -52,7 +49,7 @@ export async function PUT(request, { params }) {
 
     const existing = await getProviderConnectionById(id);
     if (!existing) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      return apiError(request, 404, "Connection not found");
     }
 
     const updateData = {};
@@ -74,12 +71,7 @@ export async function PUT(request, { params }) {
 
     const updated = await updateProviderConnection(id, updateData);
 
-    // Hide sensitive fields
-    const result = { ...updated };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    const result = toSafeProviderConnection(updated);
 
     // Auto sync to Cloud if enabled
     await syncToCloudIfEnabled();
@@ -87,7 +79,7 @@ export async function PUT(request, { params }) {
     return NextResponse.json({ connection: result });
   } catch (error) {
     console.log("Error updating connection:", error);
-    return NextResponse.json({ error: "Failed to update connection" }, { status: 500 });
+    return apiError(request, 500, "Failed to update connection");
   }
 }
 
@@ -98,7 +90,7 @@ export async function DELETE(request, { params }) {
 
     const deleted = await deleteProviderConnection(id);
     if (!deleted) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      return apiError(request, 404, "Connection not found");
     }
 
     // Auto sync to Cloud if enabled
@@ -107,7 +99,7 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ message: "Connection deleted successfully" });
   } catch (error) {
     console.log("Error deleting connection:", error);
-    return NextResponse.json({ error: "Failed to delete connection" }, { status: 500 });
+    return apiError(request, 500, "Failed to delete connection");
   }
 }
 

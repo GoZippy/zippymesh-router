@@ -5,6 +5,7 @@ import { normalizeAlternativesToClientFormat } from "@/lib/alternativesFormat.js
 import { getRegistryModel } from "@/lib/modelRegistry.js";
 import { resolveProviderId } from "@/shared/constants/providers.js";
 import { FREE_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/providers.js";
+import { apiError } from "@/lib/apiErrors";
 
 const FREE_PROVIDER_IDS = new Set([
   ...Object.keys(FREE_PROVIDERS || {}),
@@ -31,21 +32,25 @@ export async function GET(request) {
           const modelId = idx === -1 ? "" : clientId.slice(idx + 1);
           const providerId = resolveProviderId(alias);
           const registry = await getRegistryModel(providerId, modelId).catch(() => null);
+          if (registry && registry.lifecycleState !== "active") {
+            return null;
+          }
           const isFree = registry?.isFree ?? FREE_PROVIDER_IDS.has(providerId);
           return { id: clientId, isFree: !!isFree };
         })
       );
-      const failoverOrder = withMeta
+      const filtered = withMeta.filter((item) => item !== null);
+      const failoverOrder = filtered
         .sort((a, b) => (a.isFree === b.isFree ? 0 : a.isFree ? 1 : -1))
         .map((x) => x.id);
       return NextResponse.json({
         model: modelParam.trim(),
-        equivalents: withMeta,
+        equivalents: filtered,
         failoverOrder,
       });
     } catch (error) {
       console.error("Error computing suggestions for model:", error);
-      return NextResponse.json({ error: "Failed to get suggestions for model" }, { status: 500 });
+      return apiError(request, 500, "Failed to get suggestions for model");
     }
   }
 
@@ -54,6 +59,6 @@ export async function GET(request) {
     return NextResponse.json({ suggestions });
   } catch (error) {
     console.error("Error fetching rate limit suggestions:", error);
-    return NextResponse.json({ error: "Failed to fetch suggestions" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch suggestions");
   }
 }

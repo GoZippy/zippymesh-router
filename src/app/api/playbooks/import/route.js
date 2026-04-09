@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { createRoutingPlaybook, getProviderConnections } from "@/lib/localDb.js";
 
 const SECRET_KEYS = new Set([
@@ -74,7 +75,7 @@ export async function POST(request) {
     const dryRun = body?.dryRun !== false;
 
     if (!incoming.name) {
-      return NextResponse.json({ error: "Playbook name is required" }, { status: 400 });
+      return apiError(request, 400, "Playbook name is required");
     }
 
     const connections = await getProviderConnections({ isActive: true, isEnabled: true });
@@ -105,7 +106,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("Error importing playbook:", error);
-    return NextResponse.json({ error: "Failed to import playbook" }, { status: 500 });
+    return apiError(request, 500, "Failed to import playbook");
   }
 }
 

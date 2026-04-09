@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Card, Button, Select } from "@/shared/components";
 import dynamic from "next/dynamic";
+import { safeFetchJson } from "@/shared/utils";
 
 // Dynamically import Monaco Editor (client-side only)
 const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
@@ -72,7 +73,7 @@ export default function TranslatorPage() {
         apiKey: prompt("Enter API key (or leave empty):") || undefined
       };
 
-      const res = await fetch("/api/translator/send", {
+      const res = await safeFetchJson("/api/translator/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -82,14 +83,14 @@ export default function TranslatorPage() {
         })
       });
 
-      const data = await res.json();
+      const data = res.data || {};
       
       if (data.success) {
         // Update step 5 with provider response
         setSteps({ ...steps, 5: data.body });
         
         // Save step 5
-        await fetch("/api/translator/save", {
+        await safeFetchJson("/api/translator/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -115,8 +116,8 @@ export default function TranslatorPage() {
     setLoading({ ...loading, [`load-${stepId}`]: true });
     try {
       const step = STEPS.find(s => s.id === stepId);
-      const res = await fetch(`/api/translator/load?file=${step.file}`);
-      const data = await res.json();
+      const res = await safeFetchJson(`/api/translator/load?file=${step.file}`);
+      const data = res.data || {};
       if (data.success) {
         setSteps({ ...steps, [stepId]: data.content });
       } else {
@@ -169,7 +170,7 @@ export default function TranslatorPage() {
     setLoading({ ...loading, [`update-${stepId}`]: true });
     try {
       const step = STEPS.find(s => s.id === stepId);
-      const res = await fetch("/api/translator/save", {
+      const res = await safeFetchJson("/api/translator/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -177,7 +178,7 @@ export default function TranslatorPage() {
           content: steps[stepId]
         })
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (data.success) {
         alert("File saved successfully");
       } else {
@@ -194,7 +195,7 @@ export default function TranslatorPage() {
     try {
       // 1. Save current step
       const currentStep = STEPS.find(s => s.id === stepId);
-      await fetch("/api/translator/save", {
+      await safeFetchJson("/api/translator/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -205,24 +206,25 @@ export default function TranslatorPage() {
 
       // Step 4: Send to provider instead of translate
       if (stepId === 4) {
-        const res = await fetch("/api/translator/send", {
+        const res = await safeFetchJson("/api/translator/send", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider,
             body: JSON.parse(steps[4])
-          })
+          }),
+          responseMode: "stream"
         });
         
         if (!res.ok) {
-          const errorData = await res.json();
+          const errorData = res.data || {};
           alert(errorData.error || "Failed to send request");
           setLoading({ ...loading, [`submit-${stepId}`]: false });
           return;
         }
 
         // Read streaming response
-        const reader = res.body.getReader();
+        const reader = (res.stream || res.body).getReader();
         const decoder = new TextDecoder();
         let fullResponse = "";
         
@@ -237,7 +239,7 @@ export default function TranslatorPage() {
         // Save to step 5
         setSteps({ ...steps, 5: fullResponse });
         
-        await fetch("/api/translator/save", {
+        await safeFetchJson("/api/translator/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -250,7 +252,7 @@ export default function TranslatorPage() {
         alert("Request sent to provider successfully!");
       } else {
         // Steps 1-3: Translate to next step
-        const res = await fetch("/api/translator/translate", {
+        const res = await safeFetchJson("/api/translator/translate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -259,7 +261,7 @@ export default function TranslatorPage() {
             body: JSON.parse(steps[stepId])
           })
         });
-        const data = await res.json();
+        const data = res.data || {};
         
         if (data.success) {
           const nextStepId = stepId + 1;
@@ -268,7 +270,7 @@ export default function TranslatorPage() {
           setSteps({ ...steps, [nextStepId]: nextContent });
           
           const nextStep = STEPS.find(s => s.id === nextStepId);
-          await fetch("/api/translator/save", {
+          await safeFetchJson("/api/translator/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

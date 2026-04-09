@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getProviderConnections, updateProviderConnection } from "@/models";
 // Fallback for removed validateApiKey function
 const validateApiKey = async () => true;
@@ -9,7 +10,7 @@ export async function PUT(request) {
   try {
     const authHeader = request.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Missing API key" }, { status: 401 });
+      return apiError(request, 401, "Missing API key");
     }
 
     const apiKey = authHeader.slice(7);
@@ -17,13 +18,13 @@ export async function PUT(request) {
     const { provider, credentials } = body;
 
     if (!provider || !credentials) {
-      return NextResponse.json({ error: "Provider and credentials required" }, { status: 400 });
+      return apiError(request, 400, "Provider and credentials required");
     }
 
     // Validate API key
     const isValid = await validateApiKey(apiKey);
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      return apiError(request, 401, "Invalid API key");
     }
 
     // Find active connection for provider
@@ -31,7 +32,7 @@ export async function PUT(request) {
     const connection = connections[0];
 
     if (!connection) {
-      return NextResponse.json({ error: `No active connection found for provider: ${provider}` }, { status: 404 });
+      return apiError(request, 404, "No active connection found for provider");
     }
 
     // Update credentials
@@ -55,6 +56,6 @@ export async function PUT(request) {
 
   } catch (error) {
     console.log("Update credentials error:", error);
-    return NextResponse.json({ error: "Failed to update credentials" }, { status: 500 });
+    return apiError(request, 500, "Failed to update credentials");
   }
 }

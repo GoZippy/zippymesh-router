@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { deleteProviderConnectionsByProvider, deleteProviderNode, getProviderConnections, getProviderNodeById, updateProviderConnection, updateProviderNode } from "@/models";
 
 // PUT /api/provider-nodes/[id] - Update provider node
@@ -10,24 +11,24 @@ export async function PUT(request, { params }) {
     const node = await getProviderNodeById(id);
 
     if (!node) {
-      return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
+      return apiError(request, 404, "Provider node not found");
     }
 
     if (!name?.trim()) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return apiError(request, 400, "Name is required");
     }
 
     if (!prefix?.trim()) {
-      return NextResponse.json({ error: "Prefix is required" }, { status: 400 });
+      return apiError(request, 400, "Prefix is required");
     }
 
     // Only validate apiType for OpenAI Compatible nodes
     if (node.type === "openai-compatible" && (!apiType || !["chat", "responses"].includes(apiType))) {
-      return NextResponse.json({ error: "Invalid OpenAI compatible API type" }, { status: 400 });
+      return apiError(request, 400, "Invalid OpenAI compatible API type");
     }
 
     if (!baseUrl?.trim()) {
-      return NextResponse.json({ error: "Base URL is required" }, { status: 400 });
+      return apiError(request, 400, "Base URL is required");
     }
 
     let sanitizedBaseUrl = baseUrl.trim();
@@ -68,7 +69,7 @@ export async function PUT(request, { params }) {
     return NextResponse.json({ node: updated });
   } catch (error) {
     console.log("Error updating provider node:", error);
-    return NextResponse.json({ error: "Failed to update provider node" }, { status: 500 });
+    return apiError(request, 500, "Failed to update provider node");
   }
 }
 
@@ -79,7 +80,7 @@ export async function DELETE(request, { params }) {
     const node = await getProviderNodeById(id);
 
     if (!node) {
-      return NextResponse.json({ error: "Provider node not found" }, { status: 404 });
+      return apiError(request, 404, "Provider node not found");
     }
 
     await deleteProviderConnectionsByProvider(id);
@@ -88,6 +89,6 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting provider node:", error);
-    return NextResponse.json({ error: "Failed to delete provider node" }, { status: 500 });
+    return apiError(request, 500, "Failed to delete provider node");
   }
 }

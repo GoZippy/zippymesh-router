@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getServiceRegistryConfig, setServiceRegistryConfig } from "@/lib/localDb.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
     const config = await getServiceRegistryConfig();
     return NextResponse.json({ config });
   } catch (error) {
     console.error("Error fetching service registry config:", error);
-    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch");
   }
 }
 
@@ -19,6 +20,6 @@ export async function POST(request) {
     return NextResponse.json({ config });
   } catch (error) {
     console.error("Error saving service registry config:", error);
-    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    return apiError(request, 500, "Failed to save");
   }
 }

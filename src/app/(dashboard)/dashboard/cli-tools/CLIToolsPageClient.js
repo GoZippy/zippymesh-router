@@ -5,6 +5,7 @@ import { Card, CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { PROVIDER_MODELS, getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard, VoidSpecToolCard, DefaultToolCard } from "./components";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 
 
@@ -25,25 +26,29 @@ export default function CLIToolsPageClient({ machineId }) {
 
   const fetchApiKeys = async () => {
     try {
-      const res = await fetch("/api/keys");
-      if (res.ok) {
-        const data = await res.json();
+      const response = await safeFetchJson("/api/keys");
+      const data = response.data || {};
+      if (response.ok) {
         setApiKeys(data.keys || []);
+      } else {
+        console.error(formatRequestError("Failed to fetch API keys", response, "Failed to fetch API keys"));
       }
     } catch (error) {
-      console.log("Error fetching API keys:", error);
+      console.error(formatRequestError("Error fetching API keys", error));
     }
   };
 
   const fetchConnections = async () => {
     try {
-      const res = await fetch("/api/providers");
-      const data = await res.json();
-      if (res.ok) {
+      const response = await safeFetchJson("/api/providers");
+      const data = response.data || {};
+      if (response.ok) {
         setConnections(data.connections || []);
+      } else {
+        console.error(formatRequestError("Failed to fetch connections", response, "Failed to fetch connections"));
       }
     } catch (error) {
-      console.log("Error fetching connections:", error);
+      console.error(formatRequestError("Error fetching connections", error));
     } finally {
       setLoading(false);
     }

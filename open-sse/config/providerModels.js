@@ -140,12 +140,47 @@ export const PROVIDER_MODELS = {
     { id: "MiniMax-M2.1", name: "MiniMax M2.1" },
   ],
   kilo: [
-    { id: "kilo/auto", name: "Kilo Auto (Best for Task)" },
-    { id: "minimax/minimax-m2.1:free", name: "MiniMax M2.1 (Free)" },
-    { id: "z-ai/glm-5:free", name: "GLM 5 (Free)" },
-    { id: "mistralai/mistral-7b-instruct:free", name: "Mistral 7B (Free)" },
-    { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet (Kilo)" },
-    { id: "openai/gpt-4o", name: "GPT-4o (Kilo)" },
+    // Auto-routing models
+    { id: "kilo-auto/frontier", name: "Kilo Auto Frontier" },
+    { id: "kilo-auto/balanced", name: "Kilo Auto Balanced" },
+    { id: "kilo-auto/free", name: "Kilo Auto Free" },
+
+    // Anthropic (Premium)
+    { id: "anthropic/claude-opus-4.6", name: "Claude Opus 4.6" },
+    { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+
+    // OpenAI (Premium)
+    { id: "openai/gpt-5.4", name: "GPT-5.4" },
+    { id: "openai/gpt-5.4-mini", name: "GPT-5.4 Mini" },
+    { id: "openai/gpt-4o", name: "GPT-4o" },
+
+    // Google
+    { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+    { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+
+    // xAI (Grok)
+    { id: "x-ai/grok-code-fast-1", name: "Grok Code Fast 1" },
+    { id: "x-ai/grok-4.20-multi-agent-beta", name: "Grok 4.20 Multi-Agent Beta" },
+
+    // Reasoning Models
+    { id: "deepseek/deepseek-r1", name: "DeepSeek R1" },
+    { id: "z-ai/glm-5", name: "GLM 5" },
+    { id: "z-ai/glm-5-turbo", name: "GLM 5 Turbo" },
+
+    // Code Specialists
+    { id: "openai/o1-preview", name: "O1 Preview" },
+
+    // Chinese Models
+    { id: "moonshotai/kimi-k2.5", name: "Kimi K2.5" },
+    { id: "minimax/minimax-m2.5", name: "MiniMax M2.5" },
+
+    // Free Models
+    { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "NVIDIA Nemotron 3 Super (free)" },
+    { id: "arcee-ai/trinity-large-preview:free", name: "Arcee Trinity Large Preview (free)" },
+    { id: "stepfun/step-3.5-flash:free", name: "StepFun Step 3.5 Flash (free)" },
+    { id: "minimax/minimax-m2.5:free", name: "MiniMax M2.5 (free)" },
+    { id: "corethink:free", name: "CoreThink (free)" },
+    { id: "giga-potato", name: "Giga Potato (free)" },
   ],
 };
 

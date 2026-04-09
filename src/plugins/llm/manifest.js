@@ -3,7 +3,7 @@
 export const manifest = {
   id: "llm",
   name: "LLM Router",
-  version: "0.2.0",
+  version: "0.2.7",
   backend: "llm",
   navItems: [
     { label: "Endpoint", path: "/dashboard/endpoint", icon: "api" },
@@ -18,5 +18,7 @@ export const manifest = {
     { label: "Analytics", path: "/dashboard/analytics", icon: "monitoring" },
     { label: "Usage", path: "/dashboard/usage", icon: "bar_chart" },
     { label: "CLI Tools", path: "/dashboard/cli-tools", icon: "terminal" },
+    { label: "About", path: "/dashboard/about", icon: "info" },
+    { label: "Help", path: "/dashboard/help", icon: "help" },
   ],
 };

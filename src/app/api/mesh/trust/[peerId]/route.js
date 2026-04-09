@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { fetchSidecar } from "@/lib/sidecar.js";
 
 /**
@@ -10,7 +11,7 @@ export async function GET(request, { params }) {
   try {
     const { peerId } = await params;
     if (!peerId) {
-      return NextResponse.json({ error: "peerId required" }, { status: 400 });
+      return apiError(request, 400, "peerId required");
     }
 
     // For local sidecar: fetch from sidecar /trust.

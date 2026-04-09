@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { formatRequestError, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -23,13 +24,12 @@ export default function CombosPage() {
 
   const fetchData = async () => {
     try {
-      const [combosRes, providersRes] = await Promise.all([
-        fetch("/api/combos"),
-        fetch("/api/providers"),
+      const [combosRes, providersRes] = await safeFetchJsonAll([
+        { key: "combos", url: "/api/combos" },
+        { key: "providers", url: "/api/providers" },
       ]);
-      const combosData = await combosRes.json();
-      const providersData = await providersRes.json();
-
+      const combosData = combosRes.data || {};
+      const providersData = providersRes.data || {};
       if (combosRes.ok) setCombos(combosData.combos || []);
       if (providersRes.ok) {
         const connections = providersData.connections || [];
@@ -48,7 +48,7 @@ export default function CombosPage() {
 
   const handleCreate = async (data) => {
     try {
-      const res = await fetch("/api/combos", {
+      const res = await safeFetchJson("/api/combos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -57,8 +57,8 @@ export default function CombosPage() {
         await fetchData();
         setShowCreateModal(false);
       } else {
-        const err = await res.json();
-        alert(err.error || "Failed to create combo");
+        const err = res.data || {};
+        alert(err.error || formatRequestError("Failed to create combo", res, "Failed to create combo"));
       }
     } catch (error) {
       console.log("Error creating combo:", error);
@@ -67,7 +67,7 @@ export default function CombosPage() {
 
   const handleUpdate = async (id, data) => {
     try {
-      const res = await fetch(`/api/combos/${id}`, {
+      const res = await safeFetchJson(`/api/combos/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -76,8 +76,8 @@ export default function CombosPage() {
         await fetchData();
         setEditingCombo(null);
       } else {
-        const err = await res.json();
-        alert(err.error || "Failed to update combo");
+        const err = res.data || {};
+        alert(err.error || formatRequestError("Failed to update combo", res, "Failed to update combo"));
       }
     } catch (error) {
       console.log("Error updating combo:", error);
@@ -87,7 +87,7 @@ export default function CombosPage() {
   const handleDelete = async (id) => {
     if (!confirm("Delete this combo?")) return;
     try {
-      const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
+      const res = await safeFetchJson(`/api/combos/${id}`, { method: "DELETE" });
       if (res.ok) {
         setCombos(combos.filter(c => c.id !== id));
       }
@@ -319,19 +319,17 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders }) {
 
   const fetchModalData = async () => {
     try {
-      const [aliasesRes, nodesRes] = await Promise.all([
-        fetch("/api/models/alias"),
-        fetch("/api/provider-nodes"),
+      const [aliasesRes, nodesRes] = await safeFetchJsonAll([
+        { key: "aliases", url: "/api/models/alias" },
+        { key: "nodes", url: "/api/provider-nodes" },
       ]);
 
       if (!aliasesRes.ok || !nodesRes.ok) {
-        throw new Error(`Failed to fetch data: aliases=${aliasesRes.status}, nodes=${nodesRes.status}`);
+        throw new Error(formatRequestError("Failed to fetch modal data", aliasesRes, `Failed to fetch aliases: ${aliasesRes.status}`));
       }
 
-      const [aliasesData, nodesData] = await Promise.all([
-        aliasesRes.json(),
-        nodesRes.json(),
-      ]);
+      const aliasesData = aliasesRes.data || {};
+      const nodesData = nodesRes.data || {};
       setModelAliases(aliasesData.aliases || {});
       setProviderNodes(nodesData.nodes || []);
     } catch (error) {

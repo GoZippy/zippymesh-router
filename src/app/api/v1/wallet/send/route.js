@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { openPaymentChannel } from "@/lib/sidecar.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 export async function POST(req) {
     try {
@@ -7,16 +8,13 @@ export async function POST(req) {
         const { to, amount } = body;
 
         if (!to || !amount) {
-            return NextResponse.json({ error: "Missing 'to' or 'amount'" }, { status: 400 });
+            return apiError(req, 400, "Missing 'to' or 'amount'");
         }
 
         const transaction = await openPaymentChannel(to, parseFloat(amount));
 
         return NextResponse.json({ success: true, transaction });
     } catch (error) {
-        return NextResponse.json(
-            { error: "Internal Server Error", details: error.message },
-            { status: 500 }
-        );
+        return apiError(req, 500, "Internal Server Error");
     }
 }

@@ -10,6 +10,326 @@ import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, getProviderAlias, isOpenAICompatible
 import { getProviderUrls, getProviderIconUrl } from "@/shared/constants/provider-urls";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { formatRequestError, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
+
+// Add to Playbook Modal
+function AddToPlaybookModal({ modelId, providerId, onClose }) {
+  const [playbooks, setPlaybooks] = useState([]);
+  const [selectedPlaybook, setSelectedPlaybook] = useState("");
+  const [newPlaybookName, setNewPlaybookName] = useState("");
+  const [intent, setIntent] = useState("code");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const router = useRouter();
+  
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await safeFetchJson("/api/routing/playbooks");
+        if (!response.ok) {
+          throw new Error(formatRequestError("Failed to load playbooks", response, "Failed to load playbooks"));
+        }
+        const data = response.data;
+        setPlaybooks(data.playbooks || []);
+      } catch (e) {
+        console.error("Failed to load playbooks:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+  
+  const handleAddToExisting = async () => {
+    if (!selectedPlaybook) return;
+    setSaving(true);
+    try {
+      const playbook = playbooks.find(p => p.id === selectedPlaybook);
+      if (!playbook) return;
+      
+      const updatedRoutes = [...(playbook.routes || [])];
+      const existingRoute = updatedRoutes.find(r => r.intent === intent);
+      
+      if (existingRoute) {
+        if (!existingRoute.models.includes(modelId)) {
+          existingRoute.models.push(modelId);
+        }
+      } else {
+        updatedRoutes.push({ intent, models: [modelId], priority: updatedRoutes.length + 1 });
+      }
+      
+      const response = await safeFetchJson(`/api/routing/playbooks/${selectedPlaybook}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routes: updatedRoutes }),
+      });
+      if (!response.ok) {
+        throw new Error(formatRequestError("Failed to update playbook", response, "Failed to update playbook"));
+      }
+      onClose();
+    } catch (e) {
+      console.error("Failed to add to playbook:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const handleCreateNew = async () => {
+    if (!newPlaybookName.trim()) return;
+    setSaving(true);
+    try {
+      const response = await safeFetchJson("/api/routing/playbooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newPlaybookName,
+          routes: [{ intent, models: [modelId], priority: 1 }],
+        }),
+      });
+      if (response.ok) {
+        onClose();
+        router.push("/dashboard/routing");
+      } else {
+        throw new Error(formatRequestError("Failed to create playbook", response, "Failed to create playbook"));
+      }
+    } catch (e) {
+      console.error("Failed to create playbook:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  return (
+    <Modal isOpen onClose={onClose} title="Add to Playbook">
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="text-sm font-medium block mb-1">Model</label>
+          <code className="text-xs bg-bg-secondary px-2 py-1 rounded">{modelId}</code>
+        </div>
+        
+        <div>
+          <label className="text-sm font-medium block mb-1 text-gray-700 dark:text-gray-300">Intent / Use Case</label>
+          <select
+            value={intent}
+            onChange={(e) => setIntent(e.target.value)}
+            className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          >
+            <option value="code">Code Generation</option>
+            <option value="chat">Chat / Conversation</option>
+            <option value="reasoning">Complex Reasoning</option>
+            <option value="vision">Vision / Image Analysis</option>
+            <option value="fast">Fast / Low Latency</option>
+            <option value="embedding">Embeddings</option>
+            <option value="default">Default / Fallback</option>
+          </select>
+        </div>
+        
+        {loading ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">Loading playbooks...</p>
+        ) : playbooks.length > 0 ? (
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+            <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">Add to existing playbook</label>
+            <div className="flex gap-2">
+              <select
+                value={selectedPlaybook}
+                onChange={(e) => setSelectedPlaybook(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              >
+                <option value="">Select playbook...</option>
+                {playbooks.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <Button onClick={handleAddToExisting} disabled={!selectedPlaybook || saving}>
+                {saving ? "Adding..." : "Add"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+          <label className="text-sm font-medium block mb-2 text-gray-700 dark:text-gray-300">Or create new playbook</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newPlaybookName}
+              onChange={(e) => setNewPlaybookName(e.target.value)}
+              placeholder="Playbook name..."
+              className="flex-1 px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
+            />
+            <Button onClick={handleCreateNew} disabled={!newPlaybookName.trim() || saving}>
+              {saving ? "Creating..." : "Create"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Report Pricing Modal for Token Buddy
+function ReportPricingModal({ modelId, providerId, fullModel, onClose }) {
+  const [isFree, setIsFree] = useState(false);
+  const [inputPrice, setInputPrice] = useState("");
+  const [outputPrice, setOutputPrice] = useState("");
+  const [freeLimit, setFreeLimit] = useState("");
+  const [notes, setNotes] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [pointsEarned, setPointsEarned] = useState(0);
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+
+    const inputPerM = isFree ? 0 : Number(inputPrice) || 0;
+    const outputPerM = isFree ? 0 : Number(outputPrice) || 0;
+
+    if (!isFree && inputPerM <= 0 && outputPerM <= 0) {
+      alert("Please enter pricing or mark as free");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await safeFetchJson("/api/marketplace/community-prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerId,
+          modelId,
+          inputPerMUsd: inputPerM,
+          outputPerMUsd: outputPerM,
+          isFree,
+          freeLimit: freeLimit || null,
+          notes: notes || null,
+          sourceUrl: sourceUrl || null,
+        }),
+      });
+
+      if (response.ok) {
+        const data = response.data || {};
+        setSubmitted(true);
+        if (data.contribution?.pointsEarned) {
+          setPointsEarned(data.contribution.pointsEarned);
+        }
+        setTimeout(() => onClose(), 2000);
+      } else {
+        alert(formatRequestError("Failed to submit pricing", response, "Failed to submit pricing"));
+      }
+    } catch (error) {
+      console.error("Error submitting pricing:", error);
+      alert("Failed to submit pricing");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <Modal isOpen onClose={onClose} title="Thank You!">
+        <div className="flex flex-col gap-4 text-center">
+          <p className="text-sm">Your pricing report has been submitted!</p>
+          {pointsEarned > 0 && (
+            <p className="text-sm font-semibold text-primary">
+              🎉 You earned {pointsEarned} Token Buddy points!
+            </p>
+          )}
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Report Pricing">
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="text-sm font-medium block mb-1">Model</label>
+          <code className="text-xs bg-bg-secondary px-2 py-1 rounded">{fullModel}</code>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium">Free Model?</label>
+          <Toggle value={isFree} onChange={setIsFree} />
+        </div>
+
+        {!isFree && (
+          <>
+            <div>
+              <label className="text-sm font-medium block mb-1">Input Price (USD per 1M tokens)</label>
+              <input
+                type="number"
+                value={inputPrice}
+                onChange={(e) => setInputPrice(e.target.value)}
+                placeholder="0.01"
+                step="0.0001"
+                min="0"
+                className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium block mb-1">Output Price (USD per 1M tokens)</label>
+              <input
+                type="number"
+                value={outputPrice}
+                onChange={(e) => setOutputPrice(e.target.value)}
+                placeholder="0.03"
+                step="0.0001"
+                min="0"
+                className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+              />
+            </div>
+          </>
+        )}
+
+        {isFree && (
+          <div>
+            <label className="text-sm font-medium block mb-1">Free Limit (optional, e.g., "100 req/day")</label>
+            <input
+              type="text"
+              value={freeLimit}
+              onChange={(e) => setFreeLimit(e.target.value)}
+              placeholder="e.g., 100 requests per day"
+              className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+            />
+          </div>
+        )}
+
+        <div>
+          <label className="text-sm font-medium block mb-1">Notes (optional)</label>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Any additional info (e.g., context length, tested date)"
+            rows="3"
+            className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          />
+        </div>
+
+        <div>
+          <label className="text-sm font-medium block mb-1">Source URL (optional)</label>
+          <input
+            type="text"
+            value={sourceUrl}
+            onChange={(e) => setSourceUrl(e.target.value)}
+            placeholder="https://..."
+            className="w-full px-3 py-2 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
+          />
+        </div>
+
+        <div className="flex gap-2 justify-end">
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "Submitting..." : "Submit"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export default function ProviderDetailPage() {
   const params = useParams();
@@ -28,8 +348,51 @@ export default function ProviderDetailPage() {
   const [headerImgError, setHeaderImgError] = useState(false);
   const [testingConnections, setTestingConnections] = useState({}); // connectionId -> boolean
   const [testResults, setTestResults] = useState({}); // connectionId -> "success" | "failed" | null
+  const [dynamicModels, setDynamicModels] = useState([]); // Models fetched from /v1/models
+  const [dynamicModelsLoading, setDynamicModelsLoading] = useState(false);
+  const [dynamicModelsUpdatedAt, setDynamicModelsUpdatedAt] = useState(null);
+  const [refreshModelsTrigger, setRefreshModelsTrigger] = useState(0);
+  const [refreshModelsSyncing, setRefreshModelsSyncing] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
+  const [modelSort, setModelSort] = useState("name-asc");
+  const [modelFilter, setModelFilter] = useState("all"); // all, free, premium, code, chat, vision
+  const [favorites, setFavorites] = useState(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      return JSON.parse(localStorage.getItem("zmlr_favorite_models") || "[]");
+    } catch { return []; }
+  });
+  const [showPlaybookModal, setShowPlaybookModal] = useState(false);
+  const [selectedModelForPlaybook, setSelectedModelForPlaybook] = useState(null);
+  const [showReportPricingModal, setShowReportPricingModal] = useState(false);
+  const [selectedModelForReport, setSelectedModelForReport] = useState(null);
+  const [selectedFullModelForReport, setSelectedFullModelForReport] = useState(null);
   const { copied, copy } = useCopyToClipboard();
-  const providerInfo = providerNode
+  
+  // Save favorites to localStorage
+  const toggleFavorite = (modelId) => {
+    setFavorites(prev => {
+      const fullId = `${providerId}/${modelId}`;
+      const next = prev.includes(fullId) ? prev.filter(f => f !== fullId) : [...prev, fullId];
+      localStorage.setItem("zmlr_favorite_models", JSON.stringify(next));
+      return next;
+    });
+  };
+  
+  const isFavorite = (modelId) => {
+    return favorites.includes(`${providerId}/${modelId}`);
+  };
+  
+  // Local provider definitions
+  const LOCAL_PROVIDERS = {
+    ollama: { id: "ollama", name: "Ollama", color: "#FFFFFF", textIcon: "OL", isLocal: true },
+    lmstudio: { id: "lmstudio", name: "LM Studio", color: "#4B5563", textIcon: "LM", isLocal: true },
+  };
+  const isLocalProvider = providerId === "ollama" || providerId === "lmstudio";
+  
+  const providerInfo = isLocalProvider
+    ? LOCAL_PROVIDERS[providerId]
+    : providerNode
     ? {
       id: providerNode.id,
       name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
@@ -41,7 +404,9 @@ export default function ProviderDetailPage() {
     }
     : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId]);
   const isOAuth = !!OAUTH_PROVIDERS[providerId];
-  const models = getModelsByProviderId(providerId);
+  const staticModels = getModelsByProviderId(providerId);
+  // Use dynamic models if available, fall back to static
+  const models = dynamicModels.length > 0 ? dynamicModels : staticModels;
   const providerAlias = getProviderAlias(providerId);
 
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -56,11 +421,11 @@ export default function ProviderDetailPage() {
   // Define callbacks BEFORE the useEffect that uses them
   const fetchAliases = useCallback(async () => {
     try {
-      const res = await fetch("/api/models/alias");
-      const data = await res.json();
-      if (res.ok) {
-        setModelAliases(data.aliases || {});
+      const response = await safeFetchJson("/api/models/alias");
+      if (!response.ok) {
+        throw new Error(formatRequestError("Failed to load aliases", response, "Failed to load aliases"));
       }
+      setModelAliases(response.data?.aliases || {});
     } catch (error) {
       console.log("Error fetching aliases:", error);
     }
@@ -68,27 +433,38 @@ export default function ProviderDetailPage() {
 
   const fetchConnections = useCallback(async () => {
     try {
-      const [connectionsRes, nodesRes] = await Promise.all([
-        fetch("/api/providers", { cache: "no-store" }),
-        fetch("/api/provider-nodes", { cache: "no-store" }),
+      const [connectionsResult, nodesResult] = await safeFetchJsonAll([
+        { key: "connections", url: "/api/providers", options: { cache: "no-store" } },
+        { key: "providerNodes", url: "/api/provider-nodes", options: { cache: "no-store" } },
       ]);
-      const connectionsData = await connectionsRes.json();
-      const nodesData = await nodesRes.json();
-      if (connectionsRes.ok) {
-        const filtered = (connectionsData.connections || []).filter(c => c.provider === providerId);
+
+      if (connectionsResult.ok) {
+        const connectionsData = connectionsResult.data;
+        const filtered = (connectionsData?.connections || []).filter(c => c.provider === providerId);
         setConnections(filtered);
       }
-      if (nodesRes.ok) {
-        let node = (nodesData.nodes || []).find((entry) => entry.id === providerId) || null;
+      if (nodesResult.ok) {
+        const nodesData = nodesResult.data;
+        let node = (nodesData?.nodes || []).find((entry) => entry.id === providerId) || null;
+        
+        // For local providers (ollama, lmstudio), find by apiType instead of id
+        if (!node && (providerId === "ollama" || providerId === "lmstudio")) {
+          const localApiType = providerId === "ollama" ? "ollama" : "openai";
+          node = (nodesData.nodes || []).find((entry) => 
+            entry.type === "local" && 
+            entry.apiType === localApiType &&
+            (entry.baseUrl?.includes("localhost") || entry.baseUrl?.includes("127.0.0.1"))
+          ) || null;
+        }
 
         // Newly created compatible nodes can be briefly unavailable on one worker.
         // Retry a few times before showing "Provider not found".
         if (!node && isCompatible) {
           for (let attempt = 0; attempt < 3; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 150));
-            const retryRes = await fetch("/api/provider-nodes", { cache: "no-store" });
-            if (!retryRes.ok) continue;
-            const retryData = await retryRes.json();
+            const retryResult = await safeFetchJson("/api/provider-nodes", { cache: "no-store" });
+            if (!retryResult.ok) continue;
+            const retryData = retryResult.data;
             node = (retryData.nodes || []).find((entry) => entry.id === providerId) || null;
             if (node) break;
           }
@@ -101,20 +477,21 @@ export default function ProviderDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [providerId]);
+  }, [providerId, isCompatible]);
 
   const handleUpdateNode = async (formData) => {
     try {
-      const res = await fetch(`/api/provider-nodes/${providerId}`, {
+      const response = await safeFetchJson(`/api/provider-nodes/${providerId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setProviderNode(data.node);
+      if (response.ok) {
+        setProviderNode(response.data?.node);
         await fetchConnections();
         setShowEditNodeModal(false);
+      } else {
+        throw new Error(formatRequestError("Failed to update provider node", response, "Failed to update provider node"));
       }
     } catch (error) {
       console.log("Error updating provider node:", error);
@@ -146,19 +523,75 @@ export default function ProviderDetailPage() {
     };
   }, [fetchConnections, fetchAliases, providerId]);
 
+  // Fetch dynamic models from /v1/models for providers with dynamic model endpoints
+  useEffect(() => {
+    const fetchDynamicModels = async () => {
+      try {
+        setDynamicModelsLoading(true);
+        const response = await safeFetchJson("/v1/models");
+        if (!response.ok) {
+          console.log(formatRequestError("Failed to load models", response, "Failed to load models"));
+          setDynamicModels([]);
+          return;
+        }
+        const allModels = response.data?.data || [];
+        
+        // Filter models belonging to this provider
+        const providerPrefix = providerId + "/";
+        const filtered = allModels
+          .filter(m => m.id?.startsWith(providerPrefix) || m.owned_by === providerId)
+          .map(m => ({
+            id: m.id?.startsWith(providerPrefix) ? m.id.slice(providerPrefix.length) : m.root || m.id,
+            name: m.name || m.id,
+            fullId: m.id,
+          }));
+        
+        if (filtered.length > 0) {
+          setDynamicModels(filtered);
+          setDynamicModelsUpdatedAt(new Date().toISOString());
+        } else {
+          setDynamicModels([]);
+          setDynamicModelsUpdatedAt(new Date().toISOString());
+        }
+      } catch (e) {
+        console.log("Error fetching dynamic models:", e);
+      } finally {
+        setDynamicModelsLoading(false);
+      }
+    };
+    
+    fetchDynamicModels();
+    const intervalId = setInterval(fetchDynamicModels, 180000);
+    return () => clearInterval(intervalId);
+  }, [providerId, refreshModelsTrigger]);
+
+  const handleRefreshModels = useCallback(async () => {
+    if (refreshModelsSyncing || connections.length === 0) return;
+    setRefreshModelsSyncing(true);
+    try {
+      const res = await safeFetchJson(`/api/provider-sync/${providerId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
+      if (res.ok) setRefreshModelsTrigger((t) => t + 1);
+    } finally {
+      setRefreshModelsSyncing(false);
+    }
+  }, [providerId, connections.length, refreshModelsSyncing]);
+
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
     try {
-      const res = await fetch("/api/models/alias", {
+      const response = await safeFetchJson("/api/models/alias", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: fullModel, alias }),
       });
-      if (res.ok) {
+      if (response.ok) {
         await fetchAliases();
       } else {
-        const data = await res.json();
-        alert(data.error || "Failed to set alias");
+        alert(formatRequestError("Failed to set alias", response, "Failed to set alias"));
       }
     } catch (error) {
       console.log("Error setting alias:", error);
@@ -167,11 +600,13 @@ export default function ProviderDetailPage() {
 
   const handleDeleteAlias = async (alias) => {
     try {
-      const res = await fetch(`/api/models/alias?alias=${encodeURIComponent(alias)}`, {
+      const response = await safeFetchJson(`/api/models/alias?alias=${encodeURIComponent(alias)}`, {
         method: "DELETE",
       });
-      if (res.ok) {
+      if (response.ok) {
         await fetchAliases();
+      } else {
+        throw new Error(formatRequestError("Failed to delete alias", response, "Failed to delete alias"));
       }
     } catch (error) {
       console.log("Error deleting alias:", error);
@@ -181,9 +616,11 @@ export default function ProviderDetailPage() {
   const handleDelete = async (id) => {
     if (!confirm("Delete this connection?")) return;
     try {
-      const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
-      if (res.ok) {
+      const response = await safeFetchJson(`/api/providers/${id}`, { method: "DELETE" });
+      if (response.ok) {
         setConnections(connections.filter(c => c.id !== id));
+      } else {
+        throw new Error(formatRequestError("Failed to delete connection", response, "Failed to delete connection"));
       }
     } catch (error) {
       console.log("Error deleting connection:", error);
@@ -198,14 +635,16 @@ export default function ProviderDetailPage() {
 
   const handleSaveApiKey = async (formData) => {
     try {
-      const res = await fetch("/api/providers", {
+      const response = await safeFetchJson("/api/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: providerId, ...formData }),
       });
-      if (res.ok) {
+      if (response.ok) {
         await fetchConnections();
         setShowAddApiKeyModal(false);
+      } else {
+        throw new Error(formatRequestError("Failed to save connection", response, "Failed to save connection"));
       }
     } catch (error) {
       console.log("Error saving connection:", error);
@@ -214,14 +653,16 @@ export default function ProviderDetailPage() {
 
   const handleUpdateConnection = async (formData) => {
     try {
-      const res = await fetch(`/api/providers/${selectedConnection.id}`, {
+      const response = await safeFetchJson(`/api/providers/${selectedConnection.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      if (res.ok) {
+      if (response.ok) {
         await fetchConnections();
         setShowEditModal(false);
+      } else {
+        throw new Error(formatRequestError("Failed to update connection", response, "Failed to update connection"));
       }
     } catch (error) {
       console.log("Error updating connection:", error);
@@ -253,12 +694,12 @@ export default function ProviderDetailPage() {
 
     try {
       await Promise.all([
-        fetch(`/api/providers/${conn1.id}`, {
+        safeFetchJson(`/api/providers/${conn1.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ priority: p2 }),
         }),
-        fetch(`/api/providers/${conn2.id}`, {
+        safeFetchJson(`/api/providers/${conn2.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ priority: p1 }),
@@ -275,12 +716,12 @@ export default function ProviderDetailPage() {
     setConnections(prev => prev.map(c => c.id === id ? { ...c, isEnabled, isActive: isEnabled } : c));
 
     try {
-      const res = await fetch(`/api/providers/${id}`, {
+      const response = await safeFetchJson(`/api/providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isEnabled }),
       });
-      if (!res.ok) {
+      if (!response.ok) {
         throw new Error("Failed to update connection status");
       }
       await fetchConnections();
@@ -294,11 +735,11 @@ export default function ProviderDetailPage() {
     setTestingConnections(prev => ({ ...prev, [id]: true }));
     setTestResults(prev => ({ ...prev, [id]: null }));
     try {
-      const res = await fetch(`/api/providers/${id}/test`, { method: "POST" });
-      const data = await res.json();
+      const response = await safeFetchJson(`/api/providers/${id}/test`, { method: "POST" });
+      const data = response.data || {};
       const isValid = !!data.valid;
       setTestResults(prev => ({ ...prev, [id]: isValid ? "success" : "failed" }));
-      if (res.ok) {
+      if (response.ok) {
         await fetchConnections();
         // Clear result after 3 seconds
         setTimeout(() => {
@@ -319,6 +760,137 @@ export default function ProviderDetailPage() {
   };
 
 
+
+  // Known model capabilities (canonical mapping for better tag detection)
+  const MODEL_CAPABILITIES = {
+    // Claude models with vision
+    "claude-3": ["vision"],
+    "claude-3.5": ["vision"],
+    "claude-4": ["vision"],
+    "claude-opus": ["premium", "vision"],
+    "claude-sonnet": ["vision"],
+    // GPT models with vision
+    "gpt-4-vision": ["vision"],
+    "gpt-4o": ["vision"],
+    "gpt-4-turbo": ["vision"],
+    "gpt-5": ["premium", "vision"],
+    // Gemini with vision
+    "gemini-pro-vision": ["vision"],
+    "gemini-1.5": ["vision"],
+    "gemini-2": ["vision"],
+    // Reasoning models
+    "o1": ["reasoning", "premium"],
+    "o3": ["reasoning", "premium"],
+    "thinking": ["reasoning"],
+    "deepthink": ["reasoning"],
+    "r1": ["reasoning"],
+    // Code models
+    "codex": ["code"],
+    "code-": ["code"],
+    "coder": ["code"],
+    "starcoder": ["code"],
+    "codellama": ["code"],
+    "deepseek-coder": ["code"],
+    "qwen-coder": ["code"],
+    "wizardcoder": ["code"],
+  };
+
+  // Categorize model based on name patterns and known capabilities
+  const categorizeModel = (modelId) => {
+    const id = (modelId || "").toLowerCase();
+    const tags = new Set();
+    
+    // Check against known model capabilities first
+    for (const [pattern, caps] of Object.entries(MODEL_CAPABILITIES)) {
+      if (id.includes(pattern.toLowerCase())) {
+        caps.forEach(c => tags.add(c));
+      }
+    }
+    
+    // Pattern-based detection
+    if (id.includes("free") || id.includes(":free") || id.endsWith("-free")) tags.add("free");
+    if (id.includes("code") || id.includes("coder") || id.includes("codex")) tags.add("code");
+    if (id.includes("vision") || id.includes("-vl") || id.includes("ocr") || id.includes("-v-") || id.match(/\d+v\b/)) tags.add("vision");
+    if (id.includes("embed") || id.includes("embedding")) tags.add("embedding");
+    if (id.includes("thinking") || id.includes("reason") || id.match(/\bo[13]\b/) || id.includes("deepthink")) tags.add("reasoning");
+    if (id.includes("flash") || id.includes("mini") || id.includes("nano") || id.includes("tiny") || id.includes("haiku") || id.match(/\b[1-8]b\b/)) tags.add("fast");
+    if (id.includes("opus") || id.includes("-pro") || id.includes("ultra") || id.includes("-large") || id.match(/\b(70|72|405)b\b/) || id.includes("-high")) tags.add("premium");
+    if (id.includes("chat") || id.includes("instruct") || id.includes("turbo")) tags.add("chat");
+    
+    return Array.from(tags);
+  };
+
+  // Filter and sort models
+  const getFilteredSortedModels = () => {
+    let filtered = [...models];
+    
+    // Search filter
+    if (modelSearch.trim()) {
+      const search = modelSearch.toLowerCase();
+      filtered = filtered.filter(m => 
+        (m.id || "").toLowerCase().includes(search) || 
+        (m.name || "").toLowerCase().includes(search)
+      );
+    }
+    
+    // Category filter
+    if (modelFilter === "favorites") {
+      filtered = filtered.filter(m => isFavorite(m.id));
+    } else if (modelFilter !== "all") {
+      filtered = filtered.filter(m => {
+        const tags = categorizeModel(m.id);
+        return tags.includes(modelFilter);
+      });
+    }
+    
+    // Sort
+    filtered.sort((a, b) => {
+      const aId = (a.id || "").toLowerCase();
+      const bId = (b.id || "").toLowerCase();
+      const aName = (a.name || a.id || "").toLowerCase();
+      const bName = (b.name || b.id || "").toLowerCase();
+      const aFav = isFavorite(a.id);
+      const bFav = isFavorite(b.id);
+      
+      // Favorites always first in all sorts
+      if (aFav && !bFav) return -1;
+      if (!aFav && bFav) return 1;
+      
+      switch (modelSort) {
+        case "name-asc": return aName.localeCompare(bName);
+        case "name-desc": return bName.localeCompare(aName);
+        case "size-desc": {
+          const sizeA = parseInt((aId.match(/(\d+)b/i) || ["0", "0"])[1]) || 0;
+          const sizeB = parseInt((bId.match(/(\d+)b/i) || ["0", "0"])[1]) || 0;
+          return sizeB - sizeA;
+        }
+        case "free-first": {
+          const tagsA = categorizeModel(aId);
+          const tagsB = categorizeModel(bId);
+          if (tagsA.includes("free") && !tagsB.includes("free")) return -1;
+          if (!tagsA.includes("free") && tagsB.includes("free")) return 1;
+          return aName.localeCompare(bName);
+        }
+        case "premium-first": {
+          const tagsA = categorizeModel(aId);
+          const tagsB = categorizeModel(bId);
+          if (tagsA.includes("premium") && !tagsB.includes("premium")) return -1;
+          if (!tagsA.includes("premium") && tagsB.includes("premium")) return 1;
+          return aName.localeCompare(bName);
+        }
+        case "reasoning-first": {
+          const tagsA = categorizeModel(aId);
+          const tagsB = categorizeModel(bId);
+          if (tagsA.includes("reasoning") && !tagsB.includes("reasoning")) return -1;
+          if (!tagsA.includes("reasoning") && tagsB.includes("reasoning")) return 1;
+          return aName.localeCompare(bName);
+        }
+        default: return 0;
+      }
+    });
+    
+    return filtered;
+  };
 
   const renderModelsSection = () => {
     if (isCompatible) {
@@ -348,33 +920,214 @@ export default function ProviderDetailPage() {
           onSetAlias={handleSetAlias}
           onDeleteAlias={handleDeleteAlias}
           connections={connections}
+          discoveredModels={models}
+          discoveredModelsLoading={dynamicModelsLoading}
+          categorizeModel={categorizeModel}
+          onRefreshModels={handleRefreshModels}
+          refreshModelsSyncing={refreshModelsSyncing}
+          onReportPricing={(modelId, fullModel) => {
+            setSelectedModelForReport(modelId);
+            setSelectedFullModelForReport(fullModel);
+            setShowReportPricingModal(true);
+          }}
+          providerId={providerId}
         />
       );
     }
     if (models.length === 0) {
       return <p className="text-sm text-text-muted">No models configured</p>;
     }
+    
+    const filteredModels = getFilteredSortedModels();
+    const tagCounts = { free: 0, code: 0, vision: 0, reasoning: 0, fast: 0, premium: 0, chat: 0 };
+    const favCount = models.filter(m => isFavorite(m.id)).length;
+    models.forEach(m => {
+      const tags = categorizeModel(m.id);
+      tags.forEach(t => { if (tagCounts[t] !== undefined) tagCounts[t]++; });
+    });
+    
     return (
-      <div className="flex flex-wrap gap-3">
-        {models.map((model) => {
-          const fullModel = `${providerStorageAlias}/${model.id}`;
-          const oldFormatModel = `${providerId}/${model.id}`;
-          const existingAlias = Object.entries(modelAliases).find(
-            ([, m]) => m === fullModel || m === oldFormatModel
-          )?.[0];
-          return (
-            <ModelRow
-              key={model.id}
-              model={model}
-              fullModel={`${providerDisplayAlias}/${model.id}`}
-              alias={existingAlias}
-              copied={copied}
-              onCopy={copy}
-              onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
-              onDeleteAlias={() => handleDeleteAlias(existingAlias)}
-            />
-          );
-        })}
+      <div className="flex flex-col gap-4">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            type="text"
+            placeholder="Search models..."
+            value={modelSearch}
+            onChange={(e) => setModelSearch(e.target.value)}
+            className="w-48 px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <select
+            value={modelSort}
+            onChange={(e) => setModelSort(e.target.value)}
+            className="px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-primary"
+          >
+            <option value="name-asc">Name A-Z</option>
+            <option value="name-desc">Name Z-A</option>
+            <option value="size-desc">Size (largest)</option>
+            <option value="free-first">Free first</option>
+            <option value="premium-first">Premium first</option>
+            <option value="reasoning-first">Reasoning first</option>
+          </select>
+        </div>
+        
+        {/* Category filter buttons */}
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setModelFilter("all")}
+            className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "all" ? "bg-primary text-white" : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"}`}
+          >
+            All ({models.length})
+          </button>
+          {favCount > 0 && (
+            <button
+              onClick={() => setModelFilter("favorites")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "favorites" ? "bg-yellow-500 text-white" : "bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-200 dark:hover:bg-yellow-900/60"}`}
+            >
+              ★ Favorites ({favCount})
+            </button>
+          )}
+          {tagCounts.free > 0 && (
+            <button
+              onClick={() => setModelFilter("free")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "free" ? "bg-green-500 text-white" : "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/60"}`}
+            >
+              Free ({tagCounts.free})
+            </button>
+          )}
+          {tagCounts.code > 0 && (
+            <button
+              onClick={() => setModelFilter("code")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "code" ? "bg-blue-500 text-white" : "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/60"}`}
+            >
+              Code ({tagCounts.code})
+            </button>
+          )}
+          {tagCounts.vision > 0 && (
+            <button
+              onClick={() => setModelFilter("vision")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "vision" ? "bg-purple-500 text-white" : "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/60"}`}
+            >
+              Vision ({tagCounts.vision})
+            </button>
+          )}
+          {tagCounts.reasoning > 0 && (
+            <button
+              onClick={() => setModelFilter("reasoning")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "reasoning" ? "bg-orange-500 text-white" : "bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/60"}`}
+            >
+              Reasoning ({tagCounts.reasoning})
+            </button>
+          )}
+          {tagCounts.fast > 0 && (
+            <button
+              onClick={() => setModelFilter("fast")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "fast" ? "bg-cyan-500 text-white" : "bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-200 dark:hover:bg-cyan-900/60"}`}
+            >
+              Fast ({tagCounts.fast})
+            </button>
+          )}
+          {tagCounts.premium > 0 && (
+            <button
+              onClick={() => setModelFilter("premium")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "premium" ? "bg-amber-500 text-white" : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-900/60"}`}
+            >
+              Premium ({tagCounts.premium})
+            </button>
+          )}
+          {tagCounts.chat > 0 && (
+            <button
+              onClick={() => setModelFilter("chat")}
+              className={`px-2 py-1 text-xs font-medium rounded transition-colors ${modelFilter === "chat" ? "bg-pink-500 text-white" : "bg-pink-100 dark:bg-pink-900/40 text-pink-700 dark:text-pink-300 hover:bg-pink-200 dark:hover:bg-pink-900/60"}`}
+            >
+              Chat ({tagCounts.chat})
+            </button>
+          )}
+        </div>
+        
+        {/* Results count */}
+        {modelSearch || modelFilter !== "all" ? (
+          <p className="text-xs text-text-muted">
+            Showing {filteredModels.length} of {models.length} models
+          </p>
+        ) : null}
+        
+        {/* Model grid */}
+        <div className="flex flex-wrap gap-3">
+          {filteredModels.map((model) => {
+            const fullModel = `${providerStorageAlias}/${model.id}`;
+            const oldFormatModel = `${providerId}/${model.id}`;
+            const existingAlias = Object.entries(modelAliases).find(
+              ([, m]) => m === fullModel || m === oldFormatModel
+            )?.[0];
+            const tags = categorizeModel(model.id);
+            const fav = isFavorite(model.id);
+            
+            return (
+              <div
+                key={model.id}
+                className={`group relative flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${fav ? "bg-yellow-900/10 border-yellow-600/50" : "bg-bg-secondary hover:bg-bg-tertiary border-border-primary"}`}
+              >
+                {/* Favorite star */}
+                <button
+                  onClick={() => toggleFavorite(model.id)}
+                  className={`text-sm transition-colors ${fav ? "text-yellow-400" : "text-gray-500 hover:text-yellow-400"}`}
+                  title={fav ? "Remove from favorites" : "Add to favorites"}
+                >
+                  {fav ? "★" : "☆"}
+                </button>
+                
+                {/* Tags as colored dots */}
+                <div className="flex gap-0.5">
+                  {tags.includes("free") && <span className="w-2 h-2 rounded-full bg-green-500" title="Free" />}
+                  {tags.includes("code") && <span className="w-2 h-2 rounded-full bg-blue-500" title="Code" />}
+                  {tags.includes("vision") && <span className="w-2 h-2 rounded-full bg-purple-500" title="Vision" />}
+                  {tags.includes("reasoning") && <span className="w-2 h-2 rounded-full bg-orange-500" title="Reasoning" />}
+                  {tags.includes("fast") && <span className="w-2 h-2 rounded-full bg-cyan-500" title="Fast" />}
+                  {tags.includes("premium") && <span className="w-2 h-2 rounded-full bg-amber-500" title="Premium" />}
+                  {tags.includes("chat") && <span className="w-2 h-2 rounded-full bg-pink-500" title="Chat" />}
+                </div>
+                
+                <span className="text-sm font-mono text-text-primary max-w-[200px] truncate" title={model.fullId || `${providerDisplayAlias}/${model.id}`}>
+                  {model.id}
+                </span>
+                
+                {existingAlias && (
+                  <Badge variant="secondary" size="sm">{existingAlias}</Badge>
+                )}
+                
+                {/* Quick actions on hover */}
+                <div className="hidden group-hover:flex items-center gap-1 ml-auto">
+                  <button
+                    onClick={() => copy(model.fullId || `${providerDisplayAlias}/${model.id}`)}
+                    className="p-1 text-text-muted hover:text-text-primary"
+                    title="Copy model ID"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedModelForPlaybook(model.fullId || `${providerDisplayAlias}/${model.id}`);
+                      setShowPlaybookModal(true);
+                    }}
+                    className="p-1 text-text-muted hover:text-primary"
+                    title="Add to Playbook"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        
+        {filteredModels.length === 0 && (
+          <p className="text-sm text-text-muted text-center py-4">No models match your filters</p>
+        )}
       </div>
     );
   };
@@ -399,6 +1152,19 @@ export default function ProviderDetailPage() {
       </div>
     );
   }
+
+  const enabledConnections = connections.filter((connection) => connection.isEnabled !== false).length;
+  const activeConnections = connections.filter(
+    (connection) => connection.isEnabled !== false && connection.testStatus === "active"
+  ).length;
+  const erroredConnections = connections.filter(
+    (connection) => connection.isEnabled !== false && connection.testStatus === "error"
+  ).length;
+  const discoveredModelCount = dynamicModels.length;
+  const knownModelCount = (dynamicModels.length > 0 ? dynamicModels : models).length;
+  const syncLabel = dynamicModelsUpdatedAt
+    ? new Date(dynamicModelsUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "—";
 
   // Determine icon path: OpenAI Compatible providers use specialized icons
   const getHeaderIconPath = () => {
@@ -444,7 +1210,12 @@ export default function ProviderDetailPage() {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-3xl font-semibold tracking-tight">{providerInfo.name}</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-3xl font-semibold tracking-tight">{providerInfo.name}</h1>
+              <Badge variant="secondary" size="sm" className="font-mono text-xs">
+                {providerAlias || providerId}
+              </Badge>
+            </div>
             <p className="text-text-muted">
               {connections.length} connection{connections.length === 1 ? "" : "s"}
             </p>
@@ -496,9 +1267,9 @@ export default function ProviderDetailPage() {
 
       {/* Connections */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <h2 className="text-lg font-semibold">Connections</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {isCompatible && (
               <Button
                 size="sm"
@@ -560,6 +1331,10 @@ export default function ProviderDetailPage() {
                   }}
                   onTest={() => handleTestConnection(conn.id)}
                   onDelete={() => handleDelete(conn.id)}
+                  onReauth={isOAuth ? () => {
+                    setReauthConnectionId(conn.id);
+                    setShowOAuthModal(true);
+                  } : undefined}
                 />
               ))}
           </div>
@@ -568,12 +1343,55 @@ export default function ProviderDetailPage() {
 
       {/* Models */}
       <Card>
-        <h2 className="text-lg font-semibold mb-4">
-          {providerInfo.passthroughModels ? "Model Aliases" : "Available Models"}
-        </h2>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <h2 className="text-lg font-semibold">
+            {providerInfo.passthroughModels ? "Model Aliases" : "Available Models"}
+          </h2>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <Badge variant={activeConnections > 0 ? "success" : (erroredConnections > 0 ? "error" : "secondary")} size="sm">
+              {activeConnections}/{enabledConnections || connections.length || 0} active
+            </Badge>
+            <Badge variant="secondary" size="sm">
+              {knownModelCount} models
+            </Badge>
+            {providerInfo.passthroughModels && (
+              <Badge variant="outline" size="sm">
+                live {discoveredModelCount}
+              </Badge>
+            )}
+            <span className="text-[11px] text-text-muted">
+              sync {dynamicModelsLoading ? "..." : syncLabel}
+            </span>
+          </div>
+        </div>
         {renderModelsSection()}
 
       </Card>
+
+      {/* Add to Playbook Modal */}
+      {showPlaybookModal && (
+        <AddToPlaybookModal
+          modelId={selectedModelForPlaybook}
+          providerId={providerId}
+          onClose={() => {
+            setShowPlaybookModal(false);
+            setSelectedModelForPlaybook(null);
+          }}
+        />
+      )}
+
+      {showReportPricingModal && (
+        <ReportPricingModal
+          modelId={selectedModelForReport}
+          providerId={providerId}
+          fullModel={selectedFullModelForReport}
+          onClose={() => {
+            setShowReportPricingModal(false);
+            setSelectedModelForReport(null);
+            setSelectedFullModelForReport(null);
+          }}
+        />
+      )}
 
       {/* Modals */}
       {providerId === "kiro" ? (
@@ -666,7 +1484,23 @@ ModelRow.propTypes = {
   onCopy: PropTypes.func.isRequired,
 };
 
-function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAliases, copied, onCopy, onSetAlias, onDeleteAlias, connections }) {
+function PassthroughModelsSection({
+  providerAlias,
+  providerStorageAlias,
+  modelAliases,
+  copied,
+  onCopy,
+  onSetAlias,
+  onDeleteAlias,
+  connections,
+  discoveredModels = [],
+  discoveredModelsLoading = false,
+  categorizeModel,
+  onRefreshModels,
+  refreshModelsSyncing = false,
+  onReportPricing,
+  providerId,
+}) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -676,11 +1510,36 @@ function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAl
     ([, model]) => model.startsWith(`${providerAlias}/`)
   );
 
-  const allModels = providerAliases.map(([alias, fullModel]) => ({
+  const normalizeModelId = (rawModelId) => {
+    const value = String(rawModelId || "").trim();
+    const prefix = `${providerAlias}/`;
+    return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  };
+
+  const aliasedModels = providerAliases.map(([alias, fullModel]) => ({
     modelId: fullModel.replace(`${providerAlias}/`, ""),
     fullModel,
     alias,
+    source: "alias",
   }));
+
+  const discoveredOnlyModels = (Array.isArray(discoveredModels) ? discoveredModels : [])
+    .map((model) => {
+      const modelId = normalizeModelId(model?.id || model?.name || model?.model);
+      if (!modelId) return null;
+      // Use fullId if available (from dynamic models), otherwise reconstruct
+      const fullModel = model?.fullId || `${providerAlias}/${modelId}`;
+      return {
+        modelId,
+        fullModel,
+        alias: null,
+        source: "live",
+      };
+    })
+    .filter(Boolean)
+    .filter((model) => !aliasedModels.some((existing) => existing.modelId === model.modelId));
+
+  const allModels = [...aliasedModels, ...discoveredOnlyModels];
 
   const activeConnection = connections.find((conn) => conn.isEnabled !== false);
   const canImport = !!activeConnection;
@@ -697,12 +1556,6 @@ function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAl
     const prefixedAlias = `${providerAlias}-${baseAlias}`;
     if (!modelAliases[prefixedAlias]) return prefixedAlias;
     return null;
-  };
-
-  const normalizeModelId = (rawModelId) => {
-    const value = String(rawModelId || "").trim();
-    const prefix = `${providerAlias}/`;
-    return value.startsWith(prefix) ? value.slice(prefix.length) : value;
   };
 
   const handleAdd = async () => {
@@ -731,9 +1584,9 @@ function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAl
 
     setImporting(true);
     try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
-      const data = await res.json();
-      if (!res.ok) {
+      const response = await safeFetchJson(`/api/providers/${activeConnection.id}/models`);
+      const data = response.data || {};
+      if (!response.ok) {
         alert(data.error || "Failed to import models");
         return;
       }
@@ -791,6 +1644,17 @@ function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAl
         <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
           {importing ? "Importing..." : "Import from /models"}
         </Button>
+        {onRefreshModels && connections.length > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="sync"
+            onClick={onRefreshModels}
+            disabled={refreshModelsSyncing}
+          >
+            {refreshModelsSyncing ? "Refreshing..." : "Refresh models"}
+          </Button>
+        )}
       </div>
 
       {!canImport && (
@@ -799,17 +1663,27 @@ function PassthroughModelsSection({ providerAlias, providerStorageAlias, modelAl
         </p>
       )}
 
+      {discoveredModelsLoading && (
+        <p className="text-xs text-text-muted">
+          Refreshing live model list...
+        </p>
+      )}
+
       {/* Models list */}
       {allModels.length > 0 && (
         <div className="flex flex-col gap-3">
-          {allModels.map(({ modelId, fullModel, alias }) => (
+          {allModels.map(({ modelId, fullModel, alias, source }) => (
             <PassthroughModelRow
               key={fullModel}
               modelId={modelId}
               fullModel={fullModel}
+              providerAlias={providerAlias}
+              tags={categorizeModel ? [...(categorizeModel(modelId) || [])] : []}
               copied={copied}
               onCopy={onCopy}
-              onDeleteAlias={() => onDeleteAlias(alias)}
+              source={source}
+              onDeleteAlias={alias ? () => onDeleteAlias(alias) : null}
+              onReportPricing={onReportPricing ? () => onReportPricing(modelId, fullModel) : null}
             />
           ))}
         </div>
@@ -825,17 +1699,45 @@ PassthroughModelsSection.propTypes = {
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
   onSetAlias: PropTypes.func.isRequired,
+  onRefreshModels: PropTypes.func,
+  refreshModelsSyncing: PropTypes.bool,
   onDeleteAlias: PropTypes.func.isRequired,
   connections: PropTypes.array.isRequired,
+  discoveredModels: PropTypes.array,
+  discoveredModelsLoading: PropTypes.bool,
+  categorizeModel: PropTypes.func,
+  onReportPricing: PropTypes.func,
+  providerId: PropTypes.string,
 };
 
-function PassthroughModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias }) {
+function PassthroughModelRow({ modelId, fullModel, providerAlias, tags = [], copied, onCopy, source = "alias", onDeleteAlias = null, onReportPricing = null }) {
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-sidebar/50">
       <span className="material-symbols-outlined text-base text-text-muted">smart_toy</span>
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{modelId}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-medium truncate">{modelId}</p>
+          {providerAlias && (
+            <Badge variant="secondary" size="sm" className="shrink-0 font-mono text-xs">
+              {providerAlias}
+            </Badge>
+          )}
+          {source === "live" && (
+            <Badge variant="outline" size="sm" className="text-xs">
+              live
+            </Badge>
+          )}
+          {tags.length > 0 && (
+            <span className="flex items-center gap-1 flex-wrap">
+              {tags.map((tag) => (
+                <Badge key={tag} variant="outline" size="sm" className="text-xs capitalize">
+                  {tag}
+                </Badge>
+              ))}
+            </span>
+          )}
+        </div>
 
         <div className="flex items-center gap-1 mt-1">
           <code className="text-xs text-text-muted font-mono bg-sidebar px-1.5 py-0.5 rounded">{fullModel}</code>
@@ -851,14 +1753,27 @@ function PassthroughModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias
         </div>
       </div>
 
+      {/* Report pricing button */}
+      {typeof onReportPricing === "function" && (
+        <button
+          onClick={onReportPricing}
+          className="p-1 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-blue-600 dark:text-blue-400"
+          title="Report pricing"
+        >
+          <span className="material-symbols-outlined text-sm">description</span>
+        </button>
+      )}
+
       {/* Delete button */}
-      <button
-        onClick={onDeleteAlias}
-        className="p-1 hover:bg-red-50 rounded text-red-500"
-        title="Remove model"
-      >
-        <span className="material-symbols-outlined text-sm">delete</span>
-      </button>
+      {typeof onDeleteAlias === "function" && (
+        <button
+          onClick={onDeleteAlias}
+          className="p-1 hover:bg-red-50 rounded text-red-500"
+          title="Remove model"
+        >
+          <span className="material-symbols-outlined text-sm">delete</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -933,9 +1848,9 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
 
     setImporting(true);
     try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
-      const data = await res.json();
-      if (!res.ok) {
+      const response = await safeFetchJson(`/api/providers/${activeConnection.id}/models`);
+      const data = response.data || {};
+      if (!response.ok) {
         alert(data.error || "Failed to import models");
         return;
       }
@@ -969,17 +1884,21 @@ function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, m
     setKiroSyncStats(null);
     try {
       const activeConn = connections.find(c => c.isEnabled !== false) || connections[0];
-      const apiKey = activeConn?.apiKey || "";
-      const res = await fetch("/api/providers/kiro/sync-models", {
+      const response = await safeFetchJson("/api/providers/kiro/sync-models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodeId: node.id, apiKey }),
+        body: JSON.stringify({
+          connectionId: activeConn?.id,
+          nodeId: node.id,
+          apiKey: activeConn?.apiKey || "",
+        }),
       });
-      const data = await res.json();
-      if (res.ok) {
-        setKiroSyncStats(`Synced ${data.count} models at ${new Date(data.fetchedAt).toLocaleTimeString()}`);
+      const data = response.data || {};
+      if (response.ok) {
+        const reg = data.registeredToRegistry != null ? ` (${data.registeredToRegistry} in registry)` : "";
+        setKiroSyncStats(`Synced ${data.count} models at ${new Date(data.fetchedAt).toLocaleTimeString()}${reg}`);
       } else {
-        setKiroSyncStats(`Sync failed: ${data.error}`);
+        setKiroSyncStats(formatRequestError("Failed to sync models", response, "Failed to sync models"));
       }
     } catch (error) {
       setKiroSyncStats("Failed to sync models");
@@ -1119,7 +2038,7 @@ CooldownTimer.propTypes = {
   until: PropTypes.string.isRequired,
 };
 
-function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isTesting, testResult, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onTest }) {
+function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isTesting, testResult, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onTest, onReauth }) {
   const displayName = isOAuth
     ? connection.name || connection.email || connection.displayName || "OAuth Account"
     : connection.name;
@@ -1188,6 +2107,16 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
             <Badge variant={getStatusVariant()} size="sm" dot>
               {connection.isEnabled === false ? "disabled" : (effectiveStatus || "Unknown")}
             </Badge>
+            {connection.authType === "oauth" && connection.oauthNeedsSecret && connection.isEnabled !== false && (
+              <Badge variant="warning" size="sm" dot>
+                secret missing
+              </Badge>
+            )}
+            {connection.authType === "oauth" && connection.hasOAuthClientSecret && connection.isEnabled !== false && (
+              <Badge variant="secondary" size="sm">
+                secret configured
+              </Badge>
+            )}
             {isCooldown && connection.isEnabled !== false && <CooldownTimer until={connection.rateLimitedUntil} />}
             {connection.lastError && connection.isEnabled !== false && (
               <span className="text-xs text-red-500 truncate max-w-[300px]" title={connection.lastError}>
@@ -1224,6 +2153,19 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
             </div>
           )}
         </div>
+        {/* Always-visible Reconnect button for errored/expired OAuth connections */}
+        {isOAuth && onReauth && connection.isEnabled !== false && (
+          effectiveStatus === "error" || effectiveStatus === "expired" || effectiveStatus === "unavailable"
+        ) && (
+          <button
+            onClick={onReauth}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-100 dark:hover:bg-yellow-900/40 transition-colors shrink-0"
+            title="Re-authenticate this connection"
+          >
+            <span className="material-symbols-outlined text-[13px]">refresh</span>
+            Reconnect
+          </button>
+        )}
         <Toggle
           size="sm"
           checked={connection.isEnabled ?? true}
@@ -1267,6 +2209,8 @@ ConnectionRow.propTypes = {
     testStatus: PropTypes.string,
     isActive: PropTypes.bool,
     isEnabled: PropTypes.bool,
+    hasOAuthClientSecret: PropTypes.bool,
+    oauthNeedsSecret: PropTypes.bool,
     lastError: PropTypes.string,
     priority: PropTypes.number,
     globalPriority: PropTypes.number,
@@ -1283,6 +2227,7 @@ ConnectionRow.propTypes = {
   onEdit: PropTypes.func.isRequired,
   onTest: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  onReauth: PropTypes.func,
 };
 
 function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, onSave, onClose }) {
@@ -1300,12 +2245,12 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const res = await fetch("/api/providers/validate", {
+      const response = await safeFetchJson("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider, apiKey: formData.apiKey }),
       });
-      const data = await res.json();
+      const data = response.data || {};
       setValidationResult(data.valid ? "success" : "failed");
     } catch {
       setValidationResult("failed");
@@ -1323,12 +2268,12 @@ function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthro
       try {
         setValidating(true);
         setValidationResult(null);
-        const res = await fetch("/api/providers/validate", {
+        const response = await safeFetchJson("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ provider, apiKey: formData.apiKey }),
         });
-        const data = await res.json();
+        const data = response.data || {};
         isValid = !!data.valid;
         setValidationResult(isValid ? "success" : "failed");
       } catch {
@@ -1478,8 +2423,8 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch(`/api/providers/${connection.id}/test`, { method: "POST" });
-      const data = await res.json();
+      const response = await safeFetchJson(`/api/providers/${connection.id}/test`, { method: "POST" });
+      const data = response.data || {};
       setTestResult(data.valid ? "success" : "failed");
     } catch {
       setTestResult("failed");
@@ -1493,12 +2438,12 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
     setValidating(true);
     setValidationResult(null);
     try {
-      const res = await fetch("/api/providers/validate", {
+      const response = await safeFetchJson("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider: connection.provider, apiKey: formData.apiKey }),
       });
-      const data = await res.json();
+      const data = response.data || {};
       setValidationResult(data.valid ? "success" : "failed");
     } catch {
       setValidationResult("failed");
@@ -1523,12 +2468,12 @@ function EditConnectionModal({ isOpen, connection, onSave, onClose }) {
           try {
             setValidating(true);
             setValidationResult(null);
-            const res = await fetch("/api/providers/validate", {
+            const response = await safeFetchJson("/api/providers/validate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ provider: connection.provider, apiKey: formData.apiKey }),
             });
-            const data = await res.json();
+            const data = response.data || {};
             isValid = !!data.valid;
             setValidationResult(isValid ? "success" : "failed");
           } catch {
@@ -1729,7 +2674,7 @@ function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic })
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const res = await fetch("/api/provider-nodes/validate", {
+      const response = await safeFetchJson("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1738,7 +2683,7 @@ function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic })
           type: isAnthropic ? "anthropic-compatible" : "openai-compatible"
         }),
       });
-      const data = await res.json();
+      const data = response.data || {};
       setValidationResult(data.valid ? "success" : "failed");
     } catch {
       setValidationResult("failed");

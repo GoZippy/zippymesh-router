@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 
 // Simple in-memory cache for activation checks (shared across requests)
 // Note: This cache is per-instance. For distributed systems, use Redis or similar.
@@ -27,7 +28,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const wallet = searchParams.get("wallet");
   if (!wallet) {
-    return NextResponse.json({ error: "wallet required" }, { status: 400 });
+    return apiError(request, 400, "wallet required");
   }
 
   // Check cache first to handle transient API failures gracefully
@@ -39,7 +40,14 @@ export async function GET(request) {
   const apiUrl = process.env.ACTIVATION_API_URL;
   const apiKey = process.env.ACTIVATION_API_KEY;
   if (!apiUrl || !apiKey) {
-    return NextResponse.json({ activated: true }); // Offline mode: allow
+    // Activation not configured - fail closed for security
+    // Set ACTIVATION_ENFORCED=false explicitly to allow all wallets
+    const enforced = process.env.ACTIVATION_ENFORCED !== 'false';
+    if (!enforced) {
+      return NextResponse.json({ activated: true });
+    }
+    console.warn('[Activation] ACTIVATION_ENFORCED=true but ACTIVATION_API_URL or ACTIVATION_API_KEY missing');
+    return NextResponse.json({ activated: false, error: 'activation_misconfigured' }, { status: 503 });
   }
 
   try {

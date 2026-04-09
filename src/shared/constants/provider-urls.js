@@ -134,9 +134,10 @@ export const PROVIDER_URLS = {
   siliconflow: { signupUrl: "https://cloud.siliconflow.cn", infoUrl: "https://siliconflow.cn" },
 };
 
-/** Returns URL for provider icon (static file from public/providers). */
+/** Returns URL for provider icon (API with fallback; avoids 404s for missing PNGs). */
 export function getProviderIconUrl(iconId) {
-  return `/providers/${iconId}.png`;
+  if (!iconId) return "/api/providers/icon/openrouter";
+  return `/api/providers/icon/${iconId}`;
 }
 
 export function getProviderSignupUrl(providerId) {

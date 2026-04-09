@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from "react";
 import Card from "./Card";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 export default function RequestLogger() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [error, setError] = useState(null);
+  const [isDemo, setIsDemo] = useState(false);
 
   useEffect(() => {
     fetchLogs();
@@ -25,13 +28,25 @@ export default function RequestLogger() {
   const fetchLogs = async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
-      const res = await fetch("/api/usage/request-logs");
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data);
+      const response = await safeFetchJson("/api/usage/request-logs");
+      if (!response.ok) {
+        setError(formatRequestError("Failed to fetch request logs", response));
+        setLogs([]);
+        setIsDemo(false);
+        return;
       }
-    } catch (error) {
-      console.error("Failed to fetch logs:", error);
+
+      setError(null);
+      const logArray = Array.isArray(response.data)
+        ? response.data
+        : (response.data?.logs ?? []);
+      setLogs(logArray);
+      setIsDemo(response.data?.isDemo === true);
+    } catch (err) {
+      console.error("Failed to fetch logs:", err);
+      setError(err?.message || "Failed to connect to the server");
+      setLogs([]);
+      setIsDemo(false);
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -40,7 +55,14 @@ export default function RequestLogger() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Request Logs</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-semibold">Request Logs</h2>
+          {isDemo && (
+            <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+              Demo data
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-text-muted flex items-center gap-2 cursor-pointer">
             <span>Auto Refresh (3s)</span>
@@ -62,6 +84,8 @@ export default function RequestLogger() {
         <div className="p-0 overflow-x-auto max-h-[600px] overflow-y-auto font-mono text-xs">
           {loading && logs.length === 0 ? (
             <div className="p-8 text-center text-text-muted">Loading logs...</div>
+          ) : error ? (
+            <div className="p-8 text-center text-error">{error}</div>
           ) : logs.length === 0 ? (
             <div className="p-8 text-center text-text-muted">No logs recorded yet.</div>
           ) : (

@@ -5,7 +5,9 @@ import { createProviderConnection } from "@/models";
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { syncProviderCatalog } from "@/lib/providers/sync";
+import { apiError } from "@/lib/apiErrors";
 
 /**
  * POST /api/oauth/kiro/social-exchange
@@ -17,17 +19,11 @@ export async function POST(request) {
     const { code, codeVerifier, provider } = await request.json();
 
     if (!code || !codeVerifier) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Missing required fields");
     }
 
     if (!provider || !["google", "github"].includes(provider)) {
-      return NextResponse.json(
-        { error: "Invalid provider" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Invalid provider");
     }
 
     const kiroService = new KiroService();
@@ -59,6 +55,15 @@ export async function POST(request) {
 
     // Auto sync to Cloud if enabled
     await syncToCloudIfEnabled();
+    try {
+      await syncProviderCatalog({
+        force: true,
+        providers: ["kiro"],
+        triggeredBy: "oauth_connected",
+      });
+    } catch (syncError) {
+      console.log("Provider catalog sync skipped for kiro:", syncError?.message || syncError);
+    }
 
     return NextResponse.json({
       success: true,
@@ -70,7 +75,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.log("Kiro social exchange error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "Kiro social exchange failed");
   }
 }
 

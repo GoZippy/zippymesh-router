@@ -3,7 +3,7 @@
  */
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
-import { unavailableResponse } from "../utils/error.js";
+import { unavailableResponse, errorResponse } from "../utils/error.js";
 
 /**
  * Get combo models from combos data
@@ -38,12 +38,16 @@ export async function handleComboChat({ body, models, handleSingleModel, log }) 
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;
+  let requestId = null;
 
   for (let i = 0; i < models.length; i++) {
     const modelStr = models[i];
     log.info("COMBO", `Trying model ${i + 1}/${models.length}: ${modelStr}`);
 
     const result = await handleSingleModel(body, modelStr);
+    if (!requestId) {
+      requestId = result?.headers?.get?.("x-request-id") || null;
+    }
     
     // Success (2xx) - return response
     if (result.ok) {
@@ -93,12 +97,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log }) 
   if (earliestRetryAfter) {
     const retryHuman = formatRetryAfter(earliestRetryAfter);
     log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
-    return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
+    return unavailableResponse(status, msg, earliestRetryAfter, retryHuman, { requestId });
   }
 
   log.warn("COMBO", `All models failed | ${msg}`);
-  return new Response(
-    JSON.stringify({ error: { message: msg } }),
-    { status, headers: { "Content-Type": "application/json" } }
-  );
+  return errorResponse(status, msg, { requestId });
 }

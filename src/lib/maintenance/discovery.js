@@ -1,4 +1,5 @@
 import { getProviderConnections, getRoutingPlaybooks, getCombos } from "../localDb.js";
+import { getRegistryModels } from "../modelRegistry.js";
 import { PROVIDER_MODELS } from "../../shared/constants/models";
 import { isOpenAICompatibleProvider } from "../../shared/constants/providers";
 
@@ -62,8 +63,23 @@ export class ModelDiscovery {
         // Build a map of currently available models across all connections
         const available = new Set();
         for (const conn of connections) {
+            const registryModels = await getRegistryModels({
+                provider: conn.provider,
+                lifecycleState: ["active", "missing"],
+            });
+
+            if (registryModels.length > 0) {
+                registryModels.forEach((model) => {
+                    const modelId = model.modelId || model.model_id || "";
+                    if (modelId) {
+                        available.add(`${conn.provider}/${modelId}`);
+                    }
+                });
+                continue;
+            }
+
             const models = await this.fetchProviderModels(conn);
-            models.forEach(m => available.add(`${conn.provider}/${m}`));
+            models.forEach((m) => available.add(`${conn.provider}/${m}`));
         }
 
         const issues = [];

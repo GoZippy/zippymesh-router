@@ -1,23 +1,37 @@
 {
   "name": "@zippy/mesh",
-  "version": "0.3.0-alpha",
+  "version": "1.1.0",
   "description": "Zippy Mesh - Standalone AI Routing & P2P Mesh",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 20128 --webpack",
-    "build": "npm run build:next",
-    "build:next": "next build --webpack",
+    "predev": "node scripts/setup-env.mjs",
+    "dev": "next dev -p 20128 -H 0.0.0.0 --webpack",
+    "secrets:check": "node ./secrets-check.cjs",
+    "prebuild": "node scripts/setup-env.mjs",
+    "build": "node ./secrets-check.cjs && node scripts/build.cjs",
+    "build:next": "node --max-old-space-size=16384 ./node_modules/next/dist/bin/next build --webpack",
+    "prepare-standalone": "node scripts/prepare-standalone.cjs",
+    "build:standalone": "npm run build:next && npm run prepare-standalone",
     "start": "next start -p 20128",
     "tauri": "tauri",
     "test": "node tests/routerKey.test.js",
-    "test:providers": "node tests/providers.test.js && node tests/providers.functional.test.js && node tests/kilo.routing.test.js && node tests/provider.sync.test.js && node tests/provider.adapters.test.js",
+    "test:providers": "node tests/providers.test.js && node tests/providers.functional.test.js && node tests/kilo.routing.test.js && node tests/provider.sync.test.js && node tests/provider.adapters.test.js && node tests/provider-security.contracts.test.js",
+    "test:unit": "npx vitest run tests/unit/",
+    "test:connectors": "node tests/connectors.validate.js",
     "cli": "node scripts/zippy-cli.mjs",
     "setup": "node scripts/setup-env.mjs",
-    "validate-open-core": "node scripts/validate-open-core.cjs"
+    "package-release": "node scripts/package-release.cjs",
+    "check-env": "node scripts/check-env.js",
+    "build:community": "node scripts/build-community.cjs",
+    "validate-open-core": "node scripts/validate-open-core.cjs",
+    "build:tauri-frontend": "node scripts/build-tauri-frontend.cjs",
+    "build:sidecar": "node scripts/build-sidecar.cjs",
+    "tauri:build": "npm run build:tauri-frontend && npm run build:sidecar && npx tauri build"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@noble/ed25519": "^3.0.1",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "axios": "^1.13.5",
@@ -26,6 +40,7 @@
     "express": "^5.2.1",
     "fs": "^0.0.1-security",
     "gpt-tokenizer": "^3.4.0",
+    "graphql-yoga": "^5.18.0",
     "http-proxy-middleware": "^3.0.5",
     "https-proxy-agent": "^7.0.6",
     "jose": "^6.1.3",
@@ -34,6 +49,7 @@
     "next": "^16.1.6",
     "node-machine-id": "^1.1.12",
     "open": "^11.0.0",
+    "open-sse": "file:./open-sse",
     "ora": "^9.1.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -41,14 +57,16 @@
     "socks-proxy-agent": "^8.0.5",
     "undici": "^7.19.2",
     "uuid": "^13.0.0",
-    "zustand": "^5.0.10",
-    "open-sse": "file:./open-sse"
+    "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.1.18",
     "@tauri-apps/cli": "^2.10.0",
+    "@types/react": "19.2.14",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "vitest": "^2.1.9"
   }
 }

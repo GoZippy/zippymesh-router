@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { getProviderIconUrl } from "@/shared/constants/provider-urls";
 
 function ProviderAvatar({ provider, className = "" }) {
   const [imgError, setImgError] = useState(false);
@@ -12,7 +15,7 @@ function ProviderAvatar({ provider, className = "" }) {
         </span>
       ) : (
         <Image
-          src={`/providers/${provider}.png`}
+          src={getProviderIconUrl(provider)}
           alt={provider || "Provider"}
           width={40}
           height={40}
@@ -24,7 +27,6 @@ function ProviderAvatar({ provider, className = "" }) {
     </div>
   );
 }
-import Image from "next/image";
 import ProviderLimitCard from "./ProviderLimitCard";
 import QuotaTable from "./QuotaTable";
 import { parseQuotaData, calculatePercentage } from "./utils";
@@ -32,8 +34,18 @@ import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import { CardSkeleton } from "@/shared/components/Loading";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 const REFRESH_INTERVAL_MS = 60000; // 60 seconds
+
+function getUsageAuthErrorMessage(provider, rawMessage) {
+  const message = String(rawMessage || "").toLowerCase();
+  if (message.includes("refresh") || message.includes("token") || message.includes("expired") || message.includes("credential")) {
+    return `${provider}: OAuth credentials need to be refreshed. Reconnect this provider from Settings to restore quota access.`;
+  }
+
+  return `${provider}: Authentication failed while loading limits. Reconnect this provider from Settings.`;
+}
 
 export default function ProviderLimits() {
   const [connections, setConnections] = useState([]);
@@ -52,17 +64,17 @@ export default function ProviderLimits() {
   // Fetch all provider connections
   const fetchConnections = useCallback(async () => {
     try {
-      const response = await fetch("/api/providers");
-      const data = await response.json();
-      if (response.ok) {
-        const connectionList = data.connections || [];
-        setConnections(connectionList);
-        return connectionList;
-      } else {
-        console.error("Failed to fetch connections:", data.error || response.statusText);
+      const response = await safeFetchJson("/api/providers");
+
+      if (!response.ok) {
+        console.error("Failed to fetch connections:", response.error);
         setConnections([]);
         return [];
       }
+
+      const connectionList = response.data?.connections || [];
+      setConnections(connectionList);
+      return connectionList;
     } catch (error) {
       console.error("Error fetching connections:", error);
       setConnections([]);
@@ -77,11 +89,14 @@ export default function ProviderLimits() {
 
     try {
       console.log(`[ProviderLimits] Fetching quota for ${provider} (${connectionId})`);
-      const response = await fetch(`/api/usage/${connectionId}`);
+      const response = await safeFetchJson(`/api/usage/${connectionId}`);
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData.error || response.statusText;
+        const errorMsg = formatRequestError(
+          "Usage limits fetch",
+          response,
+          "Failed to fetch usage limits"
+        );
 
         // Handle different error types gracefully
         if (response.status === 404) {
@@ -92,21 +107,26 @@ export default function ProviderLimits() {
 
         if (response.status === 401) {
           // Auth error - show message instead of throwing
-          console.warn(`[ProviderLimits] Auth error for ${provider}:`, errorMsg);
+          console.warn(`[ProviderLimits] Auth error for ${provider}:`, response.error);
+          const friendlyMsg = getUsageAuthErrorMessage(provider, response.error);
           setQuotaData((prev) => ({
             ...prev,
             [connectionId]: {
               quotas: [],
-              message: errorMsg,
+              message: friendlyMsg,
+              requiresReauth: true,
             },
           }));
           return;
         }
 
-        throw new Error(`HTTP ${response.status}: ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
-      const data = await response.json();
+      const data = response.data;
+      if (!data) {
+        throw new Error("Usage limits response was empty");
+      }
       console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
 
       // Parse quota data using provider-specific parser
@@ -175,13 +195,11 @@ export default function ProviderLimits() {
   // Fetch rate limit suggestions (429 alternatives)
   const fetchSuggestions = useCallback(async () => {
     try {
-      const res = await fetch("/api/routing/suggestions");
-      const data = await res.json();
-      if (res.ok && data.suggestions?.length) {
-        setSuggestions(data.suggestions);
-      } else {
-        setSuggestions([]);
-      }
+      const suggestionsRes = await safeFetchJson("/api/routing/suggestions");
+      const list = Array.isArray(suggestionsRes.data?.suggestions)
+        ? suggestionsRes.data.suggestions
+        : [];
+      setSuggestions(suggestionsRes.ok ? list : []);
     } catch {
       setSuggestions([]);
     }
@@ -474,6 +492,24 @@ export default function ProviderLimits() {
                 ) : quota?.message ? (
                   <div className="text-center py-8">
                     <p className="text-sm text-text-muted">{quota.message}</p>
+                    {quota.requiresReauth && (
+                      <div className="mt-3 flex justify-center gap-2">
+                        <Link
+                          href="/dashboard/providers"
+                          className="inline-flex items-center justify-center rounded-md border border-black/10 dark:border-white/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-text-main hover:bg-black/5 dark:hover:bg-white/5"
+                        >
+                          Reconnect in Providers
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => refreshProvider(conn.id, conn.provider)}
+                          disabled={isLoading}
+                          className="inline-flex items-center justify-center rounded-md border border-black/10 dark:border-white/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-text-main hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          Retry now
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <QuotaTable quotas={quota?.quotas} />

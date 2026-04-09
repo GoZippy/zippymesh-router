@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { getP2pSubscriptions, createP2pSubscription, getWalletBalance, getWalletTransactions } from "@/lib/localDb";
-import { getWalletEarnings } from "@/lib/sidecar";
+import { getSidecarUrl, getWalletEarnings } from "@/lib/sidecar";
 
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
+const SIDECAR_URL = getSidecarUrl();
 
 /**
  * GET /api/marketplace

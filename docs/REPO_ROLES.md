@@ -4,11 +4,11 @@
 
 | Repo | Role | Visibility | Use |
 |------|------|------------|-----|
-| **zippymesh-router** | **Public release** (open-core) | **Public** when you flip the switch | What users and the public see. Open-core: UI, config, docs. Proprietary logic stubbed. No .voidspec, .vscode, or workstation data. |
-| **zippymesh-dist** | **Private build / full source** | **Private forever** | Full source, build pipeline, release artifacts. Used to build the product you sell. Never make public. |
+| **zippymesh-router** | **Public release** (open-core) | **Public** when you flip the switch | What users and the public see. Open-core: UI, config, docs. Proprietary logic stubbed. History cleaned: no .voidspec, .vscode, or workstation data in any commit. |
+| **zippymesh-dist** | **Private build / full source** | **Private forever** | Full source, build pipeline, release artifacts. Used to build the product you sell. **Never make public.** May contain internal tooling in history; .gitignore prevents re-adding .voidspec and .vscode. |
 
-- **Public builds / open-core source** → **zippymesh-router** (https://github.com/GoZippy/zippymesh-router)
-- **Private forever** → **zippymesh-dist** (https://github.com/GoZippy/zippymesh-dist)
+- **Public builds / open-core source** → **zippymesh-router** (https://github.com/GoZippy/zippymesh-router) — **this is the one you will make public.**
+- **Private forever** → **zippymesh-dist** (https://github.com/GoZippy/zippymesh-dist) — **never make public; full source lives here.**
 
 ## What must never be in the public repo
 

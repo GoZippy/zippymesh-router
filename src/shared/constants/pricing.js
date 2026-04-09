@@ -1,3 +1,22 @@
+/**
+ * Provider tier metadata: free tier limits, rate limits, reset schedules.
+ * Used for status checks and routing decisions (maxed credits, time to reset).
+ */
+export const PROVIDER_TIER = {
+  groq: { freeTier: true, rpm: 30, tpm: 6000, resetSchedule: "minute", tier: "free" },
+  cerebras: { freeTier: true, rpm: 30, tpm: 4096, resetSchedule: "minute", tier: "free" },
+  kilo: { freeTier: true, rpm: 60, tpm: 100000, resetSchedule: "minute", tier: "free" },
+  glm: { freeTier: true, rpm: 60, tpm: 128000, resetSchedule: "minute", tier: "free" },
+  openai: { freeTier: false, tier: "paid", resetSchedule: "monthly" },
+  anthropic: { freeTier: false, tier: "paid", resetSchedule: "monthly" },
+  gemini: { freeTier: true, rpm: 15, tpm: 1000000, resetSchedule: "minute", tier: "free" },
+  ollama: { freeTier: true, rpm: 9999, tpm: 999999, resetSchedule: "none", tier: "local" },
+  lmstudio: { freeTier: true, rpm: 9999, tpm: 999999, resetSchedule: "none", tier: "local" },
+  openrouter: { freeTier: false, tier: "paid", resetSchedule: "monthly" },
+  deepseek: { freeTier: false, tier: "paid", resetSchedule: "monthly" },
+  xai: { freeTier: false, tier: "paid", resetSchedule: "monthly" },
+};
+
 // Provider source metadata: cloud | local | oauth | api-key
 export const PROVIDER_SOURCE = {
   cc: "oauth",
@@ -644,6 +663,21 @@ export function calculateCostFromTokens(tokens, pricing) {
   }
 
   return cost;
+}
+
+/**
+ * Single entry point for completion cost in USD (LiteLLM-style).
+ * Uses getPricingForModel + calculateCostFromTokens; optional pricing override when caller has it (e.g. from DB).
+ * @param {object} usage - Token counts (prompt_tokens, completion_tokens, cached_tokens, etc.)
+ * @param {string} provider - Provider ID
+ * @param {string} model - Model ID
+ * @param {object|null} [pricingOverride] - If provided, use this instead of lookup (e.g. from getPricingForModel in localDb)
+ * @returns {number} Cost in USD (0 if no pricing)
+ */
+export function completionCost(usage, provider, model, pricingOverride = null) {
+  const pricing = pricingOverride ?? getPricingForModel(provider, model);
+  if (!pricing) return 0;
+  return calculateCostFromTokens(usage || {}, pricing);
 }
 
 /**

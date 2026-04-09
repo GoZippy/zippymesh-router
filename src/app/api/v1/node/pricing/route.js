@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getNodePricingConfig, setNodePricingConfig } from "@/lib/localDb.js";
+import { getSidecarUrl } from "@/lib/sidecar";
 
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
+const SIDECAR_URL = getSidecarUrl();
 
 export async function GET() {
     try {

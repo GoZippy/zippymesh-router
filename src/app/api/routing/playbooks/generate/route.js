@@ -3,6 +3,7 @@ import { getProviderConnections } from "@/lib/localDb.js";
 import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
 import { MODEL_SCORES } from "@/shared/constants/modelScores.js";
+import { apiError } from "@/lib/apiErrors";
 
 function rankModelForIntent(model, intent) {
   const canonical = toCanonicalModel(model.provider, model.modelId, model.metadata || null);
@@ -19,7 +20,7 @@ export async function POST(request) {
 
     const [connections, models] = await Promise.all([
       getProviderConnections({ isActive: true, isEnabled: true }),
-      getRegistryModels(),
+      getRegistryModels({ lifecycleState: "active" }),
     ]);
 
     const availableProviders = new Set(
@@ -73,7 +74,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("Error generating playbook draft:", error);
-    return NextResponse.json({ error: "Failed to generate playbook draft" }, { status: 500 });
+    return apiError(request, 500, "Failed to generate playbook draft");
   }
 }
 

@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 
 /**
  * POST /api/cloud/auth
  * Removed — previously returned all provider API keys, access tokens, and
  * refresh tokens with zero authentication (auth checks were commented out).
  */
-export async function POST() {
-  return NextResponse.json({ error: "Endpoint removed" }, { status: 410 });
+export async function POST(request) {
+  return apiError(request, 410, "Endpoint removed");
 }

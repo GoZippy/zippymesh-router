@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/localDb";
+import { getDb, getProviderConnectionById, updatePricing } from "@/lib/localDb";
+import { registerModel } from "@/lib/modelRegistry.js";
+import { __internal } from "@/lib/providers/sync.js";
 
 function normalizeBaseUrl(input) {
     const trimmed = (input || "").trim().replace(/\/+$/, "");
@@ -7,14 +9,13 @@ function normalizeBaseUrl(input) {
     return trimmed;
 }
 
-async function fetchKiroModels({ baseUrl, apiKey }) {
+async function fetchKiroModels({ baseUrl, token }) {
     const url = `${baseUrl}/models`;
     const headers = { Accept: "application/json" };
 
     // Kiro’s gateway supports both Bearer token and anonymous (per their gateway code)
-    if (apiKey) {
-        // OpenRouter-compatible endpoints generally accept Bearer token
-        headers["Authorization"] = `Bearer ${apiKey}`;
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
     }
 
     const res = await fetch(url, { headers });
@@ -43,7 +44,7 @@ export async function POST(req) {
         // You can pass:
         // - nodeId: if you store provider node records and want to attach models to that node
         // - baseUrl/apiKey: override for this call
-        const { nodeId, baseUrl: baseUrlIn, apiKey: apiKeyIn } = body || {};
+        const { connectionId, nodeId, baseUrl: baseUrlIn, apiKey: apiKeyIn } = body || {};
 
         const db = await getDb();
 
@@ -58,15 +59,33 @@ export async function POST(req) {
             normalizeBaseUrl(node?.baseUrl) ||
             "https://api.kiro.ai/api/openrouter";
 
-        // Prefer explicit apiKey; otherwise see if node/provider connection stores it
-        const apiKey =
-            (apiKeyIn || "").trim() ||
-            (node?.apiKey || "").trim() ||
-            ""; // allow empty if Kiro permits unauthenticated; if not, you’ll get 401
+        let token = (apiKeyIn || "").trim();
+        if (connectionId) {
+            const connection = await getProviderConnectionById(connectionId);
+            if (connection)
+                token = (connection.accessToken || connection.apiKey || "").trim() || token;
+        }
+        if (!token && node?.apiKey) token = (node.apiKey || "").trim();
 
-        const models = await fetchKiroModels({ baseUrl, apiKey });
+        const models = await fetchKiroModels({ baseUrl, token });
 
-        // Store in DB under a dedicated key. This avoids interfering with existing pricing/aliases.
+        const { normalizeModelRecord, normalizePricingFromModel } = __internal;
+        const mergedPricing = { kiro: {} };
+        let registeredCount = 0;
+        for (const raw of models.list) {
+            const normalized = normalizeModelRecord("kiro", raw);
+            if (!normalized) continue;
+            const pricingResult = normalizePricingFromModel("kiro", normalized.modelId, raw);
+            if (pricingResult?.pricing) {
+                mergedPricing.kiro[normalized.modelId] = pricingResult.pricing;
+                normalized.inputPrice = pricingResult.pricing.input ?? 0;
+                normalized.outputPrice = pricingResult.pricing.output ?? 0;
+            }
+            await registerModel(normalized);
+            registeredCount += 1;
+        }
+        if (Object.keys(mergedPricing.kiro).length > 0) await updatePricing(mergedPricing);
+
         db.data.cachedModels ??= {};
         db.data.cachedModels.kiro ??= {};
         db.data.cachedModels.kiro[baseUrl] = {
@@ -83,6 +102,7 @@ export async function POST(req) {
             baseUrl,
             fetchedAt: db.data.cachedModels.kiro[baseUrl].fetchedAt,
             count: models.list.length,
+            registeredToRegistry: registeredCount,
         });
     } catch (err) {
         return NextResponse.json(
@@ -91,3 +111,4 @@ export async function POST(req) {
         );
     }
 }
+

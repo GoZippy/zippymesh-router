@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, Badge, Button } from "@/shared/components";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 export default function ZippyDevTools({ isOpen, onClose }) {
     const [logs, setLogs] = useState([]);
     const [stats, setStats] = useState(null);
+    const [nodeStatus, setNodeStatus] = useState(null);
     const [activeTab, setActiveTab] = useState("logs");
     const [dialMultiaddr, setDialMultiaddr] = useState("");
     const scrollRef = useRef(null);
@@ -16,23 +18,21 @@ export default function ZippyDevTools({ isOpen, onClose }) {
         const fetchData = async () => {
             try {
                 // Fetch logs
-                const logRes = await fetch("/api/zippy/node?logs=true");
-                if (logRes.ok) {
-                    const contentType = logRes.headers.get("content-type");
-                    if (contentType && contentType.includes("application/json")) {
-                        const logData = await logRes.json();
+                const logResponse = await safeFetchJson("/api/zippy/node?logs=true");
+                if (logResponse.ok) {
+                    const logData = logResponse.data;
+                    if (Array.isArray(logData)) {
                         setLogs(logData);
+                    } else if (Array.isArray(logData?.logs)) {
+                        setLogs(logData.logs);
                     }
                 }
 
                 // Fetch full status
-                const statusRes = await fetch("/api/zippy/node");
-                if (statusRes.ok) {
-                    const contentType = statusRes.headers.get("content-type");
-                    if (contentType && contentType.includes("application/json")) {
-                        const statusData = await statusRes.json();
-                        setStats(statusData.stats);
-                    }
+                const statusResponse = await safeFetchJson("/api/zippy/node");
+                if (statusResponse.ok && statusResponse.data) {
+                    setStats(statusResponse.data.stats);
+                    setNodeStatus(statusResponse.data);
                 }
             } catch (error) {
                 console.error("Failed to fetch dev data:", error);
@@ -55,11 +55,14 @@ export default function ZippyDevTools({ isOpen, onClose }) {
     const handleDial = async () => {
         if (!dialMultiaddr) return;
         try {
-            await fetch("/api/zippy/node", {
+            const response = await safeFetchJson("/api/zippy/node", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "dialPeer", multiaddr: dialMultiaddr })
             });
+            if (!response.ok) {
+                console.error(formatRequestError("Failed to dial peer", response));
+            }
             setDialMultiaddr("");
         } catch (e) {
             console.error("Dial failed", e);
@@ -69,11 +72,14 @@ export default function ZippyDevTools({ isOpen, onClose }) {
     const handleBlockPeer = async (peerId) => {
         if (!peerId) return;
         try {
-            await fetch("/api/zippy/node", {
+            const response = await safeFetchJson("/api/zippy/node", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "blockPeer", peerId })
             });
+            if (!response.ok) {
+                console.error(formatRequestError("Failed to block peer", response));
+            }
         } catch (e) {
             console.error("Block failed", e);
         }
@@ -129,19 +135,68 @@ export default function ZippyDevTools({ isOpen, onClose }) {
 
                 <main className="flex-1 overflow-hidden flex">
                     {activeTab === "logs" && (
-                        <div
-                            ref={scrollRef}
-                            className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed select-text bg-black/40"
-                        >
-                            {logs.map((log, i) => (
-                                <div key={i} className="flex gap-4 border-b border-white/5 py-1">
-                                    <span className="text-white/20 shrink-0">{log.timestamp.split('T')[1].split('.')[0]}</span>
-                                    <span className={`shrink-0 uppercase font-bold ${log.type === 'stdout' ? 'text-blue-400' : log.type === 'stderr' ? 'text-red-400' : 'text-primary'}`}>
-                                        [{log.type}]
-                                    </span>
-                                    <span className="text-white/80 break-all">{log.line}</span>
+                        <div className="flex-1 overflow-y-auto flex flex-col bg-black/40">
+                            {nodeStatus?.binaryMissing && (
+                                <div className="mx-4 mt-4 p-4 rounded-lg border border-yellow-500/30 bg-yellow-500/5 flex flex-col gap-3">
+                                    <div className="flex items-start gap-3">
+                                        <span className="material-symbols-outlined text-yellow-400 text-xl mt-0.5 shrink-0">info</span>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-yellow-300 font-bold text-xs uppercase tracking-wider">ZippyCoin Edge Node — Not Installed</span>
+                                            <p className="text-white/60 text-[11px] leading-relaxed">
+                                                The ZippyCoin node binary is <strong className="text-white/80">optional</strong> — ZMLR works fully without it.
+                                                Install it only if you want to participate in the ZippyCoin mesh network, earn routing rewards, or run as a validator.
+                                            </p>
+                                            <p className="text-white/40 text-[10px] font-mono mt-1">Expected: {nodeStatus.binaryPath}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pl-8">
+                                        <a
+                                            href="https://github.com/GoZippy/zippymesh-dist/releases/latest"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-300 text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                        >
+                                            <span className="material-symbols-outlined text-sm">download</span>
+                                            Download Pre-built Binary
+                                        </a>
+                                        <a
+                                            href="https://github.com/GoZippy/zippymesh-router/blob/main/docs/node-setup.md"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                        >
+                                            <span className="material-symbols-outlined text-sm">menu_book</span>
+                                            Node Setup Guide
+                                        </a>
+                                        <a
+                                            href="https://github.com/GoZippy/zippymesh-router/blob/main/docs/build-from-source.md"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 text-[10px] font-bold uppercase tracking-wider transition-colors"
+                                        >
+                                            <span className="material-symbols-outlined text-sm">code</span>
+                                            Build from Source (Rust)
+                                        </a>
+                                    </div>
+                                    <p className="text-white/30 text-[10px] pl-8">
+                                        Or set <code className="text-primary/70">ZIPPY_NODE_BIN=/path/to/zippycoin-node</code> in your .env to use a custom binary location.
+                                    </p>
                                 </div>
-                            ))}
+                            )}
+                            <div
+                                ref={scrollRef}
+                                className="flex-1 overflow-y-auto p-4 font-mono text-[11px] leading-relaxed select-text"
+                            >
+                                {logs.map((log, i) => (
+                                    <div key={i} className="flex gap-4 border-b border-white/5 py-1">
+                                        <span className="text-white/20 shrink-0">{log.timestamp.split('T')[1].split('.')[0]}</span>
+                                        <span className={`shrink-0 uppercase font-bold ${log.type === 'stdout' ? 'text-blue-400' : log.type === 'stderr' ? 'text-red-400' : log.type === 'error' ? 'text-red-400' : 'text-primary'}`}>
+                                            [{log.type}]
+                                        </span>
+                                        <span className="text-white/80 break-all">{log.line}</span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
 

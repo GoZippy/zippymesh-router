@@ -4,7 +4,7 @@
  */
 
 import { generatePKCE, generateState } from "./utils/pkce.js";
-import { isUsableClientSecret, resolveOAuthClientSecret } from "./utils/secrets.js";
+import { isUsableClientSecret, resolveOAuthClientSecret, saveOAuthClientSecret } from "./utils/secrets.js";
 import {
   CLAUDE_CONFIG,
   CODEX_CONFIG,
@@ -169,8 +169,8 @@ const PROVIDERS = {
       });
       return `${config.authorizeUrl}?${params.toString()}`;
     },
-    exchangeToken: async (config, code, redirectUri) => {
-      const clientSecret = await resolveOAuthClientSecret("gemini-cli", config);
+    exchangeToken: async (config, code, redirectUri, _codeVerifier, _state, options = {}) => {
+      const clientSecret = await resolveOAuthClientSecret("gemini-cli", config, options);
       const payload = {
         grant_type: "authorization_code",
         client_id: config.clientId,
@@ -195,6 +195,9 @@ const PROVIDERS = {
         throw new Error(`Token exchange failed: ${error}`);
       }
 
+      if (clientSecret) {
+        saveOAuthClientSecret("gemini-cli", clientSecret);
+      }
       return await response.json();
     },
     postExchange: async (tokens) => {
@@ -255,11 +258,12 @@ const PROVIDERS = {
       });
       return `${config.authorizeUrl}?${params.toString()}`;
     },
-    exchangeToken: async (config, code, redirectUri) => {
-      const clientSecret = await resolveOAuthClientSecret("antigravity", config);
+    exchangeToken: async (config, code, redirectUri, _codeVerifier, _state, options = {}) => {
+      const clientSecret = await resolveOAuthClientSecret("antigravity", config, options);
       if (!clientSecret) {
         throw new Error(
-          "Antigravity OAuth is not configured: set ANTIGRAVITY_CLIENT_SECRET in .env (see .env.example). " +
+          "Antigravity OAuth is not configured: add the Antigravity client secret in Provider settings (preferred), " +
+          "or set ANTIGRAVITY_CLIENT_SECRET in environment config. " +
           "Get the secret from Google Cloud Console → APIs & Services → Credentials → your OAuth 2.0 Client."
         );
       }
@@ -284,6 +288,9 @@ const PROVIDERS = {
         const error = await response.text();
         throw new Error(`Token exchange failed: ${error}`);
       }
+
+      // Persist the secret to user data dir so it survives future rebuilds
+      saveOAuthClientSecret("antigravity", clientSecret);
 
       return await response.json();
     },
@@ -385,10 +392,17 @@ const PROVIDERS = {
       });
       return `${config.authorizeUrl}?${params.toString()}`;
     },
-    exchangeToken: async (config, code, redirectUri) => {
+    exchangeToken: async (config, code, redirectUri, _codeVerifier, _state, options = {}) => {
+      const clientSecret = await resolveOAuthClientSecret("iflow", config, options);
+      if (!clientSecret) {
+        throw new Error(
+          "iFlow OAuth is not configured: add the iFlow client secret in Provider settings (preferred), " +
+          "or set IFLOW_CLIENT_SECRET in environment config."
+        );
+      }
       // Create Basic Auth header
       const basicAuth = Buffer.from(
-        `${config.clientId}:${config.clientSecret}`
+        `${config.clientId}:${clientSecret}`
       ).toString("base64");
 
       const response = await fetch(config.tokenUrl, {
@@ -403,7 +417,7 @@ const PROVIDERS = {
           code: code,
           redirect_uri: redirectUri,
           client_id: config.clientId,
-          client_secret: config.clientSecret,
+          client_secret: clientSecret,
         }),
       });
 
@@ -412,6 +426,7 @@ const PROVIDERS = {
         throw new Error(`Token exchange failed: ${error}`);
       }
 
+      saveOAuthClientSecret("iflow", clientSecret);
       return await response.json();
     },
     postExchange: async (tokens) => {
@@ -791,10 +806,10 @@ export function generateAuthData(providerName, redirectUri) {
 /**
  * Exchange code for tokens
  */
-export async function exchangeTokens(providerName, code, redirectUri, codeVerifier, state) {
+export async function exchangeTokens(providerName, code, redirectUri, codeVerifier, state, options = {}) {
   const provider = getProvider(providerName);
 
-  const tokens = await provider.exchangeToken(provider.config, code, redirectUri, codeVerifier, state);
+  const tokens = await provider.exchangeToken(provider.config, code, redirectUri, codeVerifier, state, options);
 
   let extra = null;
   if (provider.postExchange) {

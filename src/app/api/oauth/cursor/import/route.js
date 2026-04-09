@@ -5,7 +5,9 @@ import { createProviderConnection } from "@/models";
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { syncProviderCatalog } from "@/lib/providers/sync";
+import { apiError } from "@/lib/apiErrors";
 
 /**
  * POST /api/oauth/cursor/import
@@ -20,17 +22,11 @@ export async function POST(request) {
     const { accessToken, machineId } = await request.json();
 
     if (!accessToken || typeof accessToken !== "string") {
-      return NextResponse.json(
-        { error: "Access token is required" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Access token is required");
     }
 
     if (!machineId || typeof machineId !== "string") {
-      return NextResponse.json(
-        { error: "Machine ID is required" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Machine ID is required");
     }
 
     const cursorService = new CursorService();
@@ -63,6 +59,15 @@ export async function POST(request) {
 
     // Auto sync to Cloud if enabled
     await syncToCloudIfEnabled();
+    try {
+      await syncProviderCatalog({
+        force: true,
+        providers: ["cursor"],
+        triggeredBy: "oauth_connected",
+      });
+    } catch (syncError) {
+      console.log("Provider catalog sync skipped for cursor:", syncError?.message || syncError);
+    }
 
     return NextResponse.json({
       success: true,
@@ -74,7 +79,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.log("Cursor import token error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "Cursor token import failed");
   }
 }
 

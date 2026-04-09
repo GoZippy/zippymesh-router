@@ -87,3 +87,6 @@ sidecar/target_temp/
 .github/instructions/codacy.instructions.md
 README1.md
 *.bak
+
+# AutoClaw runtime state
+.autoclaw/

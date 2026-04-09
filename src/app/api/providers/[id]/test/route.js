@@ -4,16 +4,16 @@ import { getProviderConnectionById, updateProviderConnection } from "@/lib/local
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, APIKEY_PROVIDERS } from "@/shared/constants/providers";
 import {
   GEMINI_CONFIG,
   ANTIGRAVITY_CONFIG,
   CODEX_CONFIG,
-  KIRO_CONFIG,
   CLAUDE_CONFIG,
 } from "@/lib/oauth/constants/oauth";
 import { refreshOAuthToken, isTokenExpired } from "@/lib/oauth/utils/refresh";
+import { apiError } from "@/lib/apiErrors.js";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -117,7 +117,6 @@ const MANUAL_VALIDATION_HINTS = {
   ayfie: "Validation requires provider-specific base URL configuration.",
   ali_bailian: "Validation requires DashScope-compatible endpoint selection.",
   zerooneai: "Validation requires provider-specific endpoint selection.",
-  kiro_api: "Validation requires configured Kiro/OpenRouter-compatible endpoint.",
   featherless: "Validation requires provider-specific endpoint selection.",
   abacus: "Validation requires provider-specific endpoint selection.",
   lepton: "Validation requires provider-specific endpoint selection.",
@@ -281,6 +280,27 @@ async function testOAuthConnection(connection) {
 async function testApiKeyConnection(connection) {
   const apiKey = typeof connection?.apiKey === "string" ? connection.apiKey.trim() : connection?.apiKey;
 
+  // Local providers (Ollama, LM Studio) - baseUrl required, API key optional
+  if (connection.provider === "ollama" || connection.provider === "lmstudio") {
+    const baseUrl = (connection.providerSpecificData?.baseUrl || connection.baseUrl || "").replace(/\/$/, "");
+    if (!baseUrl) {
+      return { valid: false, error: "Missing base URL" };
+    }
+    try {
+      // Ollama uses GET /api/tags; LM Studio uses OpenAI-style /v1/models or /models
+      const isOllama = connection.provider === "ollama";
+      const modelsUrl = isOllama
+        ? `${baseUrl}/api/tags`
+        : (baseUrl.endsWith("/v1") ? `${baseUrl}/models` : `${baseUrl}/v1/models`);
+      const headers = {};
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      const res = await fetch(modelsUrl, { headers });
+      return { valid: res.ok, error: res.ok ? null : "Server not reachable or did not return models" };
+    } catch (err) {
+      return { valid: false, error: err.message || "Connection refused" };
+    }
+  }
+
   // OpenAI Compatible providers - test via /models endpoint
   if (isOpenAICompatibleProvider(connection.provider)) {
     const modelsBase = connection.providerSpecificData?.baseUrl;
@@ -361,6 +381,14 @@ async function testApiKeyConnection(connection) {
           headers: { Authorization: `Bearer ${apiKey}` },
         });
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+
+      case "kiro_api": {
+        // Kiro (API Key) is OpenRouter-compatible; validate with OpenRouter key endpoint.
+        const res = await fetch("https://openrouter.ai/api/v1/auth/key", {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key or key not OpenRouter-compatible" };
       }
 
       case "kilo": {
@@ -521,7 +549,7 @@ export async function POST(request, { params }) {
     const connection = await getProviderConnectionById(id);
 
     if (!connection) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      return apiError(request, 404, "Connection not found");
     }
 
     let result;
@@ -532,10 +560,24 @@ export async function POST(request, { params }) {
       result = await testOAuthConnection(connection);
     }
 
+    // Determine if a failed OAuth test indicates a revoked/unrefreshable token
+    const isAuthFailure =
+      !result.valid &&
+      connection.authType === "oauth" &&
+      connection.refreshToken &&
+      (result.error === "Token invalid or revoked" ||
+        result.error === "Token expired and refresh failed" ||
+        (typeof result.error === "string" &&
+          (result.error.startsWith("401") || result.error.startsWith("403"))));
+
     // Build update data
     const updateData = {
-      testStatus: result.valid ? "active" : "error",
-      lastError: result.valid ? null : result.error,
+      testStatus: result.valid ? "active" : (isAuthFailure ? "needs_reauth" : "error"),
+      lastError: result.valid
+        ? null
+        : (isAuthFailure
+            ? "Authentication expired - please reconnect this provider"
+            : result.error),
       lastErrorAt: result.valid ? null : new Date().toISOString(),
     };
 
@@ -554,6 +596,6 @@ export async function POST(request, { params }) {
     });
   } catch (error) {
     console.log("Error testing connection:", error);
-    return NextResponse.json({ error: "Test failed" }, { status: 500 });
+    return apiError(request, 500, "Test failed");
   }
 }

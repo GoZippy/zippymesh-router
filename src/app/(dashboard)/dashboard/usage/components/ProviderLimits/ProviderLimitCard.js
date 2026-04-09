@@ -6,6 +6,7 @@ import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
 import QuotaProgressBar from "./QuotaProgressBar";
 import { calculatePercentage } from "./utils";
+import { getProviderIconUrl } from "@/shared/constants/provider-urls";
 
 const planVariants = {
   free: "default",
@@ -72,7 +73,7 @@ export default function ProviderLimitCard({
               </span>
             ) : (
               <Image
-                src={`/providers/${provider}.png`}
+                src={getProviderIconUrl(provider)}
                 alt={provider || "Provider"}
                 width={40}
                 height={40}

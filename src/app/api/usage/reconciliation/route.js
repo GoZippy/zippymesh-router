@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUsageHistory } from "@/lib/usageDb.js";
 import { getSettings } from "@/lib/localDb.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 function mean(values) {
   if (!values.length) return 0;
@@ -138,7 +139,7 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("Error generating reconciliation report:", error);
-    return NextResponse.json({ error: "Failed to calculate reconciliation" }, { status: 500 });
+    return apiError(request, 500, "Failed to calculate reconciliation");
   }
 }
 

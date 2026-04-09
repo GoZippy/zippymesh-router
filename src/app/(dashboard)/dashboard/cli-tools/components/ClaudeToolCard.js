@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
+import { safeFetchJson } from "@/shared/utils";
 
 
 
@@ -58,11 +59,11 @@ export default function ClaudeToolCard({
 
   const fetchModelAliases = async () => {
     try {
-      const res = await fetch("/api/models/alias");
-      const data = await res.json();
-      if (res.ok) setModelAliases(data.aliases || {});
+      const response = await safeFetchJson("/api/models/alias");
+      const data = response.data || {};
+      if (response.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      console.error("Error fetching model aliases:", error);
     }
   };
 
@@ -91,8 +92,8 @@ export default function ClaudeToolCard({
   const checkClaudeStatus = async () => {
     setCheckingClaude(true);
     try {
-      const res = await fetch("/api/cli-tools/claude-settings");
-      const data = await res.json();
+      const response = await safeFetchJson("/api/cli-tools/claude-settings");
+      const data = response.data || {};
       setClaudeStatus(data);
     } catch (error) {
       setClaudeStatus({ installed: false, error: error.message });
@@ -130,13 +131,13 @@ export default function ClaudeToolCard({
         const targetModel = modelMappings[model.alias];
         if (targetModel && model.envKey) env[model.envKey] = targetModel;
       });
-      const res = await fetch("/api/cli-tools/claude-settings", {
+      const response = await safeFetchJson("/api/cli-tools/claude-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ env }),
       });
-      const data = await res.json();
-      if (res.ok) {
+      const data = response.data || {};
+      if (response.ok) {
         setMessage({ type: "success", text: "Settings applied successfully!" });
         setClaudeStatus(prev => ({ ...prev, hasBackup: true, settings: { ...prev?.settings, env } }));
       } else {
@@ -153,9 +154,9 @@ export default function ClaudeToolCard({
     setRestoring(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/cli-tools/claude-settings", { method: "DELETE" });
-      const data = await res.json();
-      if (res.ok) {
+      const response = await safeFetchJson("/api/cli-tools/claude-settings", { method: "DELETE" });
+      const data = response.data || {};
+      if (response.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         tool.defaultModels.forEach((model) => onModelMappingChange(model.alias, model.defaultValue || ""));
         setSelectedApiKey("");

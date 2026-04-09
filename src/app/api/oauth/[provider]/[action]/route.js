@@ -6,9 +6,17 @@ import {
   requestDeviceCode,
   pollForToken
 } from "@/lib/oauth/providers";
-import { createProviderConnection } from "@/models";
+import { requiresDeviceCodeExtraData, requiresDeviceCodePkce } from "@/shared/constants/providerCapabilities";
+import {
+  createProviderConnection,
+  getProviderConnectionById,
+  getProviderConnections,
+} from "@/models";
+import { isUsableClientSecret, resolveOAuthClientSecret } from "@/lib/oauth/utils/secrets";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { syncProviderCatalog } from "@/lib/providers/sync";
+import { apiError } from "@/lib/apiErrors";
 
 // Fallback for removed isCloudEnabled function
 const isCloudEnabled = async () => false;
@@ -22,6 +30,25 @@ async function syncToCloudIfEnabled() {
       console.log("Auto-sync to cloud failed:", err.message);
     }
   }
+}
+
+function mergeProviderSpecificData(existingData, tokenData, provider, oauthClientSecret) {
+  const merged = {
+    ...(existingData && typeof existingData === "object" ? existingData : {}),
+    ...(tokenData?.providerSpecificData && typeof tokenData.providerSpecificData === "object" ? tokenData.providerSpecificData : {}),
+  };
+
+  if (provider && isUsableClientSecret(oauthClientSecret)) {
+    merged.oauth = {
+      ...(merged.oauth && typeof merged.oauth === "object" ? merged.oauth : {}),
+      [provider]: {
+        ...((merged.oauth && merged.oauth[provider] && typeof merged.oauth[provider] === "object") ? merged.oauth[provider] : {}),
+        clientSecret: oauthClientSecret.trim(),
+      },
+    };
+  }
+
+  return merged;
 }
 
 /**
@@ -45,19 +72,16 @@ export async function GET(request, { params }) {
     if (action === "device-code") {
       const providerData = getProvider(provider);
       if (providerData.flowType !== "device_code") {
-        return NextResponse.json({ error: "Provider does not support device code flow" }, { status: 400 });
+        return apiError(request, 400, "Provider does not support device code flow");
       }
 
       const authData = generateAuthData(provider, null);
-
-      // For providers that don't use PKCE (like GitHub), don't pass codeChallenge
+      const needsCodeVerifier = requiresDeviceCodePkce(provider);
       let deviceData;
-      if (provider === "github" || provider === "kiro") {
-        // GitHub and Kiro don't use PKCE for device code
-        deviceData = await requestDeviceCode(provider);
-      } else {
-        // Qwen and other providers use PKCE
+      if (needsCodeVerifier) {
         deviceData = await requestDeviceCode(provider, authData.codeChallenge);
+      } else {
+        deviceData = await requestDeviceCode(provider);
       }
 
       return NextResponse.json({
@@ -66,10 +90,21 @@ export async function GET(request, { params }) {
       });
     }
 
-    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    // GET /api/oauth/[provider]/has-secret - Check if server has OAuth client secret (env or persisted)
+    if (action === "has-secret") {
+      try {
+        const providerData = getProvider(provider);
+        const secret = await resolveOAuthClientSecret(provider, providerData.config);
+        return NextResponse.json({ hasSecret: !!secret });
+      } catch {
+        return NextResponse.json({ hasSecret: false });
+      }
+    }
+
+    return apiError(request, 400, "Unknown action");
   } catch (error) {
     console.log("OAuth GET error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "OAuth GET failed");
   }
 }
 
@@ -82,15 +117,35 @@ export async function POST(request, { params }) {
     console.log(`[OAuth] POST /api/oauth/${provider}/${action}`, { bodyKeys: Object.keys(body) });
 
     if (action === "exchange") {
-      const { code, redirectUri, codeVerifier, state, connectionId } = body;
+      const { code, redirectUri, codeVerifier, state, connectionId, oauthClientSecret } = body;
       console.log(`[OAuth] Exchanging code for ${provider}`, { code: code?.substring(0, 10) + "...", redirectUri });
 
       if (!code || !redirectUri || !codeVerifier) {
-        return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+        return apiError(request, 400, "Missing required fields");
       }
 
+      const existingById = connectionId ? await getProviderConnectionById(connectionId) : null;
+      const explicitSecret = isUsableClientSecret(oauthClientSecret) ? oauthClientSecret.trim() : null;
+
       // Exchange code for tokens
-      const tokenData = await exchangeTokens(provider, code, redirectUri, codeVerifier, state);
+      const tokenData = await exchangeTokens(provider, code, redirectUri, codeVerifier, state, {
+        connection: existingById,
+        clientSecret: explicitSecret,
+      });
+
+      let existingForMerge = existingById;
+      if (!existingForMerge && tokenData?.email) {
+        const allConnections = await getProviderConnections();
+        existingForMerge = (allConnections || []).find(
+          (item) => item.provider === provider && item.authType === "oauth" && item.email === tokenData.email
+        ) || null;
+      }
+      const providerSpecificData = mergeProviderSpecificData(
+        existingForMerge?.providerSpecificData || existingForMerge?.metadata,
+        tokenData,
+        provider,
+        explicitSecret
+      );
 
       // Save to database
       console.log(`[OAuth] Saving connection for ${provider} (${tokenData.email || 'no email'})`);
@@ -99,6 +154,7 @@ export async function POST(request, { params }) {
         provider,
         authType: "oauth",
         connectionId,
+        providerSpecificData,
         expiresAt: tokenData.expiresIn
           ? new Date(Date.now() + tokenData.expiresIn * 1000).toISOString()
           : null,
@@ -117,6 +173,15 @@ export async function POST(request, { params }) {
 
       // Auto sync to Cloud if enabled
       await syncToCloudIfEnabled();
+      try {
+        await syncProviderCatalog({
+          force: true,
+          providers: [provider],
+          triggeredBy: "oauth_connected",
+        });
+      } catch (syncError) {
+        console.log(`Provider catalog sync skipped for ${provider}:`, syncError?.message || syncError);
+      }
 
       console.log(`[OAuth] Connection created successfully for ${provider}`, { id: connection.id, email: connection.email });
 
@@ -135,23 +200,18 @@ export async function POST(request, { params }) {
       const { deviceCode, codeVerifier, extraData, connectionId } = body;
 
       if (!deviceCode) {
-        return NextResponse.json({ error: "Missing device code" }, { status: 400 });
+        return apiError(request, 400, "Missing device code");
       }
 
-      // For providers that don't use PKCE (like GitHub, Kiro), don't pass codeVerifier
-      let result;
-      if (provider === "github") {
-        result = await pollForToken(provider, deviceCode);
-      } else if (provider === "kiro") {
-        // Kiro needs extraData (clientId, clientSecret) from device code response
-        result = await pollForToken(provider, deviceCode, null, extraData);
-      } else {
-        // Qwen and other providers use PKCE
-        if (!codeVerifier) {
-          return NextResponse.json({ error: "Missing code verifier" }, { status: 400 });
-        }
-        result = await pollForToken(provider, deviceCode, codeVerifier);
+      const needsCodeVerifier = requiresDeviceCodePkce(provider);
+      const sendCodeVerifier = needsCodeVerifier ? codeVerifier : null;
+      const usesExtraData = requiresDeviceCodeExtraData(provider);
+
+      if (needsCodeVerifier && !codeVerifier) {
+        return apiError(request, 400, "Missing code verifier");
       }
+
+      const result = await pollForToken(provider, deviceCode, sendCodeVerifier, usesExtraData ? extraData : null);
 
       if (result.success) {
         // Save to database
@@ -178,6 +238,15 @@ export async function POST(request, { params }) {
 
         // Auto sync to Cloud if enabled
         await syncToCloudIfEnabled();
+        try {
+          await syncProviderCatalog({
+            force: true,
+            providers: [provider],
+            triggeredBy: "oauth_connected",
+          });
+        } catch (syncError) {
+          console.log(`Provider catalog sync skipped for ${provider}:`, syncError?.message || syncError);
+        }
 
         return NextResponse.json({
           success: true,
@@ -199,10 +268,10 @@ export async function POST(request, { params }) {
       });
     }
 
-    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+    return apiError(request, 400, "Unknown action");
   } catch (error) {
     console.log("OAuth POST error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "OAuth POST failed");
   }
 }
 

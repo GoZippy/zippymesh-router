@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Card, Button, Input, Modal, CardSkeleton } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 const KEY_MASK = "zm_••••••••••••••••";
 
@@ -17,6 +18,7 @@ export default function APIPageClient({ machineId }) {
   const [revealKey, setRevealKey] = useState(false);
   const [regenerating, setRegenerating] = useState(null);
   const [createdKeyIsRegenerated, setCreatedKeyIsRegenerated] = useState(false);
+  const [showHeaders, setShowHeaders] = useState(false);
 
   const { copied, copy } = useCopyToClipboard();
 
@@ -26,13 +28,15 @@ export default function APIPageClient({ machineId }) {
 
   const fetchData = async () => {
     try {
-      const keysRes = await fetch("/api/keys");
-      const keysData = await keysRes.json();
-      if (keysRes.ok) {
+      const response = await safeFetchJson("/api/keys");
+      const keysData = response.data || {};
+      if (response.ok) {
         setKeys(keysData.keys || []);
+      } else {
+        console.error(formatRequestError("Failed to fetch keys", response, "Failed to fetch keys"));
       }
     } catch (error) {
-      console.log("Error fetching data:", error);
+      console.error(formatRequestError("Error fetching data", error));
     } finally {
       setLoading(false);
     }
@@ -42,23 +46,25 @@ export default function APIPageClient({ machineId }) {
     if (!newKeyName.trim()) return;
 
     try {
-      const res = await fetch("/api/keys", {
+      const response = await safeFetchJson("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newKeyName }),
       });
-      const data = await res.json();
+      const data = response.data || {};
 
-      if (res.ok) {
+      if (response.ok) {
         setCreatedKey(data.key);
         setRevealKey(true);
         setCreatedKeyIsRegenerated(false);
         await fetchData();
         setNewKeyName("");
         setShowAddModal(false);
+      } else {
+        console.error(formatRequestError("Failed to create key", response, "Failed to create key"));
       }
     } catch (error) {
-      console.log("Error creating key:", error);
+      console.error(formatRequestError("Error creating key", error));
     }
   };
 
@@ -66,12 +72,14 @@ export default function APIPageClient({ machineId }) {
     if (!confirm("Delete this API key?")) return;
 
     try {
-      const res = await fetch(`/api/keys/${id}`, { method: "DELETE" });
-      if (res.ok) {
+      const response = await safeFetchJson(`/api/keys/${id}`, { method: "DELETE" });
+      if (response.ok) {
         setKeys(keys.filter((k) => k.id !== id));
+      } else {
+        console.error(formatRequestError("Failed to delete key", response, "Failed to delete key"));
       }
     } catch (error) {
-      console.log("Error deleting key:", error);
+      console.error(formatRequestError("Error deleting key", error));
     }
   };
 
@@ -80,9 +88,11 @@ export default function APIPageClient({ machineId }) {
 
     setRegenerating(keyRecord.id);
     try {
-      const res = await fetch(`/api/keys/${keyRecord.id}/regenerate`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to regenerate key");
+      const response = await safeFetchJson(`/api/keys/${keyRecord.id}/regenerate`, { method: "POST" });
+      const data = response.data || {};
+      if (!response.ok) {
+        throw new Error(formatRequestError("Failed to regenerate key", response, data.error || "Failed to regenerate key"));
+      }
 
       const rawKey = data.key;
       if (!rawKey || typeof rawKey !== "string") {
@@ -231,6 +241,102 @@ export default function APIPageClient({ machineId }) {
             </Button>
           </div>
         </div>
+      </Card>
+
+      {/* Advanced Routing Headers */}
+      <Card>
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h2 className="text-lg font-semibold">Advanced Routing Headers</h2>
+            <p className="text-sm text-text-muted">Pass these request headers to control how ZippyMesh routes your request</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={showHeaders ? "expand_less" : "expand_more"}
+            onClick={() => setShowHeaders(h => !h)}
+          >
+            {showHeaders ? "Hide" : "Show"}
+          </Button>
+        </div>
+
+        {showHeaders && (
+          <div className="flex flex-col gap-3 mt-3">
+            {[
+              {
+                header: "X-Intent",
+                type: "string",
+                values: "code · reasoning · vision · embedding · fast · default",
+                description: "Override intent detection. ZippyMesh auto-detects intent from your messages, but you can set it explicitly to guarantee the right model family is selected.",
+                example: 'X-Intent: code',
+              },
+              {
+                header: "X-Max-Latency-Ms",
+                type: "number (ms)",
+                values: "e.g. 2000",
+                description: "Maximum acceptable response latency in milliseconds. Models with average latency above this threshold will be deprioritized.",
+                example: 'X-Max-Latency-Ms: 2000',
+              },
+              {
+                header: "X-Max-Cost-Per-M-Tokens",
+                type: "number (USD)",
+                values: "e.g. 5.00",
+                description: "Maximum cost per million tokens (input + output combined). Models priced above this will be filtered out of routing candidates.",
+                example: 'X-Max-Cost-Per-M-Tokens: 5.00',
+              },
+              {
+                header: "X-Min-Context-Window",
+                type: "number (tokens)",
+                values: "e.g. 32000",
+                description: "Minimum context window size required. Use this when your request contains long documents that need a large context.",
+                example: 'X-Min-Context-Window: 32000',
+              },
+              {
+                header: "X-Prefer-Free",
+                type: "boolean",
+                values: "true · false",
+                description: "When set to true, ZippyMesh will route only to free-tier models (e.g. Groq free, OpenRouter free). Paid models will be excluded unless no free models are available.",
+                example: 'X-Prefer-Free: true',
+              },
+              {
+                header: "X-Prefer-Local",
+                type: "boolean",
+                values: "true · false",
+                description: "When true, routes to locally-running models first (Ollama, LM Studio). Falls back to cloud providers if no local models are available.",
+                example: 'X-Prefer-Local: true',
+              },
+            ].map(({ header, type, values, description, example }) => (
+              <div key={header} className="rounded-lg border border-border p-4">
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">{header}</code>
+                    <span className="text-xs text-text-muted">{type}</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={copied === header ? "check" : "content_copy"}
+                    onClick={() => copy(example, header)}
+                  >
+                    {copied === header ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <p className="text-xs text-text-muted mb-1">Values: <span className="font-mono">{values}</span></p>
+                <p className="text-sm text-text-main">{description}</p>
+                <pre className="mt-2 p-2 bg-black/5 dark:bg-white/5 rounded text-xs font-mono text-text-muted overflow-x-auto">{example}</pre>
+              </div>
+            ))}
+
+            <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 p-4">
+              <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1">Example: Route to a free coding model</p>
+              <pre className="text-xs font-mono text-text-muted overflow-x-auto whitespace-pre-wrap">{`curl ${baseUrl}/chat/completions \\
+  -H "Authorization: Bearer YOUR_KEY" \\
+  -H "X-Intent: code" \\
+  -H "X-Prefer-Free: true" \\
+  -d '{"model":"auto","messages":[{"role":"user","content":"Write a Python hello world"}]}'`}</pre>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Snippet Modal */}

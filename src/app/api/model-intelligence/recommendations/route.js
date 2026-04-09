@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { getProviderConnections } from "@/lib/localDb.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
@@ -87,7 +88,7 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("Error building model recommendations:", error);
-    return NextResponse.json({ error: "Failed to build recommendations" }, { status: 500 });
+    return apiError(request, 500, "Failed to build recommendations");
   }
 }
 

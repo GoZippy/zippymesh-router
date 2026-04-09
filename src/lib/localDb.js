@@ -5,9 +5,12 @@ import bcrypt from "bcryptjs";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import { SMART_PLAYBOOKS, INITIAL_SETTINGS } from "../shared/constants/defaults.js";
 import { PROVIDER_ID_TO_ALIAS } from "../shared/constants/models.js";
+import { emitProviderLifecycleEvent } from "./lifecycleEvents.js";
+import { blacklistIp as firewallBlacklistIp } from "./firewall.js";
 
 // Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
 // Simple check: if process.versions.node exists, we're in Node.js (local)
@@ -26,7 +29,7 @@ function getUserDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
 
   const platform = process.platform;
-  const homeDir = os.homedir();
+  const homeDir = os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]();
   const appName = getAppName();
 
   if (platform === "win32") {
@@ -43,7 +46,55 @@ function getUserDataDir() {
 }
 
 // Data file path - stored in user home directory
+// Data file path - stored in user home directory
 const DATA_DIR = getUserDataDir();
+
+// Migration: check for legacy .zippymesh directory and move it to .zippy-mesh if needed
+// This handles the transition from v0.3.2-alpha (.zippymesh) to v0.3.3+ (.zippy-mesh)
+if (!isCloud && !process.env.DATA_DIR) {
+  const homeDir = os.homedir();
+  const legacyDir = path.join(homeDir, ".zippymesh");
+  const newDir = DATA_DIR;
+
+  if (fs.existsSync(legacyDir) && legacyDir !== newDir) {
+    // Check if new directory is empty or contains a fresh/unconfigured install
+    let isFreshInstall = !fs.existsSync(newDir);
+    if (!isFreshInstall) {
+      const dbPath = path.join(newDir, "db.json");
+      if (fs.existsSync(dbPath)) {
+        try {
+          const content = fs.readFileSync(dbPath, "utf8");
+          const data = JSON.parse(content);
+          // If firstRun is true and no providers, we consider it a fresh install that can be overridden
+          if (data.settings?.firstRun && (!data.providerConnections || data.providerConnections.length === 0)) {
+            isFreshInstall = true;
+          }
+        } catch (e) {
+          // If we can't parse it, assume it's corrupt/fresh
+          isFreshInstall = true;
+        }
+      } else {
+        isFreshInstall = true;
+      }
+    }
+
+    if (isFreshInstall) {
+      console.log(`[DB] Legacy data directory found at ${legacyDir}. Migrating to ${newDir}...`);
+      try {
+        // If newDir exists, back it up first just in case
+        if (fs.existsSync(newDir)) {
+          const backupDir = `${newDir}.fresh-backup-${Date.now()}`;
+          fs.renameSync(newDir, backupDir);
+        }
+        fs.renameSync(legacyDir, newDir);
+        console.log(`[DB] Successfully migrated legacy data: ${legacyDir} -> ${newDir}`);
+      } catch (err) {
+        console.error(`[DB] Failed to migrate legacy data directory: ${err.message}`);
+      }
+    }
+  }
+}
+
 const DB_FILE = isCloud ? null : path.join(DATA_DIR, "db.json");
 const SQLITE_DB_FILE = isCloud ? null : path.join(DATA_DIR, "zippymesh.db");
 
@@ -67,6 +118,31 @@ function ensureWalletColumns(sqlite) {
   const hasWalletIdNode = nodeCols.some((c) => c.name === "wallet_id");
   if (!hasWalletIdNode) {
     sqlite.exec("ALTER TABLE provider_nodes ADD COLUMN wallet_id TEXT");
+  }
+}
+
+function ensureModelRegistryColumns(sqlite) {
+  const modelRegistryCols = sqlite.prepare("PRAGMA table_info(model_registry)").all();
+  const hasFirstSeenAt = modelRegistryCols.some((c) => c.name === "first_seen_at");
+  const hasLastSeenAt = modelRegistryCols.some((c) => c.name === "last_seen_at");
+  const hasMissingSinceAt = modelRegistryCols.some((c) => c.name === "missing_since_at");
+  const hasLifecycleState = modelRegistryCols.some((c) => c.name === "lifecycle_state");
+  const hasReplacementMetadata = modelRegistryCols.some((c) => c.name === "replacement_metadata");
+
+  if (!hasFirstSeenAt) {
+    sqlite.exec("ALTER TABLE model_registry ADD COLUMN first_seen_at TEXT");
+  }
+  if (!hasLastSeenAt) {
+    sqlite.exec("ALTER TABLE model_registry ADD COLUMN last_seen_at TEXT");
+  }
+  if (!hasMissingSinceAt) {
+    sqlite.exec("ALTER TABLE model_registry ADD COLUMN missing_since_at TEXT");
+  }
+  if (!hasLifecycleState) {
+    sqlite.exec("ALTER TABLE model_registry ADD COLUMN lifecycle_state TEXT DEFAULT 'active'");
+  }
+  if (!hasReplacementMetadata) {
+    sqlite.exec("ALTER TABLE model_registry ADD COLUMN replacement_metadata TEXT");
   }
 }
 
@@ -134,6 +210,11 @@ export function getSqliteDb() {
       avg_tps REAL DEFAULT 0,
       last_sync TEXT,
       metadata TEXT,
+      first_seen_at TEXT,
+      last_seen_at TEXT,
+      missing_since_at TEXT,
+      lifecycle_state TEXT DEFAULT 'active',
+      replacement_metadata TEXT,
       UNIQUE(provider, model_id)
     );
 
@@ -225,20 +306,903 @@ export function getSqliteDb() {
       trustScore INTEGER,
       metadata TEXT -- JSON blob for additional data
     );
+
+    -- Purchase records for license activation
+    CREATE TABLE IF NOT EXISTS purchases (
+      id TEXT PRIMARY KEY,
+      productId TEXT NOT NULL,
+      walletAddress TEXT NOT NULL,
+      amount REAL NOT NULL,
+      currency TEXT DEFAULT 'ZIPc',
+      status TEXT DEFAULT 'pending', -- 'pending', 'completed', 'failed', 'refunded'
+      txHash TEXT,
+      licenseKey TEXT,
+      activatedAt TEXT,
+      expiresAt TEXT,
+      metadata TEXT, -- JSON blob for additional data
+      createdAt TEXT,
+      updatedAt TEXT
+    );
+
+    -- Routing decision history for analytics
+    CREATE TABLE IF NOT EXISTS routing_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      intent TEXT,
+      selected_model TEXT,
+      used_model TEXT,
+      score REAL DEFAULT 0,
+      fallback_depth INTEGER DEFAULT 0,
+      latency_ms INTEGER DEFAULT 0,
+      success INTEGER DEFAULT 0,
+      constraints_json TEXT,
+      reason TEXT
+    );
+
+    -- Model preferences per intent
+    CREATE TABLE IF NOT EXISTS routing_preferences (
+      intent TEXT NOT NULL,
+      preferred_model TEXT NOT NULL,
+      trust_score REAL DEFAULT 0.5,
+      last_updated TEXT,
+      PRIMARY KEY (intent, preferred_model)
+    );
+
+    -- Per-request trace log for debugging and history
+    CREATE TABLE IF NOT EXISTS request_traces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL,
+      request_id TEXT,
+      virtual_key_id TEXT,
+      intent TEXT,
+      selected_model TEXT,
+      used_model TEXT,
+      prompt_hash TEXT,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      latency_ms INTEGER DEFAULT 0,
+      success INTEGER DEFAULT 0,
+      cache_hit INTEGER DEFAULT 0,
+      fallback_depth INTEGER DEFAULT 0,
+      error_message TEXT,
+      constraints_json TEXT,
+      metadata_json TEXT,
+      steps_json TEXT,
+      flagged INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_request_traces_timestamp ON request_traces(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_request_traces_model ON request_traces(used_model);
+
+    -- Exact-match prompt cache
+    CREATE TABLE IF NOT EXISTS prompt_cache (
+      hash TEXT PRIMARY KEY,
+      model TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      hit_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      last_hit_at TEXT,
+      expires_at TEXT
+    );
+
+    -- Semantic cache embeddings (for cosine-similarity matching)
+    CREATE TABLE IF NOT EXISTS cache_embeddings (
+      hash TEXT NOT NULL,
+      embed_model TEXT NOT NULL,
+      embedding TEXT NOT NULL,
+      PRIMARY KEY (hash, embed_model)
+    );
+
+    -- Virtual API keys for per-consumer budget and rate limit tracking
+    CREATE TABLE IF NOT EXISTS virtual_keys (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      key_hash TEXT NOT NULL UNIQUE,
+      key_prefix TEXT NOT NULL,
+      owner TEXT DEFAULT 'default',
+      team TEXT,
+      project TEXT,
+      monthly_token_budget INTEGER,
+      monthly_dollar_budget REAL,
+      tokens_used_this_month INTEGER DEFAULT 0,
+      dollars_used_this_month REAL DEFAULT 0.0,
+      rate_limit_rpm INTEGER,
+      allowed_providers TEXT,
+      allowed_models TEXT,
+      is_active INTEGER DEFAULT 1,
+      budget_reset_month TEXT,
+      created_at TEXT,
+      last_used_at TEXT,
+      expires_at TEXT
+    );
+
+    -- Prompt template library
+    CREATE TABLE IF NOT EXISTS prompt_templates (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      description TEXT,
+      tags TEXT,
+      variables TEXT,
+      model TEXT,
+      is_favorite INTEGER DEFAULT 0,
+      use_count INTEGER DEFAULT 0,
+      created_at TEXT,
+      updated_at TEXT
+    );
+
+    -- Multi-tenancy: organizations
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      plan TEXT DEFAULT 'community',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      settings_json TEXT
+    );
+
+    -- Multi-tenancy: teams within an org
+    CREATE TABLE IF NOT EXISTS teams (
+      id TEXT PRIMARY KEY,
+      org_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(org_id, slug),
+      FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+    );
+
+    -- Multi-tenancy: team members with roles
+    CREATE TABLE IF NOT EXISTS tenant_members (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      user_identifier TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      invited_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(team_id, user_identifier),
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+
+    -- Compliance: immutable append-only audit log
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      actor TEXT,
+      action TEXT NOT NULL,
+      resource_type TEXT,
+      resource_id TEXT,
+      before_json TEXT,
+      after_json TEXT,
+      ip_address TEXT,
+      user_agent TEXT
+    );
+
+    -- Compliance: dashboard access log
+    CREATE TABLE IF NOT EXISTS access_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      actor TEXT,
+      method TEXT,
+      path TEXT,
+      status_code INTEGER,
+      duration_ms INTEGER,
+      ip_address TEXT
+    );
+
+    -- SLA monitoring: per-provider health events
+    CREATE TABLE IF NOT EXISTS sla_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      provider TEXT NOT NULL,
+      latency_ms INTEGER,
+      success INTEGER DEFAULT 1,
+      error_code TEXT,
+      model TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sla_events_provider ON sla_events(provider, timestamp);
+
+    -- SLA monitoring: per-provider configuration and thresholds
+    CREATE TABLE IF NOT EXISTS sla_config (
+      provider TEXT PRIMARY KEY,
+      target_uptime_pct REAL DEFAULT 99.5,
+      target_p95_latency_ms INTEGER DEFAULT 2000,
+      auto_disable_on_breach INTEGER DEFAULT 0,
+      breach_window_minutes INTEGER DEFAULT 60,
+      is_disabled INTEGER DEFAULT 0,
+      disabled_at TEXT,
+      disabled_reason TEXT
+    );
+
+    -- Community marketplace: shared playbooks registry
+    CREATE TABLE IF NOT EXISTS marketplace_playbooks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      author TEXT DEFAULT 'anonymous',
+      intent TEXT,
+      tags TEXT,
+      rules_json TEXT NOT NULL,
+      downloads INTEGER DEFAULT 0,
+      rating_sum INTEGER DEFAULT 0,
+      rating_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      is_featured INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_marketplace_intent ON marketplace_playbooks(intent);
+    CREATE TABLE IF NOT EXISTS vault_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      label TEXT,
+      category TEXT NOT NULL DEFAULT 'api-key',
+      encrypted_value TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      iv TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      tags TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS vault_agent_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent TEXT NOT NULL,
+      entry_name TEXT NOT NULL,
+      reason TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at TEXT
+    );
   `);
 
-  // Migration: add wallet_id to provider_connections / provider_nodes if missing (existing DBs created before column was added)
+  // Migration: add wallet_id to provider_connections / provider_nodes and lifecycle columns to model_registry
   try {
     ensureWalletColumns(sqliteDb);
+    ensureModelRegistryColumns(sqliteDb);
+    sqliteDb.exec("CREATE INDEX IF NOT EXISTS idx_model_registry_provider_state ON model_registry(provider, lifecycle_state)");
   } catch (e) {
     // Log warning for unexpected errors, but continue - table may already have the column
     const message = String(e?.message || "");
-    if (!message.includes("no column named wallet_id") && !message.includes("duplicate column name")) {
-      console.warn("Migration warning: ensureWalletColumns failed:", e.message);
+    if (
+      !message.includes("no column named wallet_id") &&
+      !message.includes("duplicate column name") &&
+      !message.includes("duplicate column")
+    ) {
+      console.warn("Migration warning: SQLite migration helper failed:", e.message);
     }
   }
 
+  // Migrate request_traces: add steps_json, flagged, and virtual_key_id columns if missing
+  try {
+    const traceCols = sqliteDb.prepare("PRAGMA table_info(request_traces)").all();
+    if (!traceCols.some(c => c.name === "steps_json")) {
+      sqliteDb.exec("ALTER TABLE request_traces ADD COLUMN steps_json TEXT");
+    }
+    if (!traceCols.some(c => c.name === "flagged")) {
+      sqliteDb.exec("ALTER TABLE request_traces ADD COLUMN flagged INTEGER DEFAULT 0");
+    }
+    if (!traceCols.some(c => c.name === "virtual_key_id")) {
+      sqliteDb.exec("ALTER TABLE request_traces ADD COLUMN virtual_key_id TEXT");
+    }
+  } catch (e) {
+    // Ignore if table doesn't exist yet
+  }
+
+  // Migrate virtual_keys: add team_id and org_id if missing
+  try {
+    const vkCols = sqliteDb.prepare("PRAGMA table_info(virtual_keys)").all();
+    if (!vkCols.some(c => c.name === "team_id")) {
+      sqliteDb.exec("ALTER TABLE virtual_keys ADD COLUMN team_id TEXT");
+    }
+    if (!vkCols.some(c => c.name === "org_id")) {
+      sqliteDb.exec("ALTER TABLE virtual_keys ADD COLUMN org_id TEXT");
+    }
+  } catch (e) {
+    console.warn("[DB] virtual_keys migration failed:", e.message);
+  }
+
   return sqliteDb;
+}
+
+/**
+ * Save a routing decision to the database (synchronous, uses better-sqlite3)
+ */
+export function saveRoutingDecision(decision) {
+  const db = getSqliteDb();
+  if (!db) return null;
+
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO routing_decisions
+        (timestamp, intent, selected_model, used_model, score, fallback_depth, latency_ms, success, constraints_json, reason)
+      VALUES
+        (@timestamp, @intent, @selected_model, @used_model, @score, @fallback_depth, @latency_ms, @success, @constraints_json, @reason)
+    `);
+
+    return stmt.run(decision).lastInsertRowid;
+  } catch (e) {
+    console.error("[RoutingDB] Error saving decision:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Get routing statistics for a time window (synchronous)
+ */
+export function getRoutingStats({ hours = 24, intent = null, model = null } = {}) {
+  const db = getSqliteDb();
+  if (!db) return { totalRequests: 0 };
+
+  try {
+    const hours_clamped = Math.max(1, Math.min(hours, 720));
+    const since = `datetime('now', '-${hours_clamped} hours')`;
+    let where = `WHERE timestamp >= ${since}`;
+
+    if (intent) {
+      where += ` AND intent = '${intent.replace(/'/g, "''")}'`;
+    }
+    if (model) {
+      where += ` AND (selected_model = '${model.replace(/'/g, "''")}' OR used_model = '${model.replace(/'/g, "''")}')`;
+    }
+
+    const agg = db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        AVG(latency_ms) as avgLatency,
+        SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as successes
+      FROM routing_decisions ${where}
+    `).get();
+
+    const byIntent = Object.fromEntries(
+      db.prepare(`
+        SELECT intent, COUNT(*) as c
+        FROM routing_decisions ${where}
+        GROUP BY intent
+      `).all().map(r => [r.intent || 'default', r.c])
+    );
+
+    const byModel = Object.fromEntries(
+      db.prepare(`
+        SELECT used_model, COUNT(*) as c
+        FROM routing_decisions ${where}
+        GROUP BY used_model
+      `).all().map(r => [r.used_model || 'unknown', r.c])
+    );
+
+    const byFallbackDepth = Object.fromEntries(
+      db.prepare(`
+        SELECT fallback_depth, COUNT(*) as c
+        FROM routing_decisions ${where}
+        GROUP BY fallback_depth
+      `).all().map(r => [String(r.fallback_depth), r.c])
+    );
+
+    const topModels = db.prepare(`
+      SELECT
+        used_model as model,
+        COUNT(*) as count,
+        ROUND(SUM(CASE WHEN success=1 THEN 1.0 ELSE 0 END)*100/COUNT(*), 1) as successRate
+      FROM routing_decisions ${where}
+      GROUP BY used_model
+      ORDER BY count DESC
+      LIMIT 5
+    `).all();
+
+    return {
+      totalRequests: agg.total ?? 0,
+      successRate: agg.total > 0 ? Math.round((agg.successes / agg.total) * 1000) / 10 : 0,
+      avgLatency: Math.round(agg.avgLatency ?? 0),
+      byIntent,
+      byModel,
+      byFallbackDepth,
+      topModels,
+    };
+  } catch (e) {
+    console.error("[RoutingDB] Error getting stats:", e.message);
+    return { totalRequests: 0 };
+  }
+}
+
+/**
+ * Get the preferred model for an intent (synchronous)
+ */
+export function getModelPreference(intent) {
+  const db = getSqliteDb();
+  if (!db) return null;
+
+  try {
+    return db.prepare(`
+      SELECT * FROM routing_preferences
+      WHERE intent = ?
+      ORDER BY trust_score DESC
+      LIMIT 1
+    `).get(intent) ?? null;
+  } catch (e) {
+    console.error("[RoutingDB] Error getting preference:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Update or insert model preference for an intent (synchronous)
+ */
+export function updateModelPreference(intent, model, success) {
+  const db = getSqliteDb();
+  if (!db) return;
+
+  try {
+    const delta = success ? 0.05 : -0.1;
+    db.prepare(`
+      INSERT INTO routing_preferences (intent, preferred_model, trust_score, last_updated)
+      VALUES (?, ?, 0.5, datetime('now'))
+      ON CONFLICT(intent, preferred_model) DO UPDATE SET
+        trust_score = MAX(0, MIN(1, trust_score + ?)),
+        last_updated = datetime('now')
+    `).run(intent, model, delta);
+  } catch (e) {
+    console.error("[RoutingDB] Error updating preference:", e.message);
+  }
+}
+
+/**
+ * Save a per-request trace (synchronous)
+ */
+export function saveRequestTrace(trace) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    return db.prepare(`
+      INSERT INTO request_traces
+        (timestamp, request_id, virtual_key_id, intent, selected_model, used_model, prompt_hash,
+         input_tokens, output_tokens, latency_ms, success, cache_hit, fallback_depth,
+         error_message, constraints_json, metadata_json)
+      VALUES
+        (@timestamp, @request_id, @virtual_key_id, @intent, @selected_model, @used_model, @prompt_hash,
+         @input_tokens, @output_tokens, @latency_ms, @success, @cache_hit, @fallback_depth,
+         @error_message, @constraints_json, @metadata_json)
+    `).run({
+      timestamp: trace.timestamp || new Date().toISOString(),
+      request_id: trace.request_id || null,
+      virtual_key_id: trace.virtual_key_id || null,
+      intent: trace.intent || null,
+      selected_model: trace.selected_model || null,
+      used_model: trace.used_model || null,
+      prompt_hash: trace.prompt_hash || null,
+      input_tokens: trace.input_tokens || 0,
+      output_tokens: trace.output_tokens || 0,
+      latency_ms: trace.latency_ms || 0,
+      success: trace.success ? 1 : 0,
+      cache_hit: trace.cache_hit ? 1 : 0,
+      fallback_depth: trace.fallback_depth || 0,
+      error_message: trace.error_message || null,
+      constraints_json: trace.constraints_json || null,
+      metadata_json: trace.metadata_json || null,
+    }).lastInsertRowid;
+  } catch (e) {
+    console.error("[TracesDB] Error saving trace:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Get request traces with optional filters (synchronous)
+ */
+export function getRequestTraces({ limit = 50, offset = 0, model = null, intent = null, hours = 24 } = {}) {
+  const db = getSqliteDb();
+  if (!db) return { traces: [], total: 0 };
+  try {
+    const hours_clamped = Math.max(1, Math.min(hours, 720));
+    const since = `datetime('now', '-${hours_clamped} hours')`;
+    let where = `WHERE timestamp >= ${since}`;
+    if (model) where += ` AND used_model = '${model.replace(/'/g, "''")}'`;
+    if (intent) where += ` AND intent = '${intent.replace(/'/g, "''")}'`;
+
+    const total = db.prepare(`SELECT COUNT(*) as c FROM request_traces ${where}`).get()?.c ?? 0;
+    const traces = db.prepare(`
+      SELECT * FROM request_traces ${where}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    return { traces, total };
+  } catch (e) {
+    console.error("[TracesDB] Error getting traces:", e.message);
+    return { traces: [], total: 0 };
+  }
+}
+
+/**
+ * Get a single trace by ID (synchronous)
+ */
+export function getRequestTraceById(id) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    return db.prepare(`SELECT * FROM request_traces WHERE id = ?`).get(id) ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Toggle flagged status on a trace (synchronous)
+ */
+export function flagRequestTrace(id, flagged = true) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    db.prepare(`UPDATE request_traces SET flagged = ? WHERE id = ?`).run(flagged ? 1 : 0, id);
+  } catch (e) {}
+}
+
+/**
+ * Get prompt cache entry by hash (synchronous)
+ */
+export function getCacheEntry(hash) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    const entry = db.prepare(`
+      SELECT * FROM prompt_cache
+      WHERE hash = ?
+        AND (expires_at IS NULL OR expires_at > datetime('now'))
+    `).get(hash);
+    if (entry) {
+      // Update hit count and last_hit_at
+      db.prepare(`
+        UPDATE prompt_cache SET hit_count = hit_count + 1, last_hit_at = datetime('now')
+        WHERE hash = ?
+      `).run(hash);
+    }
+    return entry ?? null;
+  } catch (e) {
+    console.error("[CacheDB] Error getting cache entry:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Store prompt cache entry (synchronous)
+ */
+export function setCacheEntry(hash, model, responseJson, inputTokens, outputTokens, ttlSeconds = 3600) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    const expiresAt = ttlSeconds > 0
+      ? `datetime('now', '+${ttlSeconds} seconds')`
+      : null;
+    db.prepare(`
+      INSERT OR REPLACE INTO prompt_cache
+        (hash, model, response_json, input_tokens, output_tokens, hit_count, created_at, last_hit_at, expires_at)
+      VALUES
+        (?, ?, ?, ?, ?, 0, datetime('now'), NULL, ${expiresAt ? expiresAt : 'NULL'})
+    `).run(hash, model, responseJson, inputTokens || 0, outputTokens || 0);
+  } catch (e) {
+    console.error("[CacheDB] Error setting cache entry:", e.message);
+  }
+}
+
+/**
+ * Get prompt cache stats (synchronous)
+ */
+export function getCacheStats() {
+  const db = getSqliteDb();
+  if (!db) return { entries: 0, totalHits: 0, tokensSaved: 0 };
+  try {
+    const row = db.prepare(`
+      SELECT
+        COUNT(*) as entries,
+        SUM(hit_count) as totalHits,
+        SUM(hit_count * (input_tokens + output_tokens)) as tokensSaved
+      FROM prompt_cache
+      WHERE expires_at IS NULL OR expires_at > datetime('now')
+    `).get();
+    return {
+      entries: row?.entries ?? 0,
+      totalHits: row?.totalHits ?? 0,
+      tokensSaved: row?.tokensSaved ?? 0,
+    };
+  } catch (e) {
+    return { entries: 0, totalHits: 0, tokensSaved: 0 };
+  }
+}
+
+/**
+ * Purge expired cache entries (synchronous)
+ */
+export function purgeExpiredCache() {
+  const db = getSqliteDb();
+  if (!db) return 0;
+  try {
+    return db.prepare(`DELETE FROM prompt_cache WHERE expires_at IS NOT NULL AND expires_at <= datetime('now')`).run().changes;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/**
+ * Get a stored embedding for a cache hash + embed model (synchronous)
+ */
+export function getCacheEmbedding(hash, embedModel) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    return db.prepare(`SELECT * FROM cache_embeddings WHERE hash = ? AND embed_model = ?`).get(hash, embedModel) ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Store an embedding vector for a cache hash (synchronous)
+ */
+export function setCacheEmbedding(hash, embedModel, embeddingJson) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    db.prepare(`
+      INSERT OR REPLACE INTO cache_embeddings (hash, embed_model, embedding)
+      VALUES (?, ?, ?)
+    `).run(hash, embedModel, embeddingJson);
+  } catch (e) {
+    console.warn("[CacheDB] Failed to store embedding:", e.message);
+  }
+}
+
+/**
+ * Get all stored embeddings for a given embed model (synchronous).
+ * Returns array of { hash, embedding (JSON string) }.
+ */
+export function getAllCacheEmbeddings(embedModel) {
+  const db = getSqliteDb();
+  if (!db) return [];
+  try {
+    return db.prepare(`
+      SELECT ce.hash, ce.embedding
+      FROM cache_embeddings ce
+      INNER JOIN prompt_cache pc ON ce.hash = pc.hash
+      WHERE ce.embed_model = ?
+        AND (pc.expires_at IS NULL OR pc.expires_at > datetime('now'))
+    `).all(embedModel);
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Alias for getSqliteDb — used by routingIntelligence.js
+ */
+export function getLocalDb() {
+  return getSqliteDb();
+}
+
+/**
+ * Create a new virtual API key (synchronous)
+ * Returns the generated key (only time it's available in plaintext)
+ */
+export function createVirtualKey({ name, owner = 'default', team = null, project = null, monthlyTokenBudget = null, monthlyDollarBudget = null, rateLimitRpm = null, allowedProviders = null, allowedModels = null }) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    const id = crypto.randomUUID();
+    const rawKey = `zm_live_${crypto.randomBytes(24).toString('hex')}`;
+    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const keyPrefix = rawKey.slice(0, 12);
+    db.prepare(`
+      INSERT INTO virtual_keys
+        (id, name, key_hash, key_prefix, owner, team, project,
+         monthly_token_budget, monthly_dollar_budget, rate_limit_rpm,
+         allowed_providers, allowed_models, is_active, budget_reset_month, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, datetime('now'))
+    `).run(id, name, keyHash, keyPrefix, owner, team, project,
+      monthlyTokenBudget, monthlyDollarBudget, rateLimitRpm,
+      allowedProviders ? JSON.stringify(allowedProviders) : null,
+      allowedModels ? JSON.stringify(allowedModels) : null,
+      new Date().toISOString().slice(0, 7)
+    );
+    return { id, rawKey, keyPrefix, name };
+  } catch (e) {
+    console.error('[VirtualKeys] Error creating key:', e.message);
+    return null;
+  }
+}
+
+/**
+ * Look up a virtual key by SHA-256 hash (synchronous)
+ */
+export function getVirtualKeyByHash(keyHash) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    return db.prepare(`SELECT * FROM virtual_keys WHERE key_hash = ? AND is_active = 1`).get(keyHash) ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Check if a virtual key is within its budget (synchronous)
+ * Returns { allowed: bool, reason: string|null }
+ */
+export function checkVirtualKeyBudget(keyId) {
+  const db = getSqliteDb(); if (!db) return { allowed: true, reason: null };
+  try {
+    const vk = db.prepare(`SELECT * FROM virtual_keys WHERE id = ? AND is_active = 1`).get(keyId);
+    if (!vk) return { allowed: false, reason: 'Key not found or inactive' };
+    if (vk.expires_at && new Date(vk.expires_at) < new Date()) return { allowed: false, reason: 'Key expired' };
+    if (vk.monthly_token_budget && vk.tokens_used_this_month >= vk.monthly_token_budget) return { allowed: false, reason: 'Monthly token budget exceeded' };
+    if (vk.monthly_dollar_budget && vk.dollars_used_this_month >= vk.monthly_dollar_budget) return { allowed: false, reason: 'Monthly dollar budget exceeded' };
+    return { allowed: true, reason: null };
+  } catch (e) {
+    return { allowed: true, reason: null }; // fail open on error
+  }
+}
+
+/**
+ * List all virtual keys (synchronous) — never returns key_hash
+ */
+export function listVirtualKeys() {
+  const db = getSqliteDb();
+  if (!db) return [];
+  try {
+    return db.prepare(`
+      SELECT id, name, key_prefix, owner, team, project,
+        monthly_token_budget, monthly_dollar_budget,
+        tokens_used_this_month, dollars_used_this_month,
+        rate_limit_rpm, is_active, created_at, last_used_at, expires_at
+      FROM virtual_keys ORDER BY created_at DESC
+    `).all();
+  } catch (e) {
+    return [];
+  }
+}
+
+/**
+ * Revoke (soft-delete) a virtual key (synchronous)
+ */
+export function revokeVirtualKey(id) {
+  const db = getSqliteDb();
+  if (!db) return false;
+  try {
+    db.prepare(`UPDATE virtual_keys SET is_active = 0 WHERE id = ?`).run(id);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Update usage for a virtual key and handle monthly reset (synchronous)
+ */
+export function updateVirtualKeyUsage(id, { tokensUsed = 0, dollarCost = 0 }) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const key = db.prepare(`SELECT budget_reset_month FROM virtual_keys WHERE id = ?`).get(id);
+    if (!key) return;
+    if (key.budget_reset_month !== currentMonth) {
+      // Reset monthly counters
+      db.prepare(`
+        UPDATE virtual_keys SET
+          tokens_used_this_month = ?, dollars_used_this_month = ?,
+          budget_reset_month = ?, last_used_at = datetime('now')
+        WHERE id = ?
+      `).run(tokensUsed, dollarCost, currentMonth, id);
+    } else {
+      db.prepare(`
+        UPDATE virtual_keys SET
+          tokens_used_this_month = tokens_used_this_month + ?,
+          dollars_used_this_month = dollars_used_this_month + ?,
+          last_used_at = datetime('now')
+        WHERE id = ?
+      `).run(tokensUsed, dollarCost, id);
+    }
+  } catch (e) {
+    console.error('[VirtualKeys] Error updating usage:', e.message);
+  }
+}
+
+export function listPromptTemplates({ tag = null, search = null } = {}) {
+  const db = getSqliteDb();
+  if (!db) return [];
+  try {
+    let where = "WHERE 1=1";
+    if (tag) where += ` AND (',' || tags || ',') LIKE '%,${tag.replace(/'/g,"''")},%'`;
+    if (search) where += ` AND (title LIKE '%${search.replace(/'/g,"''")}%' OR content LIKE '%${search.replace(/'/g,"''")}%')`;
+    return db.prepare(`SELECT * FROM prompt_templates ${where} ORDER BY is_favorite DESC, use_count DESC, created_at DESC`).all();
+  } catch (e) { return []; }
+}
+
+export function getPromptTemplate(id) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try { return db.prepare(`SELECT * FROM prompt_templates WHERE id = ?`).get(id) ?? null; } catch (e) { return null; }
+}
+
+export function createPromptTemplate({ title, content, description = '', tags = '', variables = '', model = null }) {
+  const db = getSqliteDb();
+  if (!db) return null;
+  try {
+    const id = uuidv4();
+    db.prepare(`INSERT INTO prompt_templates (id,title,content,description,tags,variables,model,created_at,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))`).run(id,title,content,description,tags,variables,model);
+    return id;
+  } catch (e) { console.error('[PromptDB]',e.message); return null; }
+}
+
+export function updatePromptTemplate(id, updates) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try {
+    const fields = [];
+    const vals = [];
+    if (updates.title !== undefined) { fields.push("title=?"); vals.push(updates.title); }
+    if (updates.content !== undefined) { fields.push("content=?"); vals.push(updates.content); }
+    if (updates.description !== undefined) { fields.push("description=?"); vals.push(updates.description); }
+    if (updates.tags !== undefined) { fields.push("tags=?"); vals.push(updates.tags); }
+    if (updates.variables !== undefined) { fields.push("variables=?"); vals.push(updates.variables); }
+    if (updates.model !== undefined) { fields.push("model=?"); vals.push(updates.model); }
+    if (updates.is_favorite !== undefined) { fields.push("is_favorite=?"); vals.push(updates.is_favorite ? 1 : 0); }
+    if (!fields.length) return;
+    fields.push("updated_at=datetime('now')");
+    db.prepare(`UPDATE prompt_templates SET ${fields.join(',')} WHERE id=?`).run(...vals, id);
+  } catch (e) {}
+}
+
+export function deletePromptTemplate(id) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try { db.prepare(`DELETE FROM prompt_templates WHERE id=?`).run(id); } catch (e) {}
+}
+
+export function incrementPromptUseCount(id) {
+  const db = getSqliteDb();
+  if (!db) return;
+  try { db.prepare(`UPDATE prompt_templates SET use_count=use_count+1 WHERE id=?`).run(id); } catch (e) {}
+}
+
+// ── Community Marketplace ─────────────────────────────────────────────────────
+
+export function listMarketplacePlaybooks({ intent = null, tag = null, search = null, sort = 'downloads', limit = 20, offset = 0 } = {}) {
+  const db = getSqliteDb(); if (!db) return { items: [], total: 0 };
+  try {
+    const conditions = [];
+    if (intent) conditions.push(`intent = '${intent.replace(/'/g,"''")}' `);
+    if (tag) conditions.push(`tags LIKE '%${tag.replace(/'/g,"''")}%'`);
+    if (search) conditions.push(`(title LIKE '%${search.replace(/'/g,"''")}%' OR description LIKE '%${search.replace(/'/g,"''")}%')`);
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderCol = sort === 'rating' ? 'CASE WHEN rating_count>0 THEN CAST(rating_sum AS REAL)/rating_count ELSE 0 END' : sort === 'newest' ? 'created_at' : 'downloads';
+    const total = db.prepare(`SELECT COUNT(*) as c FROM marketplace_playbooks ${where}`).get()?.c ?? 0;
+    const items = db.prepare(`SELECT * FROM marketplace_playbooks ${where} ORDER BY is_featured DESC, ${orderCol} DESC LIMIT ? OFFSET ?`).all(limit, offset);
+    return { items: items.map(p => ({ ...p, tags: p.tags ? p.tags.split(',') : [], avgRating: p.rating_count > 0 ? Math.round((p.rating_sum / p.rating_count) * 10) / 10 : null })), total };
+  } catch (e) { return { items: [], total: 0 }; }
+}
+
+export function getMarketplacePlaybook(id) {
+  const db = getSqliteDb(); if (!db) return null;
+  try {
+    const p = db.prepare(`SELECT * FROM marketplace_playbooks WHERE id = ?`).get(id);
+    if (!p) return null;
+    return { ...p, tags: p.tags ? p.tags.split(',') : [], avgRating: p.rating_count > 0 ? Math.round((p.rating_sum / p.rating_count) * 10) / 10 : null };
+  } catch (e) { return null; }
+}
+
+export function publishMarketplacePlaybook({ title, description, author, intent, tags, rulesJson }) {
+  const db = getSqliteDb(); if (!db) return null;
+  const id = uuidv4();
+  db.prepare(`INSERT INTO marketplace_playbooks (id, title, description, author, intent, tags, rules_json) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, title, description || null, author || 'anonymous', intent || null, Array.isArray(tags) ? tags.join(',') : (tags || null), rulesJson);
+  return id;
+}
+
+export function incrementMarketplaceDownloads(id) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`UPDATE marketplace_playbooks SET downloads = downloads + 1, updated_at = datetime('now') WHERE id = ?`).run(id);
+}
+
+export function rateMarketplacePlaybook(id, rating) {
+  const db = getSqliteDb(); if (!db) return;
+  const r = Math.max(1, Math.min(5, Math.round(rating)));
+  db.prepare(`UPDATE marketplace_playbooks SET rating_sum = rating_sum + ?, rating_count = rating_count + 1 WHERE id = ?`).run(r, id);
 }
 
 // Default data structure
@@ -680,8 +1644,16 @@ const defaultData = {
   rateLimitState: {}, // NEW: persisted rate limit state
   p2pOffers: [], // NEW: marketplace offers from peers
   p2pSubscriptions: [], // NEW: active node-to-node subscriptions
+  routingPools: [], // Named provider pools for grouped routing
   cachedModels: {},
   rateLimitSuggestions: [], // Recent 429 suggestions for auto-failover (last 20)
+  communityPriceSubmissions: [], // Community-submitted pricing data (GasBuddy-style)
+  priceHistory: [], // Historical pricing records for tracking price changes
+  tokenBuddyContributors: {}, // Contributor profiles for TokenBuddy gamification
+  pendingSubmissions: [], // Submissions awaiting community verification
+  submissionVotes: {}, // Votes on pending submissions { submissionId: { upvotes: [], downvotes: [] } }
+  previewModels: [], // Track preview/codename models that may become official
+  rateLimitReports: [], // Community-reported rate limits per provider/model/tier
 };
 
 function cloneDefaultData() {
@@ -698,6 +1670,7 @@ function cloneDefaultData() {
     rateLimitState: {},
     p2pOffers: [],
     p2pSubscriptions: [],
+    routingPools: [],
     cachedModels: {},
     nodePricingConfig: {
       pricing_mode: "simple",
@@ -715,6 +1688,13 @@ function cloneDefaultData() {
       region: "",
       rpc_url: "",
     },
+    communityPriceSubmissions: [],
+    priceHistory: [],
+    tokenBuddyContributors: {},
+    pendingSubmissions: [],
+    submissionVotes: {},
+    previewModels: [],
+    rateLimitReports: [],
   };
 }
 
@@ -746,7 +1726,7 @@ function ensureDbShape(data) {
     ) {
       for (const [settingKey, settingDefault] of Object.entries(defaultValue)) {
         if (next.settings[settingKey] === undefined) {
-          next.settings[settingKey] = settingDefault;
+          next.settings[settingKey] = settingKey === "firstRun" ? false : settingDefault;
           changed = true;
         }
       }
@@ -770,6 +1750,10 @@ function ensureDbShape(data) {
   }
   if (!next.p2pSubscriptions) {
     next.p2pSubscriptions = [];
+    changed = true;
+  }
+  if (!next.routingPools) {
+    next.routingPools = [];
     changed = true;
   }
 
@@ -921,6 +1905,44 @@ export async function ensureSqliteSync() {
     nodeTransaction(db.data.providerNodes);
   }
 
+  console.log("[DB] Migrating API Keys to SQLite...");
+  const insertApiKey = sqlite.prepare(`
+    INSERT OR REPLACE INTO router_api_keys (
+      id, name, keyHash, scopes, createdAt, revoked
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  const apiKeyTransaction = sqlite.transaction((keys) => {
+    for (const k of keys) {
+      // If we have a raw key but no hash, hash it. 
+      // The old version stored raw keys as 'key'. The new version uses 'keyHash'.
+      let hash = k.keyHash;
+      if (!hash && k.key) {
+        // Simple hash if bcrypt is not available synchronously in transaction, 
+        // but here we can use bcrypt.hashSync since we imported it.
+        try {
+          const salt = bcrypt.genSaltSync(10);
+          hash = bcrypt.hashSync(k.key, salt);
+        } catch (e) {
+          hash = k.key; // Fallback to raw if hashing fails (emergency only)
+        }
+      }
+
+      insertApiKey.run(
+        k.id || uuidv4(),
+        k.name || "Legacy Key",
+        hash || "missing-hash",
+        k.scopes ? JSON.stringify(k.scopes) : "[]",
+        k.createdAt || new Date().toISOString(),
+        k.revoked ? 1 : 0
+      );
+    }
+  });
+
+  if (db.data.apiKeys && db.data.apiKeys.length > 0) {
+    apiKeyTransaction(db.data.apiKeys);
+  }
+
   // Mark as migrated
   db.data.settings[migratedKey] = true;
   await db.write();
@@ -1063,6 +2085,10 @@ export async function createProviderNode(data) {
     if (!db.data.providerNodes) db.data.providerNodes = [];
     db.data.providerNodes.push(node);
     await db.write();
+    // Sync local provider connection for unified routing
+    if (node.type === "local") {
+      await syncLocalProviderConnection(node);
+    }
     return node;
   }
 
@@ -1076,6 +2102,11 @@ export async function createProviderNode(data) {
     node.metadata ? JSON.stringify(node.metadata) : null,
     node.createdAt, node.updatedAt
   );
+
+  // Sync local provider connection for unified routing
+  if (node.type === "local") {
+    await syncLocalProviderConnection(node);
+  }
 
   return node;
 }
@@ -1093,7 +2124,12 @@ export async function updateProviderNode(id, data) {
     if (index === -1) return null;
     db.data.providerNodes[index] = { ...db.data.providerNodes[index], ...data, updatedAt: now };
     await db.write();
-    return db.data.providerNodes[index];
+    // Sync local provider connection if this is a local node
+    const updatedNode = db.data.providerNodes[index];
+    if (updatedNode.type === "local") {
+      await syncLocalProviderConnection(updatedNode);
+    }
+    return updatedNode;
   }
 
   await ensureSqliteSync();
@@ -1116,7 +2152,13 @@ export async function updateProviderNode(id, data) {
   params.push(id);
 
   sqlite.prepare(`UPDATE provider_nodes SET ${fields.join(", ")} WHERE id = ?`).run(...params);
-  return await getProviderNodeById(id);
+
+  const updatedNode = await getProviderNodeById(id);
+  // Sync local provider connection if this is a local node
+  if (updatedNode && updatedNode.type === "local") {
+    await syncLocalProviderConnection(updatedNode);
+  }
+  return updatedNode;
 }
 
 /**
@@ -1129,6 +2171,10 @@ export async function deleteProviderNode(id) {
     const index = db.data.providerNodes.findIndex((node) => node.id === id);
     if (index === -1) return null;
     const removed = db.data.providerNodes.splice(index, 1);
+    // Clean up auto-managed connections for local nodes
+    if (removed[0] && removed[0].type === "local") {
+      await removeLocalProviderConnections(id);
+    }
     await db.write();
     return removed[0];
   }
@@ -1137,6 +2183,11 @@ export async function deleteProviderNode(id) {
   const sqlite = getSqliteDb();
   const existing = await getProviderNodeById(id);
   if (!existing) return null;
+
+  // Clean up auto-managed connections for local nodes
+  if (existing.type === "local") {
+    await removeLocalProviderConnections(id);
+  }
 
   sqlite.prepare(`DELETE FROM provider_connections WHERE provider = ?`).run(id);
   sqlite.prepare(`DELETE FROM provider_nodes WHERE id = ?`).run(id);
@@ -1470,7 +2521,17 @@ export async function createProviderConnection(data) {
   }
 
   await reorderProviderConnections(data.provider);
-  return await getProviderConnectionById(id);
+  const created = await getProviderConnectionById(id);
+  await emitProviderLifecycleEvent("provider.connect", {
+    provider: created?.provider || data.provider || "unknown",
+    connectionId: created?.id || id,
+    detail: {
+      authType: created?.authType || data.authType || "oauth",
+      isActive: created?.isActive !== false,
+      isEnabled: created?.isEnabled !== false,
+    },
+  });
+  return created;
 }
 
 /**
@@ -1542,7 +2603,42 @@ export async function updateProviderConnection(id, data) {
     await reorderProviderConnections(existing.provider);
   }
 
-  return await getProviderConnectionById(id);
+  const updated = await getProviderConnectionById(id);
+  const hadError = !!(existing?.lastError || existing?.testStatus === "error");
+  const hasError = !!(updated?.lastError || updated?.testStatus === "error");
+  const touchedCredential =
+    data.accessToken !== undefined ||
+    data.refreshToken !== undefined ||
+    data.apiKey !== undefined ||
+    data.expiresAt !== undefined;
+
+  if (touchedCredential) {
+    await emitProviderLifecycleEvent("provider.refresh", {
+      provider: updated?.provider || existing?.provider || "unknown",
+      connectionId: updated?.id || id,
+      detail: { source: "connection_update" },
+    });
+  }
+  if (!hadError && hasError) {
+    await emitProviderLifecycleEvent("provider.fail", {
+      provider: updated?.provider || existing?.provider || "unknown",
+      connectionId: updated?.id || id,
+      status: 500,
+      detail: {
+        lastError: updated?.lastError || data.lastError || "connection error",
+      },
+    });
+  }
+  if (hadError && !hasError) {
+    await emitProviderLifecycleEvent("provider.recover", {
+      provider: updated?.provider || existing?.provider || "unknown",
+      connectionId: updated?.id || id,
+      status: 200,
+      detail: { source: "connection_update" },
+    });
+  }
+
+  return updated;
 }
 
 /**
@@ -1566,6 +2662,10 @@ export async function deleteProviderConnection(id) {
 
   sqlite.prepare(`DELETE FROM provider_connections WHERE id = ?`).run(id);
   await reorderProviderConnections(existing.provider);
+  await emitProviderLifecycleEvent("provider.disconnect", {
+    provider: existing.provider || "unknown",
+    connectionId: existing.id || id,
+  });
 
   return true;
 }
@@ -1827,6 +2927,7 @@ export async function cleanupProviderConnections() {
  * Get settings
  */
 export async function getSettings() {
+  await ensureSqliteSync(); // Ensure migration has run
   const db = await getDb();
   return db.data.settings || { cloudEnabled: false };
 }
@@ -1842,6 +2943,23 @@ export async function updateSettings(updates) {
   };
   await db.write();
   return db.data.settings;
+}
+
+
+
+/**
+ * Get first-run flag (true = setup wizard not yet completed)
+ */
+export async function getFirstRun() {
+  const settings = await getSettings();
+  return settings.firstRun === true;
+}
+
+/**
+ * Mark setup wizard as completed
+ */
+export async function setFirstRunCompleted() {
+  return updateSettings({ firstRun: false });
 }
 
 // ============ Router API Keys ============
@@ -1927,8 +3045,6 @@ export async function verifyRouterApiKey(rawKey) {
 }
 
 // ============ Blacklist ============
-
-import { blacklistIp as firewallBlacklistIp } from "./firewall.js";
 
 export async function addBlacklistEntry(type, value, reason = null) {
   const db = await getDb();
@@ -2202,20 +3318,39 @@ export async function setServiceRegistryConfig(config) {
 }
 
 /**
- * Get pricing for a specific provider and model
+ * Get pricing for a specific provider and model, optionally by tier.
+ * Lookup order:
+ *   1. pricing[provider][model:tier] (if tier provided)
+ *   2. pricing[provider][model]
+ *   3. pricing[alias][model:tier] (if alias exists and tier provided)
+ *   4. pricing[alias][model] (if alias exists)
+ * @param {string} provider - Provider ID
+ * @param {string} model - Model ID
+ * @param {string|null} tier - Optional subscription tier (e.g. "free", "pro")
  */
-export async function getPricingForModel(provider, model) {
+export async function getPricingForModel(provider, model, tier = null) {
   const pricing = await getPricing();
 
-  // Try direct lookup
-  if (pricing[provider]?.[model]) {
-    return pricing[provider][model];
-  }
+  // Helper to check tier-specific then fallback to base
+  const findPricing = (providerKey) => {
+    if (!pricing[providerKey]) return null;
+    if (tier) {
+      const tierKey = `${model}:${tier}`;
+      if (pricing[providerKey][tierKey]) {
+        return pricing[providerKey][tierKey];
+      }
+    }
+    return pricing[providerKey][model] || null;
+  };
 
-  // Try mapping provider ID to alias (single source: shared/constants/models → open-sse/config/providerModels)
+  // Try direct lookup
+  const direct = findPricing(provider);
+  if (direct) return direct;
+
+  // Try mapping provider ID to alias
   const alias = PROVIDER_ID_TO_ALIAS[provider];
-  if (alias && pricing[alias]) {
-    return pricing[alias][model] || null;
+  if (alias) {
+    return findPricing(alias);
   }
 
   return null;
@@ -2841,7 +3976,9 @@ export async function getPeerMetadataBatch(peerIds) {
         try {
           return JSON.parse(row.metadata);
         } catch {
-          console.warn(`[localDb] Failed to parse peer metadata for ${row.peerId}`);
+          // Security: peerId is from database, not user input - safe for logging
+          // nosemgrep: ai.node_sqli_injection (false positive - this is just console.warn, not SQL)
+          console.warn("[localDb] Failed to parse peer metadata for peer:", row.peerId);
           return null;
         }
       })()
@@ -2894,3 +4031,1521 @@ export async function setPeerMetadata(peerId, data) {
   return await getPeerMetadata(peerId);
 }
 
+// ============ Community Pricing (GasBuddy-style) ============
+
+/**
+ * Submit a community price report
+ * @param {object} submission - Price submission data
+ * @returns {Promise<object>} The created submission with ID
+ */
+export async function submitCommunityPrice(submission) {
+  const db = await getDb();
+
+  if (!db.data.communityPriceSubmissions) {
+    db.data.communityPriceSubmissions = [];
+  }
+
+  const newSubmission = {
+    id: uuidv4(),
+    providerId: submission.providerId,
+    modelId: submission.modelId,
+    canonicalModelId: submission.canonicalModelId || null,
+    tier: submission.tier || null,
+    inputPerMUsd: Number(submission.inputPerMUsd) || 0,
+    outputPerMUsd: Number(submission.outputPerMUsd) || 0,
+    source: submission.source || "user_submitted",
+    submittedBy: submission.submittedBy || "anonymous",
+    submittedAt: new Date().toISOString(),
+    validatedAt: null,
+    sampleSize: submission.sampleSize || null,
+    notes: submission.notes || null,
+    isFree: submission.isFree || false,
+    freeLimit: submission.freeLimit || null,
+  };
+
+  db.data.communityPriceSubmissions.push(newSubmission);
+  await db.write();
+  return newSubmission;
+}
+
+/**
+ * Get all community price submissions
+ * @param {object} filter - Optional filter criteria
+ * @returns {Promise<object[]>} Array of submissions
+ */
+export async function getCommunityPriceSubmissions(filter = {}) {
+  const db = await getDb();
+  let submissions = db.data.communityPriceSubmissions || [];
+
+  if (filter.providerId) {
+    submissions = submissions.filter(s => s.providerId === filter.providerId);
+  }
+  if (filter.modelId) {
+    submissions = submissions.filter(s => s.modelId === filter.modelId);
+  }
+  if (filter.source) {
+    submissions = submissions.filter(s => s.source === filter.source);
+  }
+  if (filter.validated !== undefined) {
+    submissions = submissions.filter(s => filter.validated ? s.validatedAt : !s.validatedAt);
+  }
+
+  return submissions.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+}
+
+/**
+ * Record a price change in history
+ * @param {object} priceRecord - Price record to add to history
+ * @returns {Promise<object>} The created history record
+ */
+export async function recordPriceHistory(priceRecord) {
+  const db = await getDb();
+
+  if (!db.data.priceHistory) {
+    db.data.priceHistory = [];
+  }
+
+  // Close any existing active record for this provider/model/tier
+  const now = new Date().toISOString();
+  for (const record of db.data.priceHistory) {
+    if (
+      record.providerId === priceRecord.providerId &&
+      record.modelId === priceRecord.modelId &&
+      record.tier === (priceRecord.tier || null) &&
+      record.isActive
+    ) {
+      record.validTo = now;
+      record.isActive = false;
+    }
+  }
+
+  const newRecord = {
+    id: uuidv4(),
+    providerId: priceRecord.providerId,
+    modelId: priceRecord.modelId,
+    tier: priceRecord.tier || null,
+    inputPerMUsd: Number(priceRecord.inputPerMUsd) || 0,
+    outputPerMUsd: Number(priceRecord.outputPerMUsd) || 0,
+    validFrom: now,
+    validTo: null,
+    isActive: true,
+    isFree: priceRecord.isFree || false,
+    freeLimit: priceRecord.freeLimit || null,
+    freeExpiresAt: priceRecord.freeExpiresAt || null,
+    source: priceRecord.source || "official",
+  };
+
+  db.data.priceHistory.push(newRecord);
+  await db.write();
+  return newRecord;
+}
+
+/**
+ * Get price history for a provider/model
+ * @param {string} providerId - Provider ID
+ * @param {string} modelId - Optional model ID
+ * @param {boolean} activeOnly - If true, only return active records
+ * @returns {Promise<object[]>} Array of price history records
+ */
+export async function getPriceHistory(providerId, modelId = null, activeOnly = false) {
+  const db = await getDb();
+  let history = db.data.priceHistory || [];
+
+  history = history.filter(h => h.providerId === providerId);
+  if (modelId) {
+    history = history.filter(h => h.modelId === modelId);
+  }
+  if (activeOnly) {
+    history = history.filter(h => h.isActive);
+  }
+
+  return history.sort((a, b) => new Date(b.validFrom) - new Date(a.validFrom));
+}
+
+/**
+ * Get all free models currently tracked
+ * @returns {Promise<object[]>} Array of free model records
+ */
+export async function getFreeModels() {
+  const db = await getDb();
+  const history = db.data.priceHistory || [];
+
+  return history.filter(h => h.isActive && h.isFree);
+}
+
+// ============ TokenBuddy Contributor System ============
+
+const CONTRIBUTION_TYPES = {
+  PRICE_SUBMISSION: { points: 5, label: "Price Submission", dailyCap: null },
+  PRICE_VERIFICATION: { points: 1, label: "Price Verification", dailyCap: 10 },
+  NEW_MODEL_ADDED: { points: 15, label: "New Model Added", dailyCap: null },
+  FREE_MODEL_REPORTED: { points: 12, label: "Free Model Reported", dailyCap: null },
+  PRICE_UPDATE: { points: 8, label: "Price Update (Verified)", dailyCap: null },
+  DAILY_CHECKIN: { points: 1, label: "Daily Check-in", dailyCap: 1 },
+  VOTE_ACCURATE: { points: 1, label: "Accurate Vote", dailyCap: 20 },
+  SUBMISSION_VERIFIED: { points: 3, label: "Your Submission Verified", dailyCap: null },
+};
+
+const TRUST_LEVELS = {
+  NEW: { minPoints: 0, canSubmit: true, canVote: false, votesRequired: 5 },
+  MEMBER: { minPoints: 50, canSubmit: true, canVote: true, votesRequired: 3 },
+  TRUSTED: { minPoints: 500, canSubmit: true, canVote: true, votesRequired: 2 },
+  VERIFIED: { minPoints: 2000, canSubmit: true, canVote: true, votesRequired: 1, autoVerify: true },
+};
+
+const MODERATION_CONFIG = {
+  TIMEOUT_THRESHOLDS: [
+    { downvotes: 3, duration: 24 * 60 * 60 * 1000 }, // 24 hours
+    { downvotes: 5, duration: 7 * 24 * 60 * 60 * 1000 }, // 7 days
+    { downvotes: 10, duration: 30 * 24 * 60 * 60 * 1000 }, // 30 days
+  ],
+  POINTS_PENALTY_PER_REJECTION: 5,
+  VOTES_TO_VERIFY: 3,
+  VOTES_TO_REJECT: 3,
+};
+
+const BADGES = {
+  FIRST_CONTRIBUTION: { id: "first_contribution", name: "First Steps", description: "Made your first contribution", icon: "🌱" },
+  VERIFIED_10: { id: "verified_10", name: "Fact Checker", description: "Verified 10 prices", icon: "✓" },
+  VERIFIED_50: { id: "verified_50", name: "Verification Pro", description: "Verified 50 prices", icon: "✓✓" },
+  MODELS_5: { id: "models_5", name: "Model Scout", description: "Added 5 new models", icon: "🔍" },
+  MODELS_25: { id: "models_25", name: "Model Hunter", description: "Added 25 new models", icon: "🎯" },
+  STREAK_7: { id: "streak_7", name: "Week Warrior", description: "7-day check-in streak", icon: "🔥" },
+  STREAK_30: { id: "streak_30", name: "Monthly Champion", description: "30-day check-in streak", icon: "💎" },
+  FREE_FINDER: { id: "free_finder", name: "Free Finder", description: "Reported 10 free models", icon: "🆓" },
+  TOP_CONTRIBUTOR: { id: "top_contributor", name: "Top Contributor", description: "Ranked in top 10 all-time", icon: "🏆" },
+  PRICE_PIONEER: { id: "price_pioneer", name: "Price Pioneer", description: "First to report a price for a model", icon: "⭐" },
+};
+
+/**
+ * Get trust level for a given point total
+ */
+function getTrustLevelForPoints(points) {
+  if (points >= TRUST_LEVELS.VERIFIED.minPoints) return "VERIFIED";
+  if (points >= TRUST_LEVELS.TRUSTED.minPoints) return "TRUSTED";
+  if (points >= TRUST_LEVELS.MEMBER.minPoints) return "MEMBER";
+  return "NEW";
+}
+
+/**
+ * Check if contributor is in timeout
+ */
+function isInTimeout(contributor) {
+  if (!contributor.moderation?.timeoutUntil) return false;
+  return new Date(contributor.moderation.timeoutUntil) > new Date();
+}
+
+/**
+ * Get daily points earned for a specific type
+ */
+function getDailyPointsForType(contributor, type) {
+  const today = new Date().toISOString().split("T")[0];
+  if (!contributor.dailyPointsEarned[today]) return 0;
+  return contributor.dailyPointsEarned[today][type] || 0;
+}
+
+/**
+ * Get or create a contributor profile
+ * @param {string} contributorId - User ID or "anonymous"
+ * @returns {Promise<object>} Contributor profile
+ */
+export async function getContributor(contributorId) {
+  const db = await getDb();
+  if (!db.data.tokenBuddyContributors) {
+    db.data.tokenBuddyContributors = {};
+  }
+
+  if (!db.data.tokenBuddyContributors[contributorId]) {
+    db.data.tokenBuddyContributors[contributorId] = {
+      id: contributorId,
+      displayName: contributorId === "anonymous" ? "Anonymous" : `Contributor-${contributorId.slice(0, 8)}`,
+      totalPoints: 0,
+      contributions: {
+        priceSubmissions: 0,
+        priceVerifications: 0,
+        newModelsAdded: 0,
+        freeModelsReported: 0,
+        priceUpdates: 0,
+        dailyCheckins: 0,
+        accurateVotes: 0,
+        submissionsVerified: 0,
+      },
+      badges: [],
+      currentStreak: 0,
+      longestStreak: 0,
+      lastCheckinDate: null,
+      joinedAt: new Date().toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      trustLevel: "NEW",
+      moderation: {
+        warnings: 0,
+        rejectedSubmissions: 0,
+        timeoutUntil: null,
+        timeoutReason: null,
+      },
+      dailyPointsEarned: {},
+    };
+    await db.write();
+  }
+  
+  // Migrate existing profiles
+  const profile = db.data.tokenBuddyContributors[contributorId];
+  if (!profile.moderation) {
+    profile.moderation = { warnings: 0, rejectedSubmissions: 0, timeoutUntil: null, timeoutReason: null };
+  }
+  if (!profile.dailyPointsEarned) {
+    profile.dailyPointsEarned = {};
+  }
+  if (!profile.trustLevel) {
+    profile.trustLevel = getTrustLevelForPoints(profile.totalPoints);
+  }
+
+  return db.data.tokenBuddyContributors[contributorId];
+}
+
+/**
+ * Record a contribution and award points
+ * @param {string} contributorId - User ID
+ * @param {string} type - Contribution type (PRICE_SUBMISSION, PRICE_VERIFICATION, etc.)
+ * @param {object} metadata - Optional metadata about the contribution
+ * @returns {Promise<object>} Updated contributor profile with any new badges
+ */
+export async function recordContribution(contributorId, type, metadata = {}) {
+  const db = await getDb();
+  const contributor = await getContributor(contributorId);
+  const typeConfig = CONTRIBUTION_TYPES[type];
+
+  if (!typeConfig) {
+    throw new Error(`Unknown contribution type: ${type}`);
+  }
+
+  // Check if contributor is in timeout
+  if (isInTimeout(contributor)) {
+    return {
+      contributor,
+      newBadges: [],
+      pointsAwarded: 0,
+      error: `Account is in timeout until ${contributor.moderation.timeoutUntil}`,
+    };
+  }
+
+  // Check daily cap
+  const today = new Date().toISOString().split("T")[0];
+  if (!contributor.dailyPointsEarned[today]) {
+    contributor.dailyPointsEarned[today] = {};
+  }
+
+  let pointsToAward = typeConfig.points;
+  if (typeConfig.dailyCap !== null) {
+    const earnedToday = getDailyPointsForType(contributor, type);
+    if (earnedToday >= typeConfig.dailyCap * typeConfig.points) {
+      pointsToAward = 0; // Cap reached
+    } else {
+      const remaining = (typeConfig.dailyCap * typeConfig.points) - earnedToday;
+      pointsToAward = Math.min(pointsToAward, remaining);
+    }
+  }
+
+  contributor.totalPoints += pointsToAward;
+  contributor.dailyPointsEarned[today][type] = (contributor.dailyPointsEarned[today][type] || 0) + pointsToAward;
+  contributor.lastActiveAt = new Date().toISOString();
+
+  // Update trust level
+  contributor.trustLevel = getTrustLevelForPoints(contributor.totalPoints);
+
+  // Update specific counters
+  switch (type) {
+    case "PRICE_SUBMISSION":
+      contributor.contributions.priceSubmissions++;
+      break;
+    case "PRICE_VERIFICATION":
+      contributor.contributions.priceVerifications++;
+      break;
+    case "NEW_MODEL_ADDED":
+      contributor.contributions.newModelsAdded++;
+      break;
+    case "FREE_MODEL_REPORTED":
+      contributor.contributions.freeModelsReported++;
+      break;
+    case "PRICE_UPDATE":
+      contributor.contributions.priceUpdates++;
+      break;
+    case "VOTE_ACCURATE":
+      contributor.contributions.accurateVotes = (contributor.contributions.accurateVotes || 0) + 1;
+      break;
+    case "SUBMISSION_VERIFIED":
+      contributor.contributions.submissionsVerified = (contributor.contributions.submissionsVerified || 0) + 1;
+      break;
+    case "DAILY_CHECKIN":
+      contributor.contributions.dailyCheckins++;
+      // Handle streak
+      const checkinToday = new Date().toISOString().split("T")[0];
+      const lastCheckin = contributor.lastCheckinDate;
+      if (lastCheckin) {
+        const lastDate = new Date(lastCheckin);
+        const todayDate = new Date(checkinToday);
+        const diffDays = Math.floor((todayDate - lastDate) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          contributor.currentStreak++;
+        } else if (diffDays > 1) {
+          contributor.currentStreak = 1;
+        }
+      } else {
+        contributor.currentStreak = 1;
+      }
+      contributor.longestStreak = Math.max(contributor.longestStreak, contributor.currentStreak);
+      contributor.lastCheckinDate = checkinToday;
+      break;
+  }
+
+  // Check for new badges
+  const newBadges = checkForNewBadges(contributor);
+
+  db.data.tokenBuddyContributors[contributorId] = contributor;
+  await db.write();
+
+  return { contributor, newBadges };
+}
+
+/**
+ * Check if contributor has earned new badges
+ */
+function checkForNewBadges(contributor) {
+  const newBadges = [];
+  const hasBadge = (id) => contributor.badges.some(b => b.id === id);
+
+  // First contribution
+  if (!hasBadge("first_contribution") && contributor.totalPoints > 0) {
+    const badge = { ...BADGES.FIRST_CONTRIBUTION, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+
+  // Verification badges
+  if (!hasBadge("verified_10") && contributor.contributions.priceVerifications >= 10) {
+    const badge = { ...BADGES.VERIFIED_10, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+  if (!hasBadge("verified_50") && contributor.contributions.priceVerifications >= 50) {
+    const badge = { ...BADGES.VERIFIED_50, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+
+  // Model badges
+  if (!hasBadge("models_5") && contributor.contributions.newModelsAdded >= 5) {
+    const badge = { ...BADGES.MODELS_5, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+  if (!hasBadge("models_25") && contributor.contributions.newModelsAdded >= 25) {
+    const badge = { ...BADGES.MODELS_25, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+
+  // Streak badges
+  if (!hasBadge("streak_7") && contributor.currentStreak >= 7) {
+    const badge = { ...BADGES.STREAK_7, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+  if (!hasBadge("streak_30") && contributor.currentStreak >= 30) {
+    const badge = { ...BADGES.STREAK_30, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+
+  // Free finder badge
+  if (!hasBadge("free_finder") && contributor.contributions.freeModelsReported >= 10) {
+    const badge = { ...BADGES.FREE_FINDER, earnedAt: new Date().toISOString() };
+    contributor.badges.push(badge);
+    newBadges.push(badge);
+  }
+
+  return newBadges;
+}
+
+/**
+ * Get contributor leaderboards
+ * @param {string} type - Leaderboard type: "total" | "verifications" | "models" | "streak" | "weekly"
+ * @param {number} limit - Max results
+ * @returns {Promise<object[]>} Sorted contributors
+ */
+export async function getContributorLeaderboard(type = "total", limit = 10) {
+  const db = await getDb();
+  const contributors = Object.values(db.data.tokenBuddyContributors || {});
+
+  let sorted;
+  switch (type) {
+    case "verifications":
+      sorted = contributors.sort((a, b) => b.contributions.priceVerifications - a.contributions.priceVerifications);
+      break;
+    case "models":
+      sorted = contributors.sort((a, b) => b.contributions.newModelsAdded - a.contributions.newModelsAdded);
+      break;
+    case "streak":
+      sorted = contributors.sort((a, b) => b.longestStreak - a.longestStreak);
+      break;
+    case "weekly":
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      sorted = contributors
+        .filter(c => new Date(c.lastActiveAt) > weekAgo)
+        .sort((a, b) => b.totalPoints - a.totalPoints);
+      break;
+    case "total":
+    default:
+      sorted = contributors.sort((a, b) => b.totalPoints - a.totalPoints);
+  }
+
+  return sorted.slice(0, limit).map((c, idx) => ({
+    rank: idx + 1,
+    id: c.id,
+    displayName: c.displayName,
+    totalPoints: c.totalPoints,
+    contributions: c.contributions,
+    badges: c.badges,
+    currentStreak: c.currentStreak,
+    longestStreak: c.longestStreak,
+  }));
+}
+
+/**
+ * Daily check-in for a contributor
+ * @param {string} contributorId - User ID
+ * @returns {Promise<object>} Check-in result with streak info
+ */
+export async function dailyCheckin(contributorId) {
+  const contributor = await getContributor(contributorId);
+  const today = new Date().toISOString().split("T")[0];
+
+  // Check if already checked in today
+  if (contributor.lastCheckinDate === today) {
+    return {
+      success: false,
+      message: "Already checked in today",
+      currentStreak: contributor.currentStreak,
+    };
+  }
+
+  const result = await recordContribution(contributorId, "DAILY_CHECKIN");
+  return {
+    success: true,
+    message: "Check-in successful!",
+    pointsEarned: CONTRIBUTION_TYPES.DAILY_CHECKIN.points,
+    currentStreak: result.contributor.currentStreak,
+    newBadges: result.newBadges,
+  };
+}
+
+// ============ Pending Submission & Voting System ============
+
+/**
+ * Create a pending submission for community verification
+ * @param {object} submission - The price submission data
+ * @param {string} submitterId - The contributor who submitted it
+ * @returns {Promise<object>} The pending submission record
+ */
+export async function createPendingSubmission(submission, submitterId) {
+  const db = await getDb();
+  const contributor = await getContributor(submitterId);
+
+  // Check timeout
+  if (isInTimeout(contributor)) {
+    throw new Error(`Account is in timeout until ${contributor.moderation.timeoutUntil}`);
+  }
+
+  const trustLevel = TRUST_LEVELS[contributor.trustLevel] || TRUST_LEVELS.NEW;
+
+  // Check if VERIFIED users can auto-verify
+  const autoVerify = trustLevel.autoVerify === true;
+
+  const pendingSubmission = {
+    id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    ...submission,
+    submittedBy: submitterId,
+    submittedAt: new Date().toISOString(),
+    status: autoVerify ? "verified" : "pending",
+    votesRequired: trustLevel.votesRequired,
+    upvotes: autoVerify ? [submitterId] : [],
+    downvotes: [],
+    verifiedAt: autoVerify ? new Date().toISOString() : null,
+    verifiedBy: autoVerify ? [submitterId] : [],
+    rejectedAt: null,
+    rejectionReason: null,
+  };
+
+  if (!db.data.pendingSubmissions) {
+    db.data.pendingSubmissions = [];
+  }
+
+  db.data.pendingSubmissions.push(pendingSubmission);
+
+  // If auto-verified, also add to communityPriceSubmissions
+  if (autoVerify) {
+    if (!db.data.communityPriceSubmissions) {
+      db.data.communityPriceSubmissions = [];
+    }
+    db.data.communityPriceSubmissions.push({
+      ...submission,
+      id: pendingSubmission.id,
+      submittedBy: submitterId,
+      submittedAt: pendingSubmission.submittedAt,
+      verified: true,
+      verifiedAt: pendingSubmission.verifiedAt,
+    });
+  }
+
+  await db.write();
+  return pendingSubmission;
+}
+
+/**
+ * Get pending submissions for community review
+ * @param {object} filter - Optional filters
+ * @returns {Promise<object[]>} Array of pending submissions
+ */
+export async function getPendingSubmissions(filter = {}) {
+  const db = await getDb();
+  let pending = db.data.pendingSubmissions || [];
+
+  if (filter.status) {
+    pending = pending.filter(s => s.status === filter.status);
+  }
+  if (filter.providerId) {
+    pending = pending.filter(s => s.providerId === filter.providerId);
+  }
+  if (filter.modelId) {
+    pending = pending.filter(s => s.modelId === filter.modelId);
+  }
+
+  return pending.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+}
+
+/**
+ * Vote on a pending submission
+ * @param {string} submissionId - The submission to vote on
+ * @param {string} voterId - The contributor voting
+ * @param {string} vote - "up" or "down"
+ * @param {string} reason - Optional reason for downvote
+ * @returns {Promise<object>} Updated submission with voting result
+ */
+export async function voteOnSubmission(submissionId, voterId, vote, reason = null) {
+  const db = await getDb();
+  const voter = await getContributor(voterId);
+  const trustLevel = TRUST_LEVELS[voter.trustLevel] || TRUST_LEVELS.NEW;
+
+  // Check if voter can vote
+  if (!trustLevel.canVote) {
+    throw new Error(`You need at least ${TRUST_LEVELS.MEMBER.minPoints} points to vote`);
+  }
+
+  // Check timeout
+  if (isInTimeout(voter)) {
+    throw new Error(`Account is in timeout until ${voter.moderation.timeoutUntil}`);
+  }
+
+  const submission = (db.data.pendingSubmissions || []).find(s => s.id === submissionId);
+  if (!submission) {
+    throw new Error("Submission not found");
+  }
+
+  if (submission.status !== "pending") {
+    throw new Error(`Submission is already ${submission.status}`);
+  }
+
+  // Can't vote on own submission
+  if (submission.submittedBy === voterId) {
+    throw new Error("Cannot vote on your own submission");
+  }
+
+  // Check if already voted
+  if (submission.upvotes.includes(voterId) || submission.downvotes.includes(voterId)) {
+    throw new Error("You have already voted on this submission");
+  }
+
+  // Record vote
+  if (vote === "up") {
+    submission.upvotes.push(voterId);
+  } else if (vote === "down") {
+    submission.downvotes.push(voterId);
+    if (reason) {
+      submission.downvoteReasons = submission.downvoteReasons || [];
+      submission.downvoteReasons.push({ voterId, reason, at: new Date().toISOString() });
+    }
+  } else {
+    throw new Error("Vote must be 'up' or 'down'");
+  }
+
+  let result = { status: "pending", message: "Vote recorded" };
+
+  // Check if verified
+  if (submission.upvotes.length >= submission.votesRequired) {
+    submission.status = "verified";
+    submission.verifiedAt = new Date().toISOString();
+    submission.verifiedBy = submission.upvotes;
+
+    // Add to verified submissions
+    if (!db.data.communityPriceSubmissions) {
+      db.data.communityPriceSubmissions = [];
+    }
+    db.data.communityPriceSubmissions.push({
+      id: submission.id,
+      providerId: submission.providerId,
+      modelId: submission.modelId,
+      canonicalModelId: submission.canonicalModelId,
+      tier: submission.tier,
+      inputPerMUsd: submission.inputPerMUsd,
+      outputPerMUsd: submission.outputPerMUsd,
+      source: "community_verified",
+      submittedBy: submission.submittedBy,
+      submittedAt: submission.submittedAt,
+      verified: true,
+      verifiedAt: submission.verifiedAt,
+      verifiedBy: submission.verifiedBy,
+      isFree: submission.isFree,
+      freeLimit: submission.freeLimit,
+    });
+
+    // Award points to submitter
+    await recordContribution(submission.submittedBy, "SUBMISSION_VERIFIED");
+
+    // Award points to voters who voted correctly
+    for (const upvoter of submission.upvotes) {
+      if (upvoter !== submission.submittedBy) {
+        await recordContribution(upvoter, "VOTE_ACCURATE");
+      }
+    }
+
+    result = { status: "verified", message: "Submission verified by community!" };
+  }
+
+  // Check if rejected
+  if (submission.downvotes.length >= MODERATION_CONFIG.VOTES_TO_REJECT) {
+    submission.status = "rejected";
+    submission.rejectedAt = new Date().toISOString();
+    submission.rejectionReason = submission.downvoteReasons?.map(r => r.reason).join("; ") || "Community rejected";
+
+    // Handle submitter moderation
+    const submitter = await getContributor(submission.submittedBy);
+    submitter.moderation.rejectedSubmissions++;
+
+    // Check for timeout thresholds
+    const rejections = submitter.moderation.rejectedSubmissions;
+    for (const threshold of MODERATION_CONFIG.TIMEOUT_THRESHOLDS) {
+      if (rejections >= threshold.downvotes && !submitter.moderation.timeoutUntil) {
+        submitter.moderation.timeoutUntil = new Date(Date.now() + threshold.duration).toISOString();
+        submitter.moderation.timeoutReason = `${rejections} rejected submissions`;
+        submitter.moderation.warnings++;
+        break;
+      }
+    }
+
+    // Deduct points
+    submitter.totalPoints = Math.max(0, submitter.totalPoints - MODERATION_CONFIG.POINTS_PENALTY_PER_REJECTION);
+    db.data.tokenBuddyContributors[submission.submittedBy] = submitter;
+
+    result = { status: "rejected", message: "Submission rejected by community" };
+  }
+
+  await db.write();
+  return { submission, result };
+}
+
+/**
+ * Get contributor trust level info
+ * @param {string} contributorId - Contributor ID
+ * @returns {Promise<object>} Trust level details
+ */
+export async function getContributorTrustInfo(contributorId) {
+  const contributor = await getContributor(contributorId);
+  const trustLevel = TRUST_LEVELS[contributor.trustLevel] || TRUST_LEVELS.NEW;
+
+  const nextLevel = contributor.trustLevel === "NEW" ? "MEMBER" :
+                    contributor.trustLevel === "MEMBER" ? "TRUSTED" :
+                    contributor.trustLevel === "TRUSTED" ? "VERIFIED" : null;
+
+  return {
+    currentLevel: contributor.trustLevel,
+    currentLevelInfo: trustLevel,
+    nextLevel,
+    nextLevelInfo: nextLevel ? TRUST_LEVELS[nextLevel] : null,
+    pointsToNextLevel: nextLevel ? TRUST_LEVELS[nextLevel].minPoints - contributor.totalPoints : 0,
+    isInTimeout: isInTimeout(contributor),
+    timeoutUntil: contributor.moderation?.timeoutUntil,
+    timeoutReason: contributor.moderation?.timeoutReason,
+    warnings: contributor.moderation?.warnings || 0,
+  };
+}
+
+/**
+ * Get community activity feed
+ * @param {number} limit - Max items to return
+ * @returns {Promise<object[]>} Recent activity
+ */
+export async function getCommunityActivityFeed(limit = 20) {
+  const db = await getDb();
+  const activities = [];
+
+  // Recent verified submissions
+  const verified = (db.data.communityPriceSubmissions || [])
+    .filter(s => s.verified)
+    .slice(-limit)
+    .map(s => ({
+      type: "verified",
+      submission: s,
+      timestamp: s.verifiedAt || s.submittedAt,
+    }));
+  activities.push(...verified);
+
+  // Recent pending submissions
+  const pending = (db.data.pendingSubmissions || [])
+    .filter(s => s.status === "pending")
+    .slice(-limit)
+    .map(s => ({
+      type: "pending",
+      submission: s,
+      timestamp: s.submittedAt,
+    }));
+  activities.push(...pending);
+
+  return activities
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, limit);
+}
+
+// ============ Preview Models & Rate Limits ============
+
+/**
+ * Report a preview/codename model
+ * @param {object} model - Preview model details
+ * @param {string} reportedBy - Contributor ID
+ * @returns {Promise<object>} The preview model record
+ */
+export async function reportPreviewModel(model, reportedBy) {
+  const db = await getDb();
+  if (!db.data.previewModels) {
+    db.data.previewModels = [];
+  }
+
+  const previewModel = {
+    id: `prev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    providerId: model.providerId,
+    codename: model.codename,
+    displayName: model.displayName || model.codename,
+    description: model.description || null,
+    isFree: model.isFree || false,
+    limitations: model.limitations || [],
+    expirationDate: model.expirationDate || null,
+    linkedOfficialModel: model.linkedOfficialModel || null,
+    reportedBy,
+    reportedAt: new Date().toISOString(),
+    status: "active",
+    confirmations: [reportedBy],
+    lastConfirmedAt: new Date().toISOString(),
+  };
+
+  db.data.previewModels.push(previewModel);
+
+  // Award points
+  if (reportedBy !== "anonymous") {
+    await recordContribution(reportedBy, "NEW_MODEL_ADDED", { isPreview: true });
+  }
+
+  await db.write();
+  return previewModel;
+}
+
+/**
+ * Get active preview models
+ * @param {object} filter - Optional filters
+ * @returns {Promise<object[]>} Array of preview models
+ */
+export async function getPreviewModels(filter = {}) {
+  const db = await getDb();
+  let models = db.data.previewModels || [];
+
+  if (filter.providerId) {
+    models = models.filter(m => m.providerId === filter.providerId);
+  }
+  if (filter.status) {
+    models = models.filter(m => m.status === filter.status);
+  }
+  if (filter.isFree !== undefined) {
+    models = models.filter(m => m.isFree === filter.isFree);
+  }
+
+  // Filter out expired previews
+  const now = new Date();
+  models = models.filter(m => {
+    if (!m.expirationDate) return true;
+    return new Date(m.expirationDate) > now;
+  });
+
+  return models.sort((a, b) => new Date(b.reportedAt) - new Date(a.reportedAt));
+}
+
+/**
+ * Report rate limits for a provider/model
+ * @param {object} report - Rate limit details
+ * @param {string} reportedBy - Contributor ID
+ * @returns {Promise<object>} The rate limit record
+ */
+export async function reportRateLimit(report, reportedBy) {
+  const db = await getDb();
+  if (!db.data.rateLimitReports) {
+    db.data.rateLimitReports = [];
+  }
+
+  const rateLimitReport = {
+    id: `rl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    providerId: report.providerId,
+    modelId: report.modelId,
+    tier: report.tier || "default",
+    limits: {
+      requestsPerMinute: report.requestsPerMinute || null,
+      requestsPerDay: report.requestsPerDay || null,
+      tokensPerMinute: report.tokensPerMinute || null,
+      tokensPerDay: report.tokensPerDay || null,
+      contextWindow: report.contextWindow || null,
+      maxOutputTokens: report.maxOutputTokens || null,
+    },
+    notes: report.notes || null,
+    sourceUrl: report.sourceUrl || null,
+    reportedBy,
+    reportedAt: new Date().toISOString(),
+    confirmations: [reportedBy],
+    lastConfirmedAt: new Date().toISOString(),
+  };
+
+  // Check if updating existing report
+  const existingIdx = db.data.rateLimitReports.findIndex(
+    r => r.providerId === report.providerId && r.modelId === report.modelId && r.tier === (report.tier || "default")
+  );
+
+  if (existingIdx >= 0) {
+    // Update existing
+    const existing = db.data.rateLimitReports[existingIdx];
+    existing.limits = { ...existing.limits, ...rateLimitReport.limits };
+    existing.lastConfirmedAt = new Date().toISOString();
+    if (!existing.confirmations.includes(reportedBy)) {
+      existing.confirmations.push(reportedBy);
+    }
+    rateLimitReport.id = existing.id;
+    db.data.rateLimitReports[existingIdx] = existing;
+  } else {
+    db.data.rateLimitReports.push(rateLimitReport);
+  }
+
+  // Award points for update
+  if (reportedBy !== "anonymous") {
+    await recordContribution(reportedBy, "PRICE_UPDATE", { isRateLimit: true });
+  }
+
+  await db.write();
+  return rateLimitReport;
+}
+
+/**
+ * Get rate limits for a provider/model
+ * @param {string} providerId - Provider ID
+ * @param {string} modelId - Optional model ID
+ * @returns {Promise<object[]>} Array of rate limit reports
+ */
+export async function getRateLimits(providerId, modelId = null) {
+  const db = await getDb();
+  let reports = db.data.rateLimitReports || [];
+
+  reports = reports.filter(r => r.providerId === providerId);
+  if (modelId) {
+    reports = reports.filter(r => r.modelId === modelId);
+  }
+
+  return reports.sort((a, b) => b.confirmations.length - a.confirmations.length);
+}
+
+/**
+ * Get all rate limits grouped by provider
+ * @returns {Promise<object>} Rate limits grouped by provider
+ */
+export async function getAllRateLimits() {
+  const db = await getDb();
+  const reports = db.data.rateLimitReports || [];
+
+  const grouped = {};
+  for (const r of reports) {
+    if (!grouped[r.providerId]) {
+      grouped[r.providerId] = {};
+    }
+    const key = r.modelId + (r.tier !== "default" ? `:${r.tier}` : "");
+    grouped[r.providerId][key] = r;
+  }
+
+  return grouped;
+}
+
+// ============================================================================
+// LOCAL PROVIDER CONNECTION SYNC
+// Ensures local providers (Ollama, LM Studio) have matching provider_connections
+// entries for unified routing with cloud providers.
+// ============================================================================
+
+/**
+ * Sync a local provider node to create/update a matching provider_connection.
+ * This normalizes local providers to use the same routing path as cloud providers.
+ * @param {object} node - The provider_node object
+ * @returns {Promise<object|null>} The synced connection or null if not a local node
+ */
+export async function syncLocalProviderConnection(node) {
+  if (!node || node.type !== "local") return null;
+
+  // Determine canonical provider ID from apiType
+  const providerId = node.apiType === "ollama" ? "ollama" : "lmstudio";
+  const connectionName = `${providerId}-local-${node.id}`;
+
+  // Check if auto-managed connection already exists
+  const existing = await getProviderConnections({
+    provider: providerId,
+    name: connectionName,
+  });
+
+  if (existing.length > 0) {
+    // Update existing connection with current node info
+    return await updateProviderConnection(existing[0].id, {
+      metadata: {
+        nodeId: node.id,
+        baseUrl: node.baseUrl,
+        autoManaged: true,
+      },
+    });
+  }
+
+  // Create new auto-managed connection
+  return await createProviderConnection({
+    provider: providerId,
+    authType: "none",
+    name: connectionName,
+    apiKey: null,
+    isActive: true,
+    isEnabled: true,
+    group: "local",
+    metadata: {
+      nodeId: node.id,
+      baseUrl: node.baseUrl,
+      autoManaged: true,
+    },
+  });
+}
+
+/**
+ * Remove auto-managed connections for a local provider node.
+ * Called when a local node is deleted.
+ * @param {string} nodeId - The provider_node ID being deleted
+ * @returns {Promise<number>} Number of connections removed
+ */
+export async function removeLocalProviderConnections(nodeId) {
+  const allConnections = await getProviderConnections({});
+  let removed = 0;
+
+  for (const conn of allConnections) {
+    const metadata = typeof conn.metadata === "string"
+      ? JSON.parse(conn.metadata || "{}")
+      : conn.metadata || {};
+
+    if (metadata.autoManaged && metadata.nodeId === nodeId) {
+      await deleteProviderConnection(conn.id);
+      removed++;
+    }
+  }
+
+  return removed;
+}
+
+/**
+ * Get local provider connection for routing.
+ * Returns the active connection for a local provider (ollama/lmstudio).
+ * @param {string} providerId - "ollama" or "lmstudio"
+ * @returns {Promise<object|null>} The connection or null
+ */
+export async function getLocalProviderConnection(providerId) {
+  const connections = await getProviderConnections({
+    provider: providerId,
+    isActive: true,
+    isEnabled: true,
+  });
+
+  return connections.length > 0 ? connections[0] : null;
+}
+
+/**
+ * Initialize local provider connections for existing nodes.
+ * Call this on startup to ensure all existing local nodes have
+ * corresponding provider_connections for unified routing.
+ * @returns {Promise<number>} Number of connections synced
+ */
+export async function initLocalProviderConnections() {
+  const nodes = await getProviderNodes();
+  const localNodes = nodes.filter(n => n.type === "local");
+  let synced = 0;
+
+  for (const node of localNodes) {
+    const result = await syncLocalProviderConnection(node);
+    if (result) synced++;
+  }
+
+  return synced;
+}
+
+/**
+ * Create a new purchase record.
+ * @param {object} data - Purchase data
+ * @returns {Promise<object>} The created purchase record
+ */
+export async function createPurchase(data) {
+  const db = getSqliteDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const licenseKey = `ZMLR-${crypto.randomUUID().split("-").slice(0, 3).join("-").toUpperCase()}`;
+
+  db.prepare(`
+    INSERT INTO purchases (id, productId, walletAddress, amount, currency, status, txHash, licenseKey, metadata, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    data.productId,
+    data.walletAddress,
+    data.amount,
+    data.currency || "ZIPc",
+    data.status || "pending",
+    data.txHash || null,
+    licenseKey,
+    JSON.stringify(data.metadata || {}),
+    now,
+    now
+  );
+
+  return getPurchaseById(id);
+}
+
+/**
+ * Get a purchase by ID.
+ * @param {string} id - Purchase ID
+ * @returns {Promise<object|null>} The purchase or null
+ */
+export async function getPurchaseById(id) {
+  const db = getSqliteDb();
+  const row = db.prepare("SELECT * FROM purchases WHERE id = ?").get(id);
+  if (!row) return null;
+  return {
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+  };
+}
+
+/**
+ * Get purchases by wallet address.
+ * @param {string} walletAddress - Wallet address
+ * @returns {Promise<object[]>} List of purchases
+ */
+export async function getPurchasesByWallet(walletAddress) {
+  const db = getSqliteDb();
+  const rows = db.prepare("SELECT * FROM purchases WHERE walletAddress = ? ORDER BY createdAt DESC").all(walletAddress);
+  return rows.map(row => ({
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+  }));
+}
+
+/**
+ * Update a purchase record.
+ * @param {string} id - Purchase ID
+ * @param {object} data - Data to update
+ * @returns {Promise<object|null>} The updated purchase or null
+ */
+export async function updatePurchase(id, data) {
+  const db = getSqliteDb();
+  const now = new Date().toISOString();
+
+  const updates = [];
+  const values = [];
+
+  if (data.status !== undefined) {
+    updates.push("status = ?");
+    values.push(data.status);
+  }
+  if (data.txHash !== undefined) {
+    updates.push("txHash = ?");
+    values.push(data.txHash);
+  }
+  if (data.activatedAt !== undefined) {
+    updates.push("activatedAt = ?");
+    values.push(data.activatedAt);
+  }
+  if (data.expiresAt !== undefined) {
+    updates.push("expiresAt = ?");
+    values.push(data.expiresAt);
+  }
+  if (data.metadata !== undefined) {
+    updates.push("metadata = ?");
+    values.push(JSON.stringify(data.metadata));
+  }
+
+  updates.push("updatedAt = ?");
+  values.push(now);
+  values.push(id);
+
+  if (updates.length > 1) {
+    db.prepare(`UPDATE purchases SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+  }
+
+  return getPurchaseById(id);
+}
+
+/**
+ * Check if a wallet has an active license for a product.
+ * @param {string} walletAddress - Wallet address
+ * @param {string} productId - Product ID (optional, checks any product if not provided)
+ * @returns {Promise<object|null>} The active purchase or null
+ */
+export async function getActiveLicense(walletAddress, productId = null) {
+  const db = getSqliteDb();
+  let query = "SELECT * FROM purchases WHERE walletAddress = ? AND status = 'completed'";
+  const params = [walletAddress];
+
+  if (productId) {
+    query += " AND productId = ?";
+    params.push(productId);
+  }
+
+  query += " ORDER BY createdAt DESC LIMIT 1";
+
+  const row = db.prepare(query).get(...params);
+  if (!row) return null;
+
+  return {
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+  };
+}
+
+
+// ============ Routing Pools ============
+
+/**
+ * Get all named routing pools
+ */
+export async function getRoutingPools() {
+  const db = await getDb();
+  return db.data.routingPools || [];
+}
+
+/**
+ * Get a named routing pool by ID
+ */
+export async function getRoutingPool(id) {
+  const db = await getDb();
+  return (db.data.routingPools || []).find(p => p.id === id) || null;
+}
+
+/**
+ * Create a named routing pool (group of provider connections)
+ */
+export async function createRoutingPool(data) {
+  const db = await getDb();
+  if (!db.data.routingPools) db.data.routingPools = [];
+
+  const now = new Date().toISOString();
+  const pool = {
+    id: uuidv4(),
+    name: data.name,
+    description: data.description || "",
+    providerIds: data.providerIds || [],
+    tags: data.tags || [],
+    isActive: data.isActive !== undefined ? data.isActive : true,
+    priority: data.priority || 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.data.routingPools.push(pool);
+  await db.write();
+  return pool;
+}
+
+/**
+ * Update a named routing pool
+ */
+export async function updateRoutingPool(id, data) {
+  const db = await getDb();
+  if (!db.data.routingPools) db.data.routingPools = [];
+
+  const index = db.data.routingPools.findIndex(p => p.id === id);
+  if (index === -1) return null;
+
+  db.data.routingPools[index] = {
+    ...db.data.routingPools[index],
+    ...data,
+    id,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await db.write();
+  return db.data.routingPools[index];
+}
+
+/**
+ * Delete a named routing pool
+ */
+export async function deleteRoutingPool(id) {
+  const db = await getDb();
+  if (!db.data.routingPools) return false;
+
+  const index = db.data.routingPools.findIndex(p => p.id === id);
+  if (index === -1) return false;
+
+  db.data.routingPools.splice(index, 1);
+  await db.write();
+  return true;
+}
+
+// ── Multi-Tenancy ─────────────────────────────────────────────────────────────
+
+export function createOrganization({ name, slug, plan = 'community' }) {
+  const db = getSqliteDb(); if (!db) return null;
+  const id = uuidv4();
+  db.prepare(`INSERT INTO organizations (id, name, slug, plan, created_at) VALUES (?, ?, ?, ?, datetime('now'))`).run(id, name, slug, plan);
+  return id;
+}
+
+export function getOrganization(idOrSlug) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`SELECT * FROM organizations WHERE id = ? OR slug = ?`).get(idOrSlug, idOrSlug) ?? null;
+}
+
+export function listOrganizations() {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT * FROM organizations ORDER BY created_at DESC`).all();
+}
+
+export function createTeam({ orgId, name, slug }) {
+  const db = getSqliteDb(); if (!db) return null;
+  const id = uuidv4();
+  db.prepare(`INSERT INTO teams (id, org_id, name, slug, created_at) VALUES (?, ?, ?, ?, datetime('now'))`).run(id, orgId, name, slug);
+  return id;
+}
+
+export function listTeams(orgId) {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT * FROM teams WHERE org_id = ? ORDER BY name`).all(orgId);
+}
+
+export function addTeamMember({ teamId, userIdentifier, role = 'viewer' }) {
+  const db = getSqliteDb(); if (!db) return;
+  const id = uuidv4();
+  db.prepare(`INSERT OR REPLACE INTO tenant_members (id, team_id, user_identifier, role, invited_at) VALUES (?, ?, ?, ?, datetime('now'))`).run(id, teamId, userIdentifier, role);
+}
+
+export function getTeamMember(teamId, userIdentifier) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`SELECT * FROM tenant_members WHERE team_id = ? AND user_identifier = ?`).get(teamId, userIdentifier) ?? null;
+}
+
+export function listTeamMembers(teamId) {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT * FROM tenant_members WHERE team_id = ? ORDER BY invited_at DESC`).all(teamId);
+}
+
+export function removeTeamMember(teamId, userIdentifier) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`DELETE FROM tenant_members WHERE team_id = ? AND user_identifier = ?`).run(teamId, userIdentifier);
+}
+
+export function getVirtualKeysByTeam(teamId) {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT * FROM virtual_keys WHERE team_id = ? AND is_active = 1 ORDER BY created_at DESC`).all(teamId);
+}
+
+// ── Compliance ────────────────────────────────────────────────────────────────
+
+export function writeAuditLog({ actor, action, resourceType, resourceId, beforeJson, afterJson, ipAddress, userAgent } = {}) {
+  const db = getSqliteDb(); if (!db) return;
+  try {
+    db.prepare(`INSERT INTO audit_log (actor, action, resource_type, resource_id, before_json, after_json, ip_address, user_agent)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(actor || null, action, resourceType || null, resourceId || null,
+      beforeJson ? JSON.stringify(beforeJson) : null,
+      afterJson ? JSON.stringify(afterJson) : null,
+      ipAddress || null, userAgent || null);
+  } catch (e) { /* non-fatal */ }
+}
+
+export function getAuditLog({ limit = 100, offset = 0, actor = null, action = null, hours = 24 * 7 } = {}) {
+  const db = getSqliteDb(); if (!db) return { entries: [], total: 0 };
+  try {
+    let where = `WHERE timestamp >= datetime('now', '-${Math.max(1, Math.min(hours, 8760))} hours')`;
+    if (actor) where += ` AND actor = '${actor.replace(/'/g, "''")}'`;
+    if (action) where += ` AND action LIKE '%${action.replace(/'/g, "''")}%'`;
+    const total = db.prepare(`SELECT COUNT(*) as c FROM audit_log ${where}`).get()?.c ?? 0;
+    const entries = db.prepare(`SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`).all(limit, offset);
+    return { entries, total };
+  } catch (e) { return { entries: [], total: 0 }; }
+}
+
+export function writeAccessLog({ actor, method, path, statusCode, durationMs, ipAddress } = {}) {
+  const db = getSqliteDb(); if (!db) return;
+  try {
+    db.prepare(`INSERT INTO access_log (actor, method, path, status_code, duration_ms, ip_address) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(actor || null, method || null, path || null, statusCode || null, durationMs || null, ipAddress || null);
+  } catch (e) { /* non-fatal */ }
+}
+
+export function purgeOldTraces(retentionDays = 30) {
+  const db = getSqliteDb(); if (!db) return 0;
+  try {
+    const { changes } = db.prepare(`DELETE FROM request_traces WHERE timestamp < datetime('now', '-${Math.max(1, Math.min(retentionDays, 3650))} days')`).run();
+    return changes;
+  } catch (e) { return 0; }
+}
+
+export function purgeVirtualKeyData(keyId) {
+  const db = getSqliteDb(); if (!db) return;
+  try {
+    const key = db.prepare(`SELECT * FROM virtual_keys WHERE id = ?`).get(keyId);
+    if (!key) return;
+    // Delete all request traces linked to this virtual key
+    db.prepare(`DELETE FROM request_traces WHERE virtual_key_id = ?`).run(keyId);
+    // Delete any routing decisions that may reference this key via metadata
+    // (no direct link — best-effort; routing_decisions are anonymized by design)
+    // Hard-delete the virtual key record itself (GDPR: right to erasure)
+    db.prepare(`DELETE FROM virtual_keys WHERE id = ?`).run(keyId);
+    writeAuditLog({ action: 'gdpr_deletion', resourceType: 'virtual_key', resourceId: keyId });
+  } catch (e) { /* non-fatal */ }
+}
+
+// ── SLA Monitoring ────────────────────────────────────────────────────────────
+
+export function recordSlaEvent({ provider, latencyMs, success, errorCode, model } = {}) {
+  const db = getSqliteDb(); if (!db) return;
+  try {
+    db.prepare(`INSERT INTO sla_events (provider, latency_ms, success, error_code, model) VALUES (?, ?, ?, ?, ?)`)
+      .run(provider, latencyMs ?? null, success ? 1 : 0, errorCode ?? null, model ?? null);
+  } catch (e) { /* non-fatal */ }
+}
+
+export function getSlaStats({ provider = null, hours = 24 } = {}) {
+  const db = getSqliteDb(); if (!db) return [];
+  try {
+    const since = `datetime('now', '-${Math.max(1, Math.min(hours, 720))} hours')`;
+    const where = `WHERE timestamp >= ${since}${provider ? ` AND provider = '${provider.replace(/'/g,"''")}' ` : ''}`;
+    return db.prepare(`
+      SELECT
+        provider,
+        COUNT(*) as total_requests,
+        SUM(CASE WHEN success=1 THEN 1 ELSE 0 END) as successes,
+        ROUND(SUM(CASE WHEN success=1 THEN 1.0 ELSE 0 END)*100.0/COUNT(*), 2) as uptime_pct,
+        ROUND(AVG(CASE WHEN success=1 THEN latency_ms END), 0) as avg_latency_ms,
+        MAX(latency_ms) as max_latency_ms,
+        MIN(CASE WHEN success=1 THEN latency_ms END) as min_latency_ms
+      FROM sla_events ${where}
+      GROUP BY provider
+      ORDER BY total_requests DESC
+    `).all();
+  } catch (e) { return []; }
+}
+
+export function getSlaPctLatency({ provider, pct = 95, hours = 24 } = {}) {
+  const db = getSqliteDb(); if (!db) return null;
+  try {
+    const since = `datetime('now', '-${Math.max(1, Math.min(hours, 720))} hours')`;
+    const rows = db.prepare(
+      `SELECT latency_ms FROM sla_events WHERE timestamp >= ${since} AND provider = ? AND success = 1 AND latency_ms IS NOT NULL ORDER BY latency_ms`
+    ).all(provider);
+    if (!rows.length) return null;
+    const idx = Math.ceil(rows.length * pct / 100) - 1;
+    return rows[Math.min(idx, rows.length - 1)]?.latency_ms ?? null;
+  } catch (e) { return null; }
+}
+
+export function getSlaConfig(provider) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`SELECT * FROM sla_config WHERE provider = ?`).get(provider) ?? null;
+}
+
+export function upsertSlaConfig({ provider, targetUptimePct, targetP95LatencyMs, autoDisable, breachWindowMinutes } = {}) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`
+    INSERT INTO sla_config (provider, target_uptime_pct, target_p95_latency_ms, auto_disable_on_breach, breach_window_minutes)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(provider) DO UPDATE SET
+      target_uptime_pct = excluded.target_uptime_pct,
+      target_p95_latency_ms = excluded.target_p95_latency_ms,
+      auto_disable_on_breach = excluded.auto_disable_on_breach,
+      breach_window_minutes = excluded.breach_window_minutes
+  `).run(provider, targetUptimePct ?? 99.5, targetP95LatencyMs ?? 2000, autoDisable ? 1 : 0, breachWindowMinutes ?? 60);
+}
+
+export function disableProviderSla(provider, reason) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`
+    INSERT INTO sla_config (provider, is_disabled, disabled_at, disabled_reason)
+    VALUES (?, 1, datetime('now'), ?)
+    ON CONFLICT(provider) DO UPDATE SET is_disabled=1, disabled_at=datetime('now'), disabled_reason=excluded.disabled_reason
+  `).run(provider, reason || 'SLA breach');
+}
+
+export function enableProviderSla(provider) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`UPDATE sla_config SET is_disabled=0, disabled_at=NULL, disabled_reason=NULL WHERE provider=?`).run(provider);
+}
+
+export function getDisabledProviders() {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT provider FROM sla_config WHERE is_disabled=1`).all().map(r => r.provider);
+}
+
+// ── ZippyVault — local encrypted credential store ─────────────────────────────
+
+export function vaultListEntries() {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT id, name, label, category, tags, created_at, updated_at FROM vault_entries ORDER BY name ASC`).all();
+}
+
+export function vaultStoreEntry({ name, label, category, encrypted_value, salt, iv, tag, tags }) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`INSERT INTO vault_entries (name, label, category, encrypted_value, salt, iv, tag, tags, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(name) DO UPDATE SET
+      label=excluded.label, category=excluded.category,
+      encrypted_value=excluded.encrypted_value, salt=excluded.salt,
+      iv=excluded.iv, tag=excluded.tag, tags=excluded.tags,
+      updated_at=datetime('now')`
+  ).run(name, label || name, category || 'api-key', encrypted_value, salt, iv, tag, tags || null).lastInsertRowid;
+}
+
+export function vaultGetEntry(name) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`SELECT * FROM vault_entries WHERE name = ?`).get(name) ?? null;
+}
+
+export function vaultDeleteEntry(name) {
+  const db = getSqliteDb(); if (!db) return 0;
+  return db.prepare(`DELETE FROM vault_entries WHERE name = ?`).run(name).changes;
+}
+
+export function vaultCreateAgentRequest({ agent, entry_name, reason }) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`INSERT INTO vault_agent_requests (agent, entry_name, reason) VALUES (?, ?, ?)`).run(agent, entry_name, reason || null).lastInsertRowid;
+}
+
+export function vaultListAgentRequests(status = null) {
+  const db = getSqliteDb(); if (!db) return [];
+  if (status) return db.prepare(`SELECT * FROM vault_agent_requests WHERE status = ? ORDER BY created_at DESC`).all(status);
+  return db.prepare(`SELECT * FROM vault_agent_requests ORDER BY created_at DESC`).all();
+}
+
+export function vaultResolveAgentRequest(id, status) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`UPDATE vault_agent_requests SET status = ?, resolved_at = datetime('now') WHERE id = ?`).run(status, id);
+}

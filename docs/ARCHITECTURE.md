@@ -1,6 +1,6 @@
 # ZippyMesh Architecture
 
-_Last updated: 2026-02-06_
+_Last updated: 2026-03-10_
 
 ## Executive Summary
 
@@ -131,7 +131,6 @@ Main flow modules:
 - Account fallback logic: `open-sse/services/accountFallback.js`
 - Translation registry: `open-sse/translator/index.js`
 - Stream transformations: `open-sse/utils/stream.js`, `open-sse/utils/streamHandler.js`
-- Stream transformations: `open-sse/utils/stream.js`, `open-sse/utils/streamHandler.js`
 - Usage extraction/normalization: `open-sse/utils/usageTracking.js`
 
 ## 3) Service Core (`src/sse/services`)
@@ -167,14 +166,14 @@ Usage DB:
 - files: `~/.zippymesh/usage.json`, `~/.zippymesh/log.txt`
 - note: currently independent from `DATA_DIR`
 
-## 4) Auth + Security Surfaces
+## 5) Auth + Security Surfaces
 
 - Dashboard cookie auth: `src/proxy.js`, `src/app/api/auth/login/route.js`
 - API key generation/verification: `src/shared/utils/apiKey.js`
 - Provider secrets persisted in `providerConnections` entries
 - Optional proxy support for upstream calls via env proxy variables (`open-sse/utils/proxyFetch.js`)
 
-## 5) Cloud Sync
+## 6) Cloud Sync
 
 - Scheduler init: `src/lib/initCloudSync.js`, `src/shared/services/initializeCloudSync.js`
 - Periodic task: `src/shared/services/cloudSyncScheduler.js`

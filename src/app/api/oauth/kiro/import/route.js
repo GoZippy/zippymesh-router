@@ -5,7 +5,9 @@ import { createProviderConnection } from "@/models";
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { syncProviderCatalog } from "@/lib/providers/sync";
+import { apiError } from "@/lib/apiErrors";
 
 /**
  * POST /api/oauth/kiro/import
@@ -16,10 +18,7 @@ export async function POST(request) {
     const { refreshToken } = await request.json();
 
     if (!refreshToken || typeof refreshToken !== "string") {
-      return NextResponse.json(
-        { error: "Refresh token is required" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Refresh token is required");
     }
 
     const kiroService = new KiroService();
@@ -48,6 +47,15 @@ export async function POST(request) {
 
     // Auto sync to Cloud if enabled
     await syncToCloudIfEnabled();
+    try {
+      await syncProviderCatalog({
+        force: true,
+        providers: ["kiro"],
+        triggeredBy: "oauth_connected",
+      });
+    } catch (syncError) {
+      console.log("Provider catalog sync skipped for kiro:", syncError?.message || syncError);
+    }
 
     return NextResponse.json({
       success: true,
@@ -59,7 +67,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.log("Kiro import token error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "Kiro token import failed");
   }
 }
 

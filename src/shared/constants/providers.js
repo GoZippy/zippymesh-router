@@ -1,17 +1,44 @@
 // Provider definitions
 
+// Local Providers (Ollama, LM Studio, etc.)
+export const LOCAL_PROVIDERS = {
+  ollama: { id: "ollama", alias: "ol", name: "Ollama", icon: "computer", color: "#1E1E1E", textIcon: "OL", helpText: "Local LLM server via ollama.ai" },
+  lmstudio: { id: "lmstudio", alias: "lm", name: "LM Studio", icon: "desktop_windows", color: "#00D4AA", textIcon: "LM", helpText: "Local LLM server via lmstudio.ai" },
+};
+
 // Free Providers
 export const FREE_PROVIDERS = {
-  iflow: { id: "iflow", alias: "if", name: "iFlow AI", icon: "water_drop", color: "#6366F1" },
+  iflow: {
+    id: "iflow",
+    alias: "if",
+    name: "iFlow AI",
+    icon: "water_drop",
+    color: "#6366F1",
+    requiresOAuthClientSecret: true,
+  },
   qwen: { id: "qwen", alias: "qw", name: "Qwen Code", icon: "psychology", color: "#10B981" },
 };
 
 // OAuth Providers
 export const OAUTH_PROVIDERS = {
   claude: { id: "claude", alias: "cc", name: "Claude Code", icon: "smart_toy", color: "#E85C4A" },
-  antigravity: { id: "antigravity", alias: "ag", name: "Antigravity", icon: "rocket_launch", color: "#F59E0B" },
+  antigravity: {
+    id: "antigravity",
+    alias: "ag",
+    name: "Antigravity",
+    icon: "rocket_launch",
+    color: "#F59E0B",
+    requiresOAuthClientSecret: true,
+  },
   codex: { id: "codex", alias: "cx", name: "OpenAI Codex", icon: "code", color: "#3B82F6" },
-  "gemini-cli": { id: "gemini-cli", alias: "gc", name: "Gemini CLI", icon: "terminal", color: "#4285F4" },
+  "gemini-cli": {
+    id: "gemini-cli",
+    alias: "gc",
+    name: "Gemini CLI",
+    icon: "terminal",
+    color: "#4285F4",
+    requiresOAuthClientSecret: true,
+  },
   github: { id: "github", alias: "gh", name: "GitHub Copilot", icon: "code", color: "#333333", helpText: "Requires an active GitHub Copilot subscription." },
   cursor: { id: "cursor", alias: "cu", name: "Cursor IDE", icon: "edit_note", color: "#00D4AA" },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI", icon: "psychology_alt", color: "#FF6B35", helpText: "Requires Kiro IDE or CLI to be installed and authenticated." },
@@ -25,7 +52,7 @@ export const APIKEY_PROVIDERS = {
   cohere: { id: "cohere", alias: "cohere", name: "Cohere", icon: "psychology", color: "#D18EE2", textIcon: "CO", freeTier: true, helpText: "Free trial tier available at cohere.com. Command and Embed models." },
   kilo: { id: "kilo", alias: "kilo", name: "Kilo.ai", icon: "hub", color: "#6366F1", textIcon: "KL", freeTier: true, passthroughModels: true, helpText: "Budget and free models through Kilo AI Gateway." },
   // Paid / Standard API key providers
-  kiro_api: { id: "kiro_api", alias: "kiro", name: "Kiro (API Key)", icon: "bolt", color: "#FF6B35", textIcon: "KR", passthroughModels: true, helpText: "Direct API access for Kiro models. OpenRouter compatible." },
+  kiro_api: { id: "kiro_api", alias: "kiro", name: "Kiro (API Key)", icon: "bolt", color: "#FF6B35", textIcon: "KR", passthroughModels: true, helpText: "Direct API key only. For Kiro IDE / OAuth or import token, use the Kiro AI provider instead." },
   openrouter: { id: "openrouter", alias: "openrouter", name: "OpenRouter", icon: "router", color: "#6366F1", textIcon: "OR", passthroughModels: true },
   glm: { id: "glm", alias: "glm", name: "GLM Coding", icon: "code", color: "#2563EB", textIcon: "GL" },
   kimi: { id: "kimi", alias: "kimi", name: "Kimi Coding", icon: "psychology", color: "#1E3A8A", textIcon: "KM" },
@@ -89,7 +116,11 @@ export function isAnthropicCompatibleProvider(providerId) {
 }
 
 // All providers (combined)
-export const AI_PROVIDERS = { ...FREE_PROVIDERS, ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS };
+export const AI_PROVIDERS = { ...LOCAL_PROVIDERS, ...FREE_PROVIDERS, ...OAUTH_PROVIDERS, ...APIKEY_PROVIDERS };
+
+export function requiresOAuthClientSecret(providerId) {
+  return Boolean(AI_PROVIDERS[providerId]?.requiresOAuthClientSecret);
+}
 
 // Auth methods
 export const AUTH_METHODS = {

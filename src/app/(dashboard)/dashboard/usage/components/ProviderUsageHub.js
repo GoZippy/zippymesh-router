@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Card from "@/shared/components/Card";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 function formatTime(value) {
   if (!value) return "now";
@@ -28,10 +29,11 @@ export default function ProviderUsageHub() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/usage/limits", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Failed to fetch usage limits");
-        setRows(data.connections || []);
+        const response = await safeFetchJson("/api/usage/limits", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(formatRequestError("Failed to fetch usage limits", response, "Failed to fetch usage limits"));
+        }
+        setRows(response.data?.connections || []);
       } catch (err) {
         setError(err.message || "Failed to fetch usage limits");
       } finally {

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getUsageHistory } from "@/lib/usageDb.js";
 import { getRoutingPlaybooks } from "@/lib/localDb.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
     const [history, playbooks] = await Promise.all([getUsageHistory(), getRoutingPlaybooks()]);
     const modelVotes = new Map();
@@ -48,7 +49,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error building community leaderboard:", error);
-    return NextResponse.json({ error: "Failed to build leaderboard" }, { status: 500 });
+    return apiError(request, 500, "Failed to build leaderboard");
   }
 }
 

@@ -1,6 +1,11 @@
 import crypto from "crypto";
 
-const API_KEY_SECRET = process.env.API_KEY_SECRET || "zippymesh-api-key-secret";
+const API_KEY_SECRET = process.env.API_KEY_SECRET;
+if (!API_KEY_SECRET) {
+  // Warn loudly in dev; in production this will cause key verification to fail
+  console.warn("[Security] API_KEY_SECRET env var is not set. API key verification will be degraded. Set API_KEY_SECRET in your .env file.");
+}
+const _API_KEY_SECRET = API_KEY_SECRET || `zmlr-fallback-${Date.now()}`; // ephemeral fallback, keys won't survive restart
 
 /**
  * Generate 6-char random keyId
@@ -19,7 +24,7 @@ function generateKeyId() {
  */
 function generateCrc(machineId, keyId) {
   return crypto
-    .createHmac("sha256", API_KEY_SECRET)
+    .createHmac("sha256", _API_KEY_SECRET)
     .update(machineId + keyId)
     .digest("hex")
     .slice(0, 8);

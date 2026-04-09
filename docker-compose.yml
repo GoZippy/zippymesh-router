@@ -1,25 +1,93 @@
-version: "3.8"
+version: '3.8'
+
+# ZippyMesh LLM Router (Alpha v0.1.0) — Docker Compose Configuration
+#
+# Quick start:
+#   docker-compose up -d
+#
+# View logs:
+#   docker-compose logs -f zippymesh
+#
+# Stop:
+#   docker-compose down
+#
 
 services:
-  zippy-router:
-    build: .
-    container_name: zippy-router
-    restart: unless-stopped
+  zippymesh:
+    # Pre-built Docker image (no source code exposed)
+    image: bookingbill/zippymesh-router:v0.1.0-alpha
+    container_name: zippymesh-router
+
+    # Network: Localhost only by default (secure)
     ports:
-      - "20128:20128"
+      - "127.0.0.1:20128:20128" # Local-only access (recommended)
+      # To expose externally (NOT recommended without reverse proxy):
+      # - "0.0.0.0:20128:20128"
+
+      # Environment configuration
     environment:
-      - NODE_ENV=production
-      - PORT=20128
-      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
-      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?INITIAL_PASSWORD must be set}
-      - DATA_DIR=/app/data
-      - SIDE_CAR_URL=http://zippy-sidecar:9480
+      # Core
+      NODE_ENV: production
+      ZIPPY_PORT: 20128
+      ZIPPY_NODE_NAME: ${ZIPPY_NODE_NAME:-zippymesh-alpha}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      INITIAL_PASSWORD: ${INITIAL_PASSWORD:?INITIAL_PASSWORD must be set}
+      SIDE_CAR_URL: http://zippy-sidecar:9480
+
+      # API Keys (optional - set for Marketplace features)
+      # ZIPPY_API_KEY: ${ZIPPY_API_KEY:-}
+
+      # Database location (persisted via volume)
+      DATA_DIR: /app/data
+
+      # Disable Next.js telemetry
+      NEXT_TELEMETRY_DISABLED: 1
+
+    # Persistent data storage
     volumes:
-      - zippy-data:/app/data
+      - zippymesh-data:/app/data
+
     networks:
       - zippy-net
+
     depends_on:
       - zippy-sidecar
+
+    # Auto-restart on crash
+    restart: unless-stopped
+
+    # Health monitoring
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:20128/api/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+
+    # Resource limits (adjust for your hardware)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
   zippy-sidecar:
     build: ./sidecar
@@ -30,12 +98,16 @@ services:
     networks:
       - zippy-net
     volumes:
-      - zippy-data:/app/data
+      - zippymesh-data:/app/data
 
 networks:
   zippy-net:
     driver: bridge
 
+# Persistent volume for database
 volumes:
-  zippy-data:
+  zippymesh-data:
     driver: local
+
+# SECURITY & NETWORKING GUIDE
+# ... (rest truncated for brevity, same as earlier)

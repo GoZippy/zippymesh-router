@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from "react";
 import { Card, CardSkeleton, Badge, Button, Input, Modal, Select } from "@/shared/components";
-import { getRelativeTime } from "@/shared/utils";
+import { formatRequestError, getRelativeTime, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
+import TemplateGallery from "./components/TemplateGallery";
 
 export default function RoutingPage() {
     const [activeTab, setActiveTab] = useState("limits"); // "limits" or "playbooks"
@@ -51,13 +52,13 @@ function RoutingModePanel() {
     useEffect(() => {
         const load = async () => {
             try {
-                const res = await fetch("/api/settings", { cache: "no-store" });
-                const data = await res.json();
-                if (res.ok && data.routingMode) {
+                const response = await safeFetchJson("/api/settings", { cache: "no-store", credentials: "include" });
+                const data = response.data || {};
+                if (response.ok && data.routingMode) {
                     setMode(data.routingMode);
                 }
             } catch (err) {
-                console.error("Failed to load routing settings:", err);
+                console.error(formatRequestError("Failed to load routing settings", err));
             } finally {
                 setLoading(false);
             }
@@ -69,13 +70,17 @@ function RoutingModePanel() {
         setMode(nextMode);
         setSaving(true);
         try {
-            await fetch("/api/settings", {
+            const response = await safeFetchJson("/api/settings", {
+                credentials: "include",
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ routingMode: nextMode }),
             });
+            if (!response.ok) {
+                console.error(formatRequestError("Failed to update routing mode", response, "Failed to update routing mode"));
+            }
         } catch (err) {
-            console.error("Failed to update routing mode:", err);
+            console.error(formatRequestError("Failed to update routing mode", err));
         } finally {
             setSaving(false);
         }
@@ -119,9 +124,9 @@ function ProviderLimitsTab() {
 
     const fetchLimits = async () => {
         try {
-            const res = await fetch("/api/routing/limits");
-            const data = await res.json();
-            if (res.ok) setConfigs(data.configs || {});
+            const response = await safeFetchJson("/api/routing/limits");
+            const data = response.data || {};
+            if (response.ok) setConfigs(data.configs || {});
         } catch (err) {
             console.error("Failed to fetch limits:", err);
         } finally {
@@ -131,14 +136,16 @@ function ProviderLimitsTab() {
 
     const handleSave = async (providerId, newConfig) => {
         try {
-            const res = await fetch("/api/routing/limits", {
+            const response = await safeFetchJson("/api/routing/limits", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ providerId, config: newConfig }),
             });
-            if (res.ok) {
+            if (response.ok) {
                 setConfigs({ ...configs, [providerId]: newConfig });
                 setEditingProvider(null);
+            } else {
+                console.error(formatRequestError("Failed to save limit", response, "Failed to save limit"));
             }
         } catch (err) {
             console.error("Failed to save limit:", err);
@@ -202,7 +209,7 @@ function LimitCard({ providerId, config, onEdit }) {
 
             <div className="flex flex-col gap-2">
                 {buckets.slice(0, 3).map((bucket, i) => (
-                    <div key={i} className="flex items-center justify-between text-sm p-2 bg-gray-50 dark:bg-white/[0.02] rounded">
+                    <div key={i} className="flex items-center justify-between text-sm p-2 bg-gray-50 dark:bg-white/2 rounded">
                         <span className="font-medium">{bucket.name}</span>
                         <div className="flex items-center gap-2">
                             <Badge size="sm" variant="secondary">{bucket.value_hint || "?"}</Badge>
@@ -262,6 +269,9 @@ function PlaybooksTab() {
     const [playbooks, setPlaybooks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showAddModal, setShowAddModal] = useState(false);
+    const [showTemplateGallery, setShowTemplateGallery] = useState(false);
+    const [showSimulateModal, setShowSimulateModal] = useState(false);
+    const [showImportModal, setShowImportModal] = useState(false);
     const [editingPlaybook, setEditingPlaybook] = useState(null);
 
     useEffect(() => {
@@ -270,9 +280,9 @@ function PlaybooksTab() {
 
     const fetchPlaybooks = async () => {
         try {
-            const res = await fetch("/api/routing/playbooks");
-            const data = await res.json();
-            if (res.ok) setPlaybooks(data.playbooks || []);
+            const response = await safeFetchJson("/api/routing/playbooks");
+            const data = response.data || {};
+            if (response.ok) setPlaybooks(data.playbooks || []);
         } catch (err) {
             console.error("Failed to fetch playbooks:", err);
         } finally {
@@ -282,14 +292,16 @@ function PlaybooksTab() {
 
     const handleCreate = async (data) => {
         try {
-            const res = await fetch("/api/routing/playbooks", {
+            const response = await safeFetchJson("/api/routing/playbooks", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(data),
             });
-            if (res.ok) {
+            if (response.ok) {
                 fetchPlaybooks();
                 setShowAddModal(false);
+            } else {
+                console.error(formatRequestError("Failed to create playbook", response, "Failed to create playbook"));
             }
         } catch (err) {
             console.error("Failed to create playbook:", err);
@@ -299,12 +311,42 @@ function PlaybooksTab() {
     const handleDelete = async (id) => {
         if (!confirm("Are you sure you want to delete this playbook?")) return;
         try {
-            await fetch(`/api/routing/playbooks/${id}`, { method: "DELETE" });
-            setPlaybooks(playbooks.filter(p => p.id !== id));
+            const response = await safeFetchJson(`/api/routing/playbooks/${id}`, { method: "DELETE" });
+            if (response.ok) {
+                setPlaybooks(playbooks.filter(p => p.id !== id));
+            } else {
+                console.error(formatRequestError("Failed to delete playbook", response, "Failed to delete playbook"));
+            }
         } catch (err) {
             console.error("Failed to delete playbook", err);
         }
     }
+
+    const handleExport = (playbook) => {
+        const url = `/api/routing/playbooks/${playbook.id}/export`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `playbook-${playbook.name.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.json`;
+        a.click();
+    };
+
+    const handleDuplicate = async (playbook) => {
+        try {
+            const response = await safeFetchJson('/api/routing/playbooks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `${playbook.name} (Copy)`,
+                    description: playbook.description,
+                    rules: playbook.rules,
+                    isActive: false,
+                }),
+            });
+            if (response.ok) fetchPlaybooks();
+        } catch (err) {
+            console.error('Failed to duplicate playbook', err);
+        }
+    };
 
     if (loading) return <CardSkeleton />;
 
@@ -328,12 +370,15 @@ function PlaybooksTab() {
                 </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+                <Button variant="secondary" icon="science" onClick={() => setShowSimulateModal(true)}>Simulate</Button>
+                <Button variant="secondary" icon="auto_awesome" onClick={() => setShowTemplateGallery(true)}>From Template</Button>
+                <Button variant="secondary" icon="upload" onClick={() => setShowImportModal(true)}>Import</Button>
                 <Button icon="add" onClick={() => setShowAddModal(true)}>Create Playbook</Button>
             </div>
 
             {playbooks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-12 bg-gray-50 dark:bg-white/[0.02] rounded-xl border border-dashed text-center">
+                <div className="flex flex-col items-center justify-center p-12 bg-gray-50 dark:bg-white/2 rounded-xl border border-dashed text-center">
                     <h3 className="text-lg font-medium">No Playbooks Defined</h3>
                     <p className="text-text-muted mt-2 max-w-md">
                         Create a routing playbook to define custom fallback rules for specific scenarios (e.g., Coding, Data Analysis).
@@ -358,6 +403,12 @@ function PlaybooksTab() {
                             </div>
 
                             <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                <button className="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-green-500" title="Export JSON" onClick={(e) => { e.stopPropagation(); handleExport(playbook); }}>
+                                    <span className="material-symbols-outlined text-sm">download</span>
+                                </button>
+                                <button className="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-blue-500" title="Duplicate" onClick={(e) => { e.stopPropagation(); handleDuplicate(playbook); }}>
+                                    <span className="material-symbols-outlined text-sm">content_copy</span>
+                                </button>
                                 <button className="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-blue-500" title="Manage Rules" onClick={(e) => { e.stopPropagation(); setEditingPlaybook(playbook); }}>
                                     <span className="material-symbols-outlined text-sm">settings</span>
                                 </button>
@@ -385,6 +436,20 @@ function PlaybooksTab() {
                     setEditingPlaybook(null);
                 }}
             />
+
+            <SimulateModal isOpen={showSimulateModal} onClose={() => setShowSimulateModal(false)} />
+
+            <ImportModal isOpen={showImportModal} onClose={() => setShowImportModal(false)} onImported={fetchPlaybooks} />
+
+            <Modal isOpen={showTemplateGallery} onClose={() => setShowTemplateGallery(false)} title="Playbook Templates" size="xl">
+                <TemplateGallery
+                    onCreated={() => {
+                        fetchPlaybooks();
+                        setShowTemplateGallery(false);
+                    }}
+                    onClose={() => setShowTemplateGallery(false)}
+                />
+            </Modal>
         </div>
     );
 }
@@ -435,15 +500,22 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
     const fetchTargets = async () => {
         setLoadingTargets(true);
         try {
-            const [modelsRes, combosRes] = await Promise.all([
-                fetch("/api/v1/models"),
-                fetch("/api/combos")
+            const [modelsResponse, combosResponse] = await safeFetchJsonAll([
+                { key: "models", url: "/api/v1/models" },
+                { key: "combos", url: "/api/combos" },
             ]);
-            const modelsData = await modelsRes.json();
-            const combosData = await combosRes.json();
-
-            setModels(modelsData.data || []);
-            setCombos(combosData.combos || []);
+            if (modelsResponse.ok) {
+                const modelsData = modelsResponse.data || {};
+                setModels(modelsData.data || []);
+            } else {
+                console.error(formatRequestError("Failed to fetch models", modelsResponse, "Failed to fetch models"));
+            }
+            if (combosResponse.ok) {
+                const combosData = combosResponse.data || {};
+                setCombos(combosData.combos || []);
+            } else {
+                console.error(formatRequestError("Failed to fetch combos", combosResponse, "Failed to fetch combos"));
+            }
         } catch (err) {
             console.error("Failed to fetch targets:", err);
         } finally {
@@ -466,14 +538,16 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const res = await fetch(`/api/routing/playbooks/${playbook.id}`, {
+            const response = await safeFetchJson(`/api/routing/playbooks/${playbook.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ...playbook, rules }),
             });
-            if (res.ok) {
-                const data = await res.json();
+            if (response.ok) {
+                const data = response.data || {};
                 onUpdate(data.playbook);
+            } else {
+                console.error(formatRequestError("Failed to update playbook", response, "Failed to update playbook"));
             }
         } catch (err) {
             console.error("Failed to update rules:", err);
@@ -589,6 +663,225 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                         Save Playbook
                     </Button>
                 </div>
+            </div>
+        </Modal>
+    );
+}
+
+function ImportModal({ isOpen, onClose, onImported }) {
+    const [jsonText, setJsonText] = useState("");
+    const [error, setError] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    const handleImport = async () => {
+        setError(null);
+        let parsed;
+        try {
+            parsed = JSON.parse(jsonText);
+        } catch (e) {
+            setError("Invalid JSON: " + e.message);
+            return;
+        }
+        if (!parsed.name || !Array.isArray(parsed.rules)) {
+            setError("JSON must contain 'name' and 'rules' fields.");
+            return;
+        }
+        setLoading(true);
+        try {
+            const res = await safeFetchJson('/api/routing/playbooks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: parsed.name,
+                    description: parsed.description || '',
+                    rules: parsed.rules,
+                    isActive: parsed.isActive ?? true,
+                }),
+            });
+            if (res.ok) {
+                onImported();
+                setJsonText("");
+                onClose();
+            } else {
+                setError(res.data?.error || "Import failed");
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => setJsonText(ev.target?.result || "");
+        reader.readAsText(file);
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Import Playbook">
+            <div className="flex flex-col gap-4">
+                <div>
+                    <label className="block text-sm font-medium mb-1">Upload JSON file</label>
+                    <input type="file" accept=".json,application/json" onChange={handleFileChange}
+                        className="text-sm text-text-muted file:mr-4 file:py-1 file:px-3 file:rounded file:border file:border-border file:text-sm file:bg-surface" />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium mb-1">Or paste JSON</label>
+                    <textarea
+                        value={jsonText}
+                        onChange={e => setJsonText(e.target.value)}
+                        rows={8}
+                        className="w-full font-mono text-xs p-3 bg-black/5 dark:bg-white/5 border border-border rounded-lg resize-none"
+                        placeholder='{"name": "My Playbook", "rules": [...]}'
+                    />
+                </div>
+                {error && <p className="text-sm text-red-500">{error}</p>}
+                <div className="flex gap-2">
+                    <Button onClick={handleImport} disabled={!jsonText.trim() || loading} fullWidth>
+                        {loading ? "Importing..." : "Import"}
+                    </Button>
+                    <Button variant="ghost" onClick={onClose} fullWidth>Cancel</Button>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+function SimulateModal({ isOpen, onClose }) {
+    const [prompt, setPrompt] = useState("");
+    const [intent, setIntent] = useState("");
+    const [preferFree, setPreferFree] = useState(false);
+    const [preferLocal, setPreferLocal] = useState(false);
+    const [result, setResult] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const handleSimulate = async () => {
+        if (!prompt.trim()) return;
+        setLoading(true);
+        setError(null);
+        setResult(null);
+        try {
+            const body = {
+                messages: [{ role: "user", content: prompt }],
+                model: "auto",
+                ...(intent && { intent }),
+                ...(preferFree || preferLocal ? { constraints: { preferFree, preferLocal } } : {}),
+            };
+            const response = await safeFetchJson("/api/routing/playbooks/test", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            if (response.ok) {
+                setResult(response.data);
+            } else {
+                setError(response.data?.error || "Simulation failed");
+            }
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Simulate Routing" size="xl">
+            <div className="flex flex-col gap-4">
+                <p className="text-sm text-text-muted">
+                    Enter a sample prompt to see which model the smart router would select, without sending any real request.
+                </p>
+                <Input
+                    label="Sample Prompt"
+                    placeholder="e.g. Write a Python function to sort a list"
+                    value={prompt}
+                    onChange={e => setPrompt(e.target.value)}
+                />
+                <div className="grid grid-cols-2 gap-4">
+                    <Select
+                        label="Override Intent (optional)"
+                        value={intent}
+                        onChange={e => setIntent(e.target.value)}
+                        options={[
+                            { value: "", label: "Auto-detect" },
+                            { value: "code", label: "Code" },
+                            { value: "reasoning", label: "Reasoning" },
+                            { value: "vision", label: "Vision" },
+                            { value: "embedding", label: "Embedding" },
+                            { value: "fast", label: "Fast" },
+                            { value: "default", label: "Default" },
+                        ]}
+                    />
+                </div>
+                <div className="flex gap-4">
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" checked={preferFree} onChange={e => setPreferFree(e.target.checked)} />
+                        Prefer Free Models
+                    </label>
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" checked={preferLocal} onChange={e => setPreferLocal(e.target.checked)} />
+                        Prefer Local Models
+                    </label>
+                </div>
+                <Button onClick={handleSimulate} disabled={!prompt.trim() || loading} icon={loading ? "hourglass_empty" : "science"}>
+                    {loading ? "Simulating..." : "Run Simulation"}
+                </Button>
+
+                {error && (
+                    <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm">
+                        {error}
+                    </div>
+                )}
+
+                {result && (
+                    <div className="flex flex-col gap-3 border-t pt-4">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20">
+                                <p className="text-xs text-text-muted mb-1">Selected Model</p>
+                                <p className="font-semibold text-sm truncate">{result.selected}</p>
+                            </div>
+                            <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                                <p className="text-xs text-text-muted mb-1">Detected Intent</p>
+                                <p className="font-semibold text-sm">{result.intent || "default"}</p>
+                            </div>
+                        </div>
+
+                        {result.reason && (
+                            <div className="p-3 rounded-lg bg-gray-50 dark:bg-white/5">
+                                <p className="text-xs text-text-muted mb-1">Selection Reason</p>
+                                <p className="text-sm">{result.reason}</p>
+                            </div>
+                        )}
+
+                        {result.fallbackChain?.length > 1 && (
+                            <div>
+                                <p className="text-xs text-text-muted mb-2">Fallback Chain</p>
+                                <div className="flex flex-wrap gap-1">
+                                    {result.fallbackChain.map((m, i) => (
+                                        <span key={i} className={`text-xs px-2 py-1 rounded-full ${i === 0 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-white/10 text-text-muted'}`}>
+                                            {i + 1}. {m.split('/').pop()}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {result.breakdown?.length > 0 && (
+                            <div>
+                                <p className="text-xs text-text-muted mb-2">Score Breakdown (top {result.breakdown.length})</p>
+                                <div className="flex flex-col gap-1">
+                                    {result.breakdown.map((item, i) => (
+                                        <div key={i} className="flex items-center justify-between text-xs p-2 rounded bg-gray-50 dark:bg-white/5">
+                                            <span className="font-mono truncate flex-1">{item.model?.split('/').pop()}</span>
+                                            <span className="text-text-muted ml-2 shrink-0">score: {item.score?.toFixed(2)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </Modal>
     );

@@ -1,86 +1,84 @@
 #!/usr/bin/env node
 /**
- * Validates that the current tree does NOT contain proprietary paths.
- * Use before pushing to the open-core repo (zippymesh-router) or before making it public.
+ * validate-open-core.cjs
  *
- * Proprietary paths (from OPEN_CORE_MANIFEST.md and obfuscate.cjs):
- *   - src/lib/routing/engine.js
- *   - src/lib/sidecar.js
- *   - open-sse/translator/ (any file under this dir)
- *   - open-sse/handlers/chatCore.js
+ * Validates that none of the proprietary paths from OPEN_CORE_MANIFEST.md exist
+ * in the current working directory (or are already stubbed).
  *
- * Exit 0: no proprietary paths present (safe for open-core).
- * Exit 1: one or more proprietary paths found (do not publish as open-core).
+ * Usage:
+ *   node scripts/validate-open-core.cjs             # fail if proprietary paths found
+ *   node scripts/validate-open-core.cjs --allow-stubs  # pass if stubs are present
  *
- * Usage: node scripts/validate-open-core.cjs [--allow-stubs]
- *   --allow-stubs: treat presence of path as OK if file contains "STUB" or "open-core placeholder"
+ * Exit 0 = safe to publish as open-core.
+ * Exit 1 = proprietary files detected.
  */
 
+const fs   = require("fs");
 const path = require("path");
-const fs = require("fs");
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT         = process.cwd();
+const ALLOW_STUBS  = process.argv.includes("--allow-stubs");
 
+// Paths that must NOT appear in the open-core public repo
+// (from docs/OPEN_CORE_MANIFEST.md)
 const PROPRIETARY_PATHS = [
   "src/lib/routing/engine.js",
   "src/lib/sidecar.js",
+  "open-sse/translator",
   "open-sse/handlers/chatCore.js",
 ];
 
-const PROPRIETARY_DIRS = [
-  "open-sse/translator",
-];
+// Stub marker — if a file contains this string, it's considered a stub (not proprietary)
+const STUB_MARKER = "OPEN_CORE_STUB";
 
-function listFilesUnder(dirRel) {
-  const full = path.join(ROOT, dirRel);
-  if (!fs.existsSync(full)) return [];
-  const stat = fs.statSync(full);
-  if (!stat.isDirectory()) return stat.isFile() ? [dirRel] : [];
-  const out = [];
-  for (const name of fs.readdirSync(full)) {
-    const sub = path.join(dirRel, name);
-    const subFull = path.join(ROOT, sub);
-    if (fs.statSync(subFull).isDirectory()) {
-      out.push(...listFilesUnder(sub));
-    } else {
-      out.push(sub);
+let violations = 0;
+
+for (const rel of PROPRIETARY_PATHS) {
+  const abs = path.join(ROOT, rel);
+
+  const isDir  = !rel.includes(".");
+  const exists = isDir ? fs.existsSync(abs) && fs.statSync(abs).isDirectory()
+                       : fs.existsSync(abs);
+
+  if (!exists) continue;
+
+  if (ALLOW_STUBS && !isDir) {
+    const content = fs.readFileSync(abs, "utf8");
+    if (content.includes(STUB_MARKER)) {
+      console.log(`  [stub]  ${rel}`);
+      continue;
     }
   }
-  return out;
-}
 
-const allowStubs = process.argv.includes("--allow-stubs");
-
-function isStub(filePath) {
-  const full = path.join(ROOT, filePath);
-  if (!fs.existsSync(full)) return false;
-  const content = fs.readFileSync(full, "utf8");
-  return /STUB|open-core placeholder|proprietary code removed/i.test(content);
-}
-
-const found = [];
-
-for (const p of PROPRIETARY_PATHS) {
-  const full = path.join(ROOT, p);
-  if (fs.existsSync(full)) {
-    if (allowStubs && isStub(p)) continue;
-    found.push(p);
+  // For directories: check if all .js files inside contain the stub marker
+  if (ALLOW_STUBS && isDir) {
+    const jsFiles = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith(".js")) jsFiles.push(full);
+      }
+    };
+    walk(abs);
+    const allStubbed = jsFiles.length > 0 && jsFiles.every(f =>
+      fs.readFileSync(f, "utf8").includes(STUB_MARKER)
+    );
+    if (allStubbed) {
+      console.log(`  [stub]  ${rel}/ (${jsFiles.length} files, all stubbed)`);
+      continue;
+    }
   }
+
+  console.error(`  [FAIL]  ${rel} — proprietary file present in open-core tree`);
+  violations++;
 }
 
-for (const d of PROPRIETARY_DIRS) {
-  const files = listFilesUnder(d);
-  for (const f of files) {
-    if (allowStubs && isStub(f)) continue;
-    found.push(f);
-  }
-}
-
-if (found.length > 0) {
-  console.error("validate-open-core: proprietary paths found (do not use this tree for public open-core repo):");
-  found.forEach((p) => console.error("  -", p));
+if (violations === 0) {
+  console.log("validate-open-core: PASS — no proprietary paths detected");
+  process.exit(0);
+} else {
+  console.error(`\nvalidate-open-core: FAIL — ${violations} proprietary path(s) detected`);
+  console.error("Run the community build script first: bash scripts/build-community.sh");
   process.exit(1);
 }
-
-console.log("validate-open-core: OK — no proprietary paths present. Safe for open-core.");
-process.exit(0);

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { generatePKCE } from "@/lib/oauth/utils/pkce";
 import { KiroService } from "@/lib/oauth/services/kiro";
 
@@ -13,10 +14,7 @@ export async function GET(request) {
     const provider = searchParams.get("provider"); // "google" or "github"
 
     if (!provider || !["google", "github"].includes(provider)) {
-      return NextResponse.json(
-        { error: "Invalid provider. Use 'google' or 'github'" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Invalid provider. Use 'google' or 'github'");
     }
 
     // Generate PKCE for social auth
@@ -38,6 +36,6 @@ export async function GET(request) {
     });
   } catch (error) {
     console.log("Kiro social authorize error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, error.message || "Social authorize failed");
   }
 }

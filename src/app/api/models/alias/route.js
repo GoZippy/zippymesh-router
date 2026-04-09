@@ -4,16 +4,17 @@ import { getModelAliases, setModelAlias, deleteModelAlias } from "@/models";
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { apiError } from "@/lib/apiErrors.js";
 
 // GET /api/models/alias - Get all aliases
-export async function GET() {
+export async function GET(request) {
   try {
     const aliases = await getModelAliases();
     return NextResponse.json({ aliases });
   } catch (error) {
     console.log("Error fetching aliases:", error);
-    return NextResponse.json({ error: "Failed to fetch aliases" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch aliases");
   }
 }
 
@@ -24,7 +25,7 @@ export async function PUT(request) {
     const { model, alias } = body;
 
     if (!model || !alias) {
-      return NextResponse.json({ error: "Model and alias required" }, { status: 400 });
+      return apiError(request, 400, "Model and alias required");
     }
 
     const aliases = await getModelAliases();
@@ -32,9 +33,7 @@ export async function PUT(request) {
     // Check if alias already used by different model
     const existingModel = aliases[alias];
     if (existingModel && existingModel !== model) {
-      return NextResponse.json({
-        error: `Alias '${alias}' already in use for model '${existingModel}'`
-      }, { status: 400 });
+      return apiError(request, 400, `Alias '${alias}' already in use for model '${existingModel}'`);
     }
 
     // Delete old alias for this model (if exists and different from new alias)
@@ -49,7 +48,7 @@ export async function PUT(request) {
     return NextResponse.json({ success: true, model, alias });
   } catch (error) {
     console.log("Error updating alias:", error);
-    return NextResponse.json({ error: "Failed to update alias" }, { status: 500 });
+    return apiError(request, 500, "Failed to update alias");
   }
 }
 
@@ -60,7 +59,7 @@ export async function DELETE(request) {
     const alias = searchParams.get("alias");
 
     if (!alias) {
-      return NextResponse.json({ error: "Alias required" }, { status: 400 });
+      return apiError(request, 400, "Alias required");
     }
 
     await deleteModelAlias(alias);
@@ -69,7 +68,7 @@ export async function DELETE(request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting alias:", error);
-    return NextResponse.json({ error: "Failed to delete alias" }, { status: 500 });
+    return apiError(request, 500, "Failed to delete alias");
   }
 }
 

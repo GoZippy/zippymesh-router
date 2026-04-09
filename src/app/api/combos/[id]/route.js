@@ -4,7 +4,8 @@ import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/lo
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { apiError } from "@/lib/apiErrors.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -16,13 +17,13 @@ export async function GET(request, { params }) {
     const combo = await getComboById(id);
 
     if (!combo) {
-      return NextResponse.json({ error: "Combo not found" }, { status: 404 });
+      return apiError(request, 404, "Combo not found");
     }
 
     return NextResponse.json(combo);
   } catch (error) {
     console.log("Error fetching combo:", error);
-    return NextResponse.json({ error: "Failed to fetch combo" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch combo");
   }
 }
 
@@ -35,20 +36,20 @@ export async function PUT(request, { params }) {
     // Validate name format if provided
     if (body.name) {
       if (!VALID_NAME_REGEX.test(body.name)) {
-        return NextResponse.json({ error: "Name can only contain letters, numbers, - and _" }, { status: 400 });
+        return apiError(request, 400, "Name can only contain letters, numbers, - and _");
       }
 
       // Check if name already exists (exclude current combo)
       const existing = await getComboByName(body.name);
       if (existing && existing.id !== id) {
-        return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
+        return apiError(request, 400, "Combo name already exists");
       }
     }
 
     const combo = await updateCombo(id, body);
 
     if (!combo) {
-      return NextResponse.json({ error: "Combo not found" }, { status: 404 });
+      return apiError(request, 404, "Combo not found");
     }
 
     // Auto sync to Cloud if enabled
@@ -57,7 +58,7 @@ export async function PUT(request, { params }) {
     return NextResponse.json(combo);
   } catch (error) {
     console.log("Error updating combo:", error);
-    return NextResponse.json({ error: "Failed to update combo" }, { status: 500 });
+    return apiError(request, 500, "Failed to update combo");
   }
 }
 
@@ -68,7 +69,7 @@ export async function DELETE(request, { params }) {
     const success = await deleteCombo(id);
 
     if (!success) {
-      return NextResponse.json({ error: "Combo not found" }, { status: 404 });
+      return apiError(request, 404, "Combo not found");
     }
 
     // Auto sync to Cloud if enabled
@@ -77,7 +78,7 @@ export async function DELETE(request, { params }) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting combo:", error);
-    return NextResponse.json({ error: "Failed to delete combo" }, { status: 500 });
+    return apiError(request, 500, "Failed to delete combo");
   }
 }
 

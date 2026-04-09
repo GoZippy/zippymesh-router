@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
+import { safeFetchJson } from "@/shared/utils";
 
 
 
@@ -55,11 +56,11 @@ export default function OpenClawToolCard({
 
   const fetchModelAliases = async () => {
     try {
-      const res = await fetch("/api/models/alias");
-      const data = await res.json();
-      if (res.ok) setModelAliases(data.aliases || {});
+      const response = await safeFetchJson("/api/models/alias");
+      const data = response.data || {};
+      if (response.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      console.error("Error fetching model aliases:", error);
     }
   };
 
@@ -83,8 +84,8 @@ export default function OpenClawToolCard({
   const checkOpenclawStatus = async () => {
     setCheckingOpenclaw(true);
     try {
-      const res = await fetch("/api/cli-tools/openclaw-settings");
-      const data = await res.json();
+      const response = await safeFetchJson("/api/cli-tools/openclaw-settings");
+      const data = response.data || {};
       setOpenclawStatus(data);
     } catch (error) {
       setOpenclawStatus({ installed: false, error: error.message });
@@ -111,7 +112,7 @@ export default function OpenClawToolCard({
         || (apiKeys?.length > 0 ? apiKeys[0].key : null)
         || "sk_zippymesh";
 
-      const res = await fetch("/api/cli-tools/openclaw-settings", {
+      const response = await safeFetchJson("/api/cli-tools/openclaw-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -120,8 +121,8 @@ export default function OpenClawToolCard({
           model: selectedModel
         }),
       });
-      const data = await res.json();
-      if (res.ok) {
+      const data = response.data || {};
+      if (response.ok) {
         setMessage({ type: "success", text: "Settings applied successfully!" });
         checkOpenclawStatus();
       } else {
@@ -138,9 +139,9 @@ export default function OpenClawToolCard({
     setRestoring(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/cli-tools/openclaw-settings", { method: "DELETE" });
-      const data = await res.json();
-      if (res.ok) {
+      const response = await safeFetchJson("/api/cli-tools/openclaw-settings", { method: "DELETE" });
+      const data = response.data || {};
+      if (response.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
         setSelectedApiKey("");

@@ -4,25 +4,23 @@ import {
   updateRoutingControls
 } from "@/lib/localDb.js";
 import { checkAuth } from "@/lib/auth/middleware.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 /**
  * GET /api/routing/controls
  * Get global routing control settings
  */
-export async function GET() {
+export async function GET(request) {
   try {
     if (!(await checkAuth())) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError(request, 401, "Unauthorized");
     }
 
     const controls = await getRoutingControls();
     return NextResponse.json(controls);
   } catch (error) {
     console.error("Failed to get routing controls:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error", details: error.message },
-      { status: 500 }
-    );
+    return apiError(request, 500, "Internal Server Error");
   }
 }
 
@@ -33,40 +31,28 @@ export async function GET() {
 export async function PATCH(request) {
   try {
     if (!(await checkAuth())) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError(request, 401, "Unauthorized");
     }
 
     const data = await request.json();
 
     // Validate defaultAction if provided
     if (data.defaultAction && !["allow", "block"].includes(data.defaultAction)) {
-      return NextResponse.json(
-        { error: "Invalid defaultAction. Must be 'allow' or 'block'" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Invalid defaultAction. Must be 'allow' or 'block'");
     }
 
     // Validate numeric fields if provided
     if (data.maxCostPer1k !== undefined && (typeof data.maxCostPer1k !== "number" || data.maxCostPer1k < 0)) {
-      return NextResponse.json(
-        { error: "Invalid maxCostPer1k. Must be a non-negative number" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Invalid maxCostPer1k. Must be a non-negative number");
     }
 
     if (data.maxLatencyMs !== undefined && (typeof data.maxLatencyMs !== "number" || data.maxLatencyMs < 0)) {
-      return NextResponse.json(
-        { error: "Invalid maxLatencyMs. Must be a non-negative number" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Invalid maxLatencyMs. Must be a non-negative number");
     }
 
     if (data.minTrustScore !== undefined) {
       if (typeof data.minTrustScore !== "number" || data.minTrustScore < 0 || data.minTrustScore > 100) {
-        return NextResponse.json(
-          { error: "Invalid minTrustScore. Must be a number between 0 and 100" },
-          { status: 400 }
-        );
+        return apiError(request, 400, "Invalid minTrustScore. Must be a number between 0 and 100");
       }
     }
 
@@ -75,28 +61,19 @@ export async function PATCH(request) {
     for (const field of arrayFields) {
       if (data[field] !== undefined && data[field] !== null) {
         if (!Array.isArray(data[field])) {
-          return NextResponse.json(
-            { error: `Invalid ${field}. Must be an array or null` },
-            { status: 400 }
-          );
+          return apiError(request, 400, `Invalid ${field}. Must be an array or null`);
         }
       }
     }
 
     const updated = await updateRoutingControls(data);
     if (!updated) {
-      return NextResponse.json(
-        { error: "Failed to update routing controls" },
-        { status: 500 }
-      );
+      return apiError(request, 500, "Failed to update routing controls");
     }
 
     return NextResponse.json(updated);
   } catch (error) {
     console.error("Failed to update routing controls:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error", details: error.message },
-      { status: 500 }
-    );
+    return apiError(request, 500, "Internal Server Error");
   }
 }

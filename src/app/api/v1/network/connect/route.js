@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { getSidecarUrl } from "@/lib/sidecar";
+import { apiError } from "@/lib/apiErrors.js";
 
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9000";
+const SIDECAR_URL = getSidecarUrl();
 
 export async function POST(req) {
     try {
@@ -8,7 +10,7 @@ export async function POST(req) {
         const { multiaddr } = body;
 
         if (!multiaddr) {
-            return NextResponse.json({ error: "Multiaddr is required" }, { status: 400 });
+            return apiError(req, 400, "Multiaddr is required");
         }
 
         const res = await fetch(`${SIDECAR_URL}/peers/connect`, {
@@ -19,15 +21,12 @@ export async function POST(req) {
 
         if (!res.ok) {
             const errorText = await res.text();
-            return NextResponse.json({ error: `Sidecar Error: ${errorText}` }, { status: res.status });
+            return apiError(req, res.status, `Sidecar Error: ${errorText}`);
         }
 
         return NextResponse.json({ success: true, message: "Connected to peer" });
     } catch (error) {
         console.error("Connect Peer API Error:", error);
-        return NextResponse.json(
-            { error: "Failed to connect to peer", details: error.message },
-            { status: 500 }
-        );
+        return apiError(req, 500, "Failed to connect to peer");
     }
 }

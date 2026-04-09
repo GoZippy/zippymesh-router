@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getProviderNodeById } from "@/models";
+import { getProviderNodeById, getProviderNodes } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { apiError } from "@/lib/apiErrors";
 
 // POST /api/providers/validate - Validate API key with provider
 export async function POST(request) {
@@ -10,7 +11,7 @@ export async function POST(request) {
     const normalizedApiKey = typeof apiKey === "string" ? apiKey.trim() : apiKey;
 
     if (!provider || !normalizedApiKey) {
-      return NextResponse.json({ error: "Provider and API key required" }, { status: 400 });
+      return apiError(request, 400, "Provider and API key required");
     }
 
     let isValid = false;
@@ -21,7 +22,7 @@ export async function POST(request) {
       if (isOpenAICompatibleProvider(provider)) {
         const node = await getProviderNodeById(provider);
         if (!node) {
-          return NextResponse.json({ error: "OpenAI Compatible node not found" }, { status: 404 });
+          return apiError(request, 404, "OpenAI Compatible node not found");
         }
         const modelsUrl = `${node.baseUrl?.replace(/\/$/, "")}/models`;
         const res = await fetch(modelsUrl, {
@@ -37,7 +38,7 @@ export async function POST(request) {
       if (isAnthropicCompatibleProvider(provider)) {
         const node = await getProviderNodeById(provider);
         if (!node) {
-          return NextResponse.json({ error: "Anthropic Compatible node not found" }, { status: 404 });
+          return apiError(request, 404, "Anthropic Compatible node not found");
         }
         
         let normalizedBase = node.baseUrl?.trim().replace(/\/$/, "") || "";
@@ -63,6 +64,36 @@ export async function POST(request) {
       }
 
       switch (provider) {
+        case "ollama":
+        case "lmstudio": {
+          const nodes = await getProviderNodes();
+          const expectedApiType = provider === "ollama" ? "ollama" : "openai";
+          const node = (nodes || []).find(
+            (entry) =>
+              entry.type === "local" &&
+              entry.apiType === expectedApiType &&
+              typeof entry.baseUrl === "string" &&
+              entry.baseUrl.length > 0
+          );
+
+          if (!node) {
+            return NextResponse.json({
+              valid: false,
+              error: `No local runtime node configured for ${provider}`,
+            });
+          }
+
+          const baseUrl = node.baseUrl.replace(/\/$/, "");
+          const endpoint = provider === "ollama"
+            ? `${baseUrl}/api/tags`
+            : (baseUrl.endsWith("/v1") ? `${baseUrl}/models` : `${baseUrl}/v1/models`);
+          const localRes = await fetch(endpoint, {
+            headers: normalizedApiKey ? { "Authorization": `Bearer ${normalizedApiKey}` } : {},
+          });
+          isValid = localRes.ok;
+          break;
+        }
+
         case "openai":
           const openaiRes = await fetch("https://api.openai.com/v1/models", {
             headers: { "Authorization": `Bearer ${normalizedApiKey}` },
@@ -245,7 +276,7 @@ export async function POST(request) {
         }
 
           default:
-            return NextResponse.json({ error: "Provider validation not supported" }, { status: 400 });
+            return apiError(request, 400, "Provider validation not supported");
       }
     } catch (err) {
       error = err.message;
@@ -258,6 +289,6 @@ export async function POST(request) {
     });
   } catch (error) {
     console.log("Error validating API key:", error);
-    return NextResponse.json({ error: "Validation failed" }, { status: 500 });
+    return apiError(request, 500, "Validation failed");
   }
 }

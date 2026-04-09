@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import path from "path";
 import { createRequire } from "module";
 
@@ -55,9 +56,9 @@ export async function POST(request) {
             return NextResponse.json(result);
         }
 
-        return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+        return apiError(request, 400, "Invalid action");
     } catch (error) {
         console.error("Node Control Error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return apiError(request, 500, error.message || "Node control failed");
     }
 }

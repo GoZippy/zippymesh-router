@@ -67,7 +67,10 @@ export const PROVIDER_MODELS_CONFIG = {
         headers: { "Content-Type": "application/json" },
         authHeader: "Authorization",
         authPrefix: "Bearer ",
-        parseResponse: (data) => data.data || data.models || []
+        parseResponse: (data) => {
+            const raw = data?.data ?? data?.models ?? data?.results ?? (Array.isArray(data) ? data : []);
+            return Array.isArray(raw) ? raw : [];
+        }
     },
     groq: {
         url: "https://api.groq.com/openai/v1/models",
@@ -239,6 +242,14 @@ export const PROVIDER_MODELS_CONFIG = {
         },
         authHeader: "x-api-key",
         parseResponse: (data) => data.data || []
+    },
+    replicate: {
+        url: "https://api.replicate.com/v1/models",
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        authHeader: "Authorization",
+        authPrefix: "Bearer ",
+        parseResponse: (data) => (Array.isArray(data?.results) ? data.results : data?.data || [])
     }
 };
 

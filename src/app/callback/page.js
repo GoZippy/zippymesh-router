@@ -81,7 +81,7 @@ function CallbackContent() {
 
       if (pending) {
         try {
-          const { provider, redirectUri, codeVerifier, connectionId } = JSON.parse(pending);
+          const { provider, redirectUri, codeVerifier, connectionId, oauthClientSecret } = JSON.parse(pending);
           const res = await fetch(`/api/oauth/${provider}/exchange`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -91,6 +91,7 @@ function CallbackContent() {
               codeVerifier,
               state,
               connectionId: connectionId || undefined,
+              oauthClientSecret: oauthClientSecret || undefined,
             }),
           });
           const data = await res.json();
@@ -100,7 +101,9 @@ function CallbackContent() {
           if (cancelled) return;
           if (!res.ok) {
             setStatus("error");
-            setErrorMsg(data.error || "Token exchange failed");
+            const err = data?.error;
+            const msg = typeof err === "string" ? err : (err?.message ?? "Token exchange failed");
+            setErrorMsg(msg);
             notifyOpener(false);
             return;
           }

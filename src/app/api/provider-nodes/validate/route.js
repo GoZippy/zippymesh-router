@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 
 // POST /api/provider-nodes/validate - Validate API key against base URL
 export async function POST(request) {
@@ -7,7 +8,7 @@ export async function POST(request) {
     const { baseUrl, apiKey, type } = body;
 
     if (!baseUrl || !apiKey) {
-      return NextResponse.json({ error: "Base URL and API key required" }, { status: 400 });
+      return apiError(request, 400, "Base URL and API key required");
     }
 
     // Anthropic Compatible Validation
@@ -42,6 +43,6 @@ export async function POST(request) {
     return NextResponse.json({ valid: res.ok, error: res.ok ? null : "Invalid API key" });
   } catch (error) {
     console.log("Error validating provider node:", error);
-    return NextResponse.json({ error: "Validation failed" }, { status: 500 });
+    return apiError(request, 500, "Validation failed");
   }
 }

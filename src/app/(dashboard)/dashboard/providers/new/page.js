@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card, Button, Input, Select, Toggle } from "@/shared/components";
 import { AI_PROVIDERS, AUTH_METHODS, OAUTH_PROVIDERS } from "@/shared/constants/config";
 import { OAuthModal } from "@/shared/components";
+import { safeFetchJson } from "@/shared/utils";
 
 const providerOptions = Object.values(AI_PROVIDERS).map((p) => ({
   value: p.id,
@@ -53,7 +54,7 @@ export default function NewProviderPage() {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/providers", {
+      const response = await safeFetchJson("/api/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
@@ -62,7 +63,7 @@ export default function NewProviderPage() {
       if (response.ok) {
         router.push("/dashboard/providers");
       } else {
-        const data = await response.json();
+        const data = response.data || {};
         setErrors({ submit: data.error || "Failed to create provider" });
       }
     } catch (error) {

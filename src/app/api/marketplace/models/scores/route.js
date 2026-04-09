@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { MODEL_SCORES } from "@/shared/constants/modelScores.js";
 import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
@@ -57,7 +58,7 @@ export async function GET(request) {
     });
   } catch (error) {
     console.error("Error fetching model scores:", error);
-    return NextResponse.json({ error: "Failed to fetch model scores" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch model scores");
   }
 }
 

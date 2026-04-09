@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getModelAliases, setModelAlias } from "@/models";
 import { AI_MODELS } from "@/shared/constants/config";
 
 // GET /api/models - Get models with aliases
-export async function GET() {
+export async function GET(request) {
   try {
     const modelAliases = await getModelAliases();
     
@@ -19,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ models });
   } catch (error) {
     console.log("Error fetching models:", error);
-    return NextResponse.json({ error: "Failed to fetch models" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch models");
   }
 }
 
@@ -30,7 +31,7 @@ export async function PUT(request) {
     const { model, alias } = body;
 
     if (!model || !alias) {
-      return NextResponse.json({ error: "Model and alias required" }, { status: 400 });
+      return apiError(request, 400, "Model and alias required");
     }
 
     const modelAliases = await getModelAliases();
@@ -41,7 +42,7 @@ export async function PUT(request) {
     );
 
     if (existingModel) {
-      return NextResponse.json({ error: "Alias already in use" }, { status: 400 });
+      return apiError(request, 400, "Alias already in use");
     }
 
     // Update alias
@@ -50,6 +51,6 @@ export async function PUT(request) {
     return NextResponse.json({ success: true, model, alias });
   } catch (error) {
     console.log("Error updating alias:", error);
-    return NextResponse.json({ error: "Failed to update alias" }, { status: 500 });
+    return apiError(request, 500, "Failed to update alias");
   }
 }

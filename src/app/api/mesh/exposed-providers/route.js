@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { getMeshExposedProviders, setMeshExposedProviders } from "@/lib/localDb.js";
 import { getProviderNodes } from "@/models";
+import { getSidecarUrl } from "@/lib/sidecar";
+import { apiError } from "@/lib/apiErrors";
 
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
+const SIDECAR_URL = getSidecarUrl();
 
-export async function GET() {
+export async function GET(request) {
   try {
     const exposed = await getMeshExposedProviders();
     return NextResponse.json({ exposed });
   } catch (error) {
     console.error("Error fetching exposed providers:", error);
-    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch exposed providers");
   }
 }
 
@@ -20,7 +22,7 @@ export async function POST(request) {
     const { exposed } = body;
 
     if (!Array.isArray(exposed)) {
-      return NextResponse.json({ error: "exposed must be an array" }, { status: 400 });
+      return apiError(request, 400, "exposed must be an array");
     }
 
     await setMeshExposedProviders(exposed);
@@ -54,6 +56,6 @@ export async function POST(request) {
     return NextResponse.json({ exposed: await getMeshExposedProviders() });
   } catch (error) {
     console.error("Error setting exposed providers:", error);
-    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    return apiError(request, 500, "Failed to save exposed providers");
   }
 }

@@ -1,4 +1,22 @@
 import { getProviderConnections, updateProviderConnection, getSettings } from "@/lib/localDb";
+import { readVaultEntry, isVaultUnlocked } from "@/lib/vault.js";
+
+// Provider → common vault entry names to check when connection.apiKey is empty
+const VAULT_KEY_MAP = {
+  openai:      ["OPENAI_API_KEY"],
+  anthropic:   ["ANTHROPIC_API_KEY"],
+  groq:        ["GROQ_API_KEY"],
+  google:      ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+  gemini:      ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+  kilo:        ["KILO_API_KEY", "KILO_AI_API_KEY"],
+  openrouter:  ["OPENROUTER_API_KEY"],
+  mistral:     ["MISTRAL_API_KEY"],
+  cohere:      ["COHERE_API_KEY"],
+  together:    ["TOGETHER_API_KEY", "TOGETHER_AI_API_KEY"],
+  perplexity:  ["PERPLEXITY_API_KEY"],
+  xai:         ["XAI_API_KEY"],
+  deepseek:    ["DEEPSEEK_API_KEY"],
+};
 // Fallback for removed validateApiKey function
 const validateApiKey = async () => true;
 
@@ -128,8 +146,22 @@ export async function getProviderCredentials(provider, excludeConnectionId = nul
       connection = availableConnections[0];
     }
 
+    // Vault fallback: if connection has no apiKey, try ZippyVault
+    let resolvedApiKey = connection.apiKey;
+    if (!resolvedApiKey && isVaultUnlocked()) {
+      const names = VAULT_KEY_MAP[provider?.toLowerCase()] || [];
+      for (const name of names) {
+        const entry = readVaultEntry(name);
+        if (entry.ok && entry.value) {
+          resolvedApiKey = entry.value;
+          log.debug("AUTH", `${provider} | apiKey resolved from ZippyVault entry: ${name}`);
+          break;
+        }
+      }
+    }
+
     return {
-      apiKey: connection.apiKey,
+      apiKey: resolvedApiKey,
       accessToken: connection.accessToken,
       refreshToken: connection.refreshToken,
       projectId: connection.projectId,

@@ -4,6 +4,25 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { requiresOAuthClientSecret } from "@/shared/constants/providers";
+import {
+  isDeviceCodeProvider,
+  requiresDeviceCodeExtraData,
+  requiresManualCallback,
+  requiresDeviceCodePkce,
+  getManualCallbackPort,
+} from "@/shared/constants/providerCapabilities";
+
+// Human-readable labels for each OAuth flow step
+const STEP_LABELS = {
+  setup: "Enter client secret",
+  waiting: "Waiting for authorization...",
+  input: "Paste callback URL",
+  exchanging: "Exchanging code for tokens...",
+  saving: "Saving credentials...",
+  success: "Connected",
+  error: "Connection failed",
+};
 
 /**
  * OAuth Modal Component
@@ -11,9 +30,10 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
  * - Remote: Manual paste callback URL
  */
 export default function OAuthModal({ isOpen, provider, providerInfo, connectionId, onSuccess, onClose }) {
-  const [step, setStep] = useState("waiting"); // waiting | input | success | error
+  const [step, setStep] = useState("waiting"); // setup | waiting | input | exchanging | saving | success | error
   const [authData, setAuthData] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
   const [error, setError] = useState(null);
   const [isDeviceCode, setIsDeviceCode] = useState(false);
   const [deviceData, setDeviceData] = useState(null);
@@ -28,6 +48,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
   // State for client-only values to avoid hydration mismatch
   const [placeholderUrl, setPlaceholderUrl] = useState("/callback?code=...");
   const callbackProcessedRef = useRef(false);
+  const needsClientSecret = requiresOAuthClientSecret(provider);
 
   // Compute callback URL placeholder on client
   useEffect(() => {
@@ -48,6 +69,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     }
 
     try {
+      setStep("exchanging");
       console.log("[OAuthModal] Fetching exchange endpoint", `/api/oauth/${provider}/exchange`);
       const res = await fetch(`/api/oauth/${provider}/exchange`, {
         method: "POST",
@@ -58,22 +80,23 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
           codeVerifier: authData.codeVerifier,
           state,
           connectionId,
+          oauthClientSecret: oauthClientSecret?.trim() || undefined,
         }),
       });
 
       const data = await res.json();
       console.log("[OAuthModal] Exchange response", { ok: res.ok, data });
 
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.error || data.message || "Token exchange failed");
 
       setStep("success");
       onSuccess?.();
     } catch (err) {
       console.error("[OAuthModal] Exchange error", err);
-      setError(err.message);
+      setError(err.message || "An unexpected error occurred during token exchange.");
       setStep("error");
     }
-  }, [authData, provider, onSuccess]);
+  }, [authData, provider, onSuccess, connectionId, oauthClientSecret]);
 
   // Poll for device code token (Kiro/AWS flow can take longer; allow up to ~12.5 min)
   const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData) => {
@@ -134,9 +157,26 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
     if (!provider) return;
     try {
       setError(null);
+      if (needsClientSecret && !oauthClientSecret.trim()) {
+        const hasSecretRes = await fetch(`/api/oauth/${provider}/has-secret`);
+        const hasSecretData = await hasSecretRes.json().catch(() => ({ hasSecret: false }));
+        if (!hasSecretData.hasSecret) {
+          setStep("setup");
+          return;
+        }
+        // Server has secret (env or persisted); continue to open Google login
+      }
 
-      // Device code flow (GitHub, Qwen, Kiro)
-      if (provider === "github" || provider === "qwen" || provider === "kiro") {
+      // Show "opening browser" state briefly before redirecting
+      setStep("waiting");
+
+      const deviceCodeFlow = isDeviceCodeProvider(provider);
+      const deviceCodeNeedsPkce = deviceCodeFlow && requiresDeviceCodePkce(provider);
+      const needsDeviceCodeExtraData = deviceCodeFlow && requiresDeviceCodeExtraData(provider);
+      const manualCallbackPort = getManualCallbackPort(provider);
+
+      // Device code flow providers (e.g. GitHub, Qwen, Kiro)
+      if (deviceCodeFlow) {
         setIsDeviceCode(true);
         setStep("waiting");
 
@@ -150,17 +190,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         const verifyUrl = data.verification_uri_complete || data.verification_uri;
         if (verifyUrl) window.open(verifyUrl, "_blank");
 
-        // Start polling - pass extraData for Kiro (contains _clientId, _clientSecret)
-        const extraData = provider === "kiro" ? { _clientId: data._clientId, _clientSecret: data._clientSecret } : null;
-        startPolling(data.device_code, data.codeVerifier, data.interval || 5, extraData);
+        const codeVerifier = deviceCodeNeedsPkce ? data.codeVerifier : null;
+        // Start polling - include provider-specific extra data when required.
+        const extraData = needsDeviceCodeExtraData ? { _clientId: data._clientId, _clientSecret: data._clientSecret } : null;
+        startPolling(data.device_code, codeVerifier, data.interval || 5, extraData);
         return;
       }
 
-      // Authorization code flow - always use localhost with current port (except Codex)
+      // Authorization code flow - always use localhost with current port unless a provider needs manual callback handling.
       let redirectUri;
-      if (provider === "codex") {
-        // Codex requires fixed port 1455
-        redirectUri = "http://localhost:1455/auth/callback";
+      if (requiresManualCallback(provider)) {
+        const manualPort = manualCallbackPort || 1455;
+        redirectUri = `http://localhost:${manualPort}/auth/callback`;
       } else {
         // Always use localhost with current port for OAuth callback
         const port = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
@@ -177,8 +218,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
       const hostname = window.location.hostname;
       const runningOnLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
 
-      // For Codex or non-localhost: use manual input mode
-      if (provider === "codex" || !runningOnLocalhost) {
+      // For providers requiring manual callback handling or non-localhost: use manual input mode
+      if (requiresManualCallback(provider) || !runningOnLocalhost) {
         setStep("input");
         window.open(data.authUrl, "_blank");
       } else {
@@ -191,6 +232,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
               redirectUri,
               codeVerifier: data.codeVerifier,
               connectionId: connectionId || undefined,
+              oauthClientSecret: oauthClientSecret?.trim() || undefined,
             })
           );
         } catch (e) {
@@ -209,11 +251,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
       }
     } catch (err) {
       if (isMountedRef.current) {
-        setError(err.message);
+        setError(err.message || "Failed to start the authorization flow. Please try again.");
         setStep("error");
       }
     }
-  }, [provider, startPolling]);
+  }, [provider, startPolling, needsClientSecret, connectionId, oauthClientSecret]);
 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
@@ -233,7 +275,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
       setIsDeviceCode(false);
       setDeviceData(null);
       setPolling(false);
-      // Auto start OAuth
+
+      // startOAuthFlow() will open Google login or show setup (checks server has-secret when client secret not in state)
       startOAuthFlow();
     }
 
@@ -243,7 +286,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         isMountedRef.current = false;
       }
     };
-  }, [isOpen, provider, startOAuthFlow]);
+  }, [isOpen, provider, startOAuthFlow, needsClientSecret, connectionId, oauthClientSecret]);
 
   // Listen for OAuth callback via multiple methods
   useEffect(() => {
@@ -357,17 +400,68 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 
       await exchangeTokens(code, state);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to process the callback URL. Please check the URL and try again.");
       setStep("error");
     }
   };
 
   if (!provider || !providerInfo) return null;
 
+  // Derive a visible step label for the progress indicator
+  const stepLabel = STEP_LABELS[step] || step;
+
   return (
     <Modal isOpen={isOpen} title={`Connect ${providerInfo.name}`} onClose={onClose} size="lg">
       <div className="flex flex-col gap-4">
-        {/* Waiting Step (Localhost - popup mode) */}
+        {/* Step progress indicator (shown for non-terminal steps) */}
+        {step !== "success" && step !== "error" && (
+          <div className="flex items-center gap-2 text-xs text-text-muted pb-1 border-b border-border">
+            {(step === "waiting" || step === "exchanging" || step === "saving") ? (
+              <span className="material-symbols-outlined text-[14px] animate-spin text-primary">progress_activity</span>
+            ) : (
+              <span className="material-symbols-outlined text-[14px] text-text-muted">radio_button_unchecked</span>
+            )}
+            <span>{stepLabel}</span>
+          </div>
+        )}
+
+        {/* Setup Step - client secret input */}
+        {step === "setup" && (
+          <div className="flex flex-col gap-3 py-2">
+            <p className="text-sm text-text-muted">
+              {connectionId
+                ? "Your connection needs the OAuth client secret to sign in again. Enter it below, then you’ll be sent to the provider to authorize."
+                : "Enter your OAuth client secret to continue. This will be stored with your provider connection. Then you’ll sign in with the provider to connect your account."}
+            </p>
+            <Input
+              label="OAuth Client Secret"
+              type="password"
+              value={oauthClientSecret}
+              onChange={(e) => setOauthClientSecret(e.target.value)}
+              placeholder="GOCSPX-..."
+            />
+            {/* Help text for client secret */}
+            <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-800 dark:text-blue-300 flex gap-2">
+              <span className="material-symbols-outlined text-[16px] shrink-0 mt-0.5">info</span>
+              <span>
+                This is a required app-level OAuth credential. You only need to enter this once. 
+                It can also be set in your <code className="font-mono bg-blue-100 dark:bg-blue-900/50 px-1 rounded">.env</code> file 
+                (see <code className="font-mono bg-blue-100 dark:bg-blue-900/50 px-1 rounded">.env.example</code>). 
+                If entered here, it will be encrypted securely using AES-256-GCM and safely persisted on your machine 
+                (in your OS app data directory) so it survives any future updates or migrations.
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={startOAuthFlow} fullWidth disabled={!oauthClientSecret.trim()}>
+                Continue
+              </Button>
+              <Button onClick={onClose} variant="ghost" fullWidth>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
+
         {step === "waiting" && !isDeviceCode && (
           <div className="text-center py-6">
             <div className="size-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
@@ -375,13 +469,31 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
                 progress_activity
               </span>
             </div>
-            <h3 className="text-lg font-semibold mb-2">Waiting for Authorization</h3>
+            <h3 className="text-lg font-semibold mb-2">Opening Browser...</h3>
+            <p className="text-sm text-text-muted mb-1">
+              A popup window should open with the {providerInfo?.name} sign-in page.
+            </p>
             <p className="text-sm text-text-muted mb-4">
-              Complete the authorization in the popup window.
+              Complete sign-in there, then return here — this dialog will update automatically.
             </p>
             <Button variant="ghost" onClick={() => setStep("input")}>
               Popup blocked? Enter URL manually
             </Button>
+          </div>
+        )}
+
+        {/* Exchanging tokens intermediate step */}
+        {step === "exchanging" && (
+          <div className="text-center py-6">
+            <div className="size-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <span className="material-symbols-outlined text-3xl text-primary animate-spin">
+                progress_activity
+              </span>
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Exchanging Code for Tokens...</h3>
+            <p className="text-sm text-text-muted">
+              Almost there — securely exchanging the authorization code for access tokens.
+            </p>
           </div>
         )}
 
@@ -494,8 +606,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
               <span className="material-symbols-outlined text-3xl text-red-600">error</span>
             </div>
             <h3 className="text-lg font-semibold mb-2">Connection Failed</h3>
-            <p className="text-sm text-red-600 mb-4">{error}</p>
+            {error && (
+              <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3 mb-4 text-left">
+                <p className="text-xs font-semibold text-red-700 dark:text-red-400 mb-1">Error details</p>
+                <p className="text-sm text-red-700 dark:text-red-300 break-words">{error}</p>
+              </div>
+            )}
             <div className="flex gap-2">
+              {needsClientSecret && (
+                <Button onClick={() => setStep("setup")} variant="secondary" fullWidth>
+                  Enter Client Secret
+                </Button>
+              )}
               <Button onClick={startOAuthFlow} variant="secondary" fullWidth>
                 Try Again
               </Button>
@@ -513,6 +635,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 OAuthModal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
   provider: PropTypes.string,
+  connectionId: PropTypes.string,
   providerInfo: PropTypes.shape({
     name: PropTypes.string,
   }),

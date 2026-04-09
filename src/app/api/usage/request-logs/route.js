@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getRecentLogs } from "@/lib/usageDb";
 import { getSettings } from "@/lib/localDb";
 
-export async function GET() {
+export async function GET(request) {
   try {
     const settings = await getSettings();
 
-    if (settings.isDemoMode) {
+    if (settings?.isDemoMode === true) {
       const now = new Date();
       const formatDate = (date) => {
         const pad = (n) => String(n).padStart(2, "0");
@@ -29,14 +30,16 @@ export async function GET() {
         return `${formatDate(time)} | ${m} | ${p} | ${account} | ${tokensIn} | ${tokensOut} | ${s}`;
       });
 
-      return NextResponse.json(logs);
+      return NextResponse.json({ logs, isDemo: true });
     }
 
     const logs = await getRecentLogs(200);
-    return NextResponse.json(logs);
+    return NextResponse.json({ logs, isDemo: false });
   } catch (error) {
-    console.error("[API ERROR] /api/usage/logs failed:", error);
-    return NextResponse.json({ error: "Failed to fetch logs" }, { status: 500 });
+    console.error("[API ERROR] /api/usage/request-logs failed:", error);
+    const res = apiError(request, 500, "Failed to fetch logs");
+    const body = await res.json();
+    return NextResponse.json({ ...body, logs: [] }, { status: res.status, headers: res.headers });
   }
 }
 

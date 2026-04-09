@@ -1,5 +1,6 @@
 import os from "os";
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getProviderConnections } from "@/lib/localDb.js";
 
 function detectFeasibleClasses(totalRamGb) {
@@ -15,7 +16,7 @@ function detectFeasibleClasses(totalRamGb) {
   return ["8b-q4", "7b-q4", "4b-q4", "2b-q8"];
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
     const cpus = os.cpus() || [];
     const totalRamGb = Number((os.totalmem() / (1024 ** 3)).toFixed(2));
@@ -45,7 +46,7 @@ export async function GET() {
     return NextResponse.json(profile);
   } catch (error) {
     console.error("Error building local runtime profile:", error);
-    return NextResponse.json({ error: "Failed to build runtime profile" }, { status: 500 });
+    return apiError(request, 500, "Failed to build runtime profile");
   }
 }
 

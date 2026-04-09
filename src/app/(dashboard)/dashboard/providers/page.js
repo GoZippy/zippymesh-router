@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Image from "next/image";
 import PropTypes from "prop-types";
 import { Card, CardSkeleton, Badge, Button, Input, Modal, Select } from "@/shared/components";
+import AddToPlaybookModal from "@/shared/components/AddToPlaybookModal";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { FREE_PROVIDERS, OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX } from "@/shared/constants/providers";
 import { getProviderSignupUrl, getProviderIconUrl } from "@/shared/constants/provider-urls";
 import Link from "next/link";
-import { getErrorCode, getRelativeTime } from "@/shared/utils";
+import { useRouter } from "next/navigation";
+import { formatRequestError, getErrorCode, getRelativeTime, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
 
 const STORAGE_KEY = "providers-page-filters";
 const SORT_OPTIONS = [
@@ -23,6 +25,7 @@ const TYPE_OPTIONS = [
   { value: "oauth", label: "OAuth" },
   { value: "free", label: "Free" },
   { value: "apikey", label: "API Key" },
+  { value: "local", label: "Local" },
 ];
 const STATUS_OPTIONS = [
   { value: "all", label: "All" },
@@ -44,8 +47,35 @@ const MODEL_FAMILY_OPTIONS = [
   { value: "other", label: "Other" },
 ];
 
+// Format token expiry into a human-readable string
+function formatTokenExpiry(expiresAt) {
+  if (!expiresAt) return null;
+  const expiresMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiresMs)) return null;
+  const diffMs = expiresMs - Date.now();
+  const diffMins = Math.round(diffMs / 60000);
+  if (diffMins < 0) {
+    const ago = Math.abs(diffMins);
+    if (ago < 60) return `Expired ${ago}m ago`;
+    return `Expired ${Math.floor(ago / 60)}h ${ago % 60}m ago`;
+  }
+  if (diffMins < 60) return `Expires in ${diffMins}m`;
+  const h = Math.floor(diffMins / 60);
+  const m = diffMins % 60;
+  return `Expires in ${h}h ${m > 0 ? `${m}m` : ""}`.trim();
+}
+
+// Format rate limit time into HH:MM
+function formatRateLimit(rateLimitedUntil) {
+  if (!rateLimitedUntil) return null;
+  const until = new Date(rateLimitedUntil);
+  if (!Number.isFinite(until.getTime())) return null;
+  if (until.getTime() <= Date.now()) return null;
+  return until.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 // Shared helper function to avoid code duplication between ProviderCard and ApiKeyProviderCard
-function getStatusDisplay(connected, error, errorCode) {
+function getStatusDisplay(connected, error, errorCode, secretsMissing = 0) {
   const parts = [];
   if (connected > 0) {
     parts.push(
@@ -59,6 +89,13 @@ function getStatusDisplay(connected, error, errorCode) {
     parts.push(
       <Badge key="error" variant="error" size="sm" dot>
         {errText}
+      </Badge>
+    );
+  }
+  if (secretsMissing > 0) {
+    parts.push(
+      <Badge key="missing-secret" variant="warning" size="sm" dot>
+        {secretsMissing} Secret Missing
       </Badge>
     );
   }
@@ -99,6 +136,8 @@ export default function ProvidersPage() {
   const [models, setModels] = useState([]);
   const [spotPrices, setSpotPrices] = useState([]);
   const [spotPricesLoading, setSpotPricesLoading] = useState(false);
+  const [syncModelsLoading, setSyncModelsLoading] = useState(false);
+  const [addToRulesTarget, setAddToRulesTarget] = useState(null);
 
   const [sortBy, setSortBy] = useState("name-asc");
   const [filterType, setFilterType] = useState("all");
@@ -121,48 +160,57 @@ export default function ProvidersPage() {
     saveFilters({ sortBy, filterType, filterStatus, filterModelFamily, modelSearch });
   }, [sortBy, filterType, filterStatus, filterModelFamily, modelSearch]);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [connectionsRes, nodesRes, presetsRes, modelsRes] = await Promise.all([
-          fetch("/api/providers"),
-          fetch("/api/provider-nodes"),
-          fetch("/api/presets/provider-nodes"),
-          fetch("/api/marketplace/models"),
-        ]);
-        const connectionsData = await connectionsRes.json();
-        const nodesData = await nodesRes.json();
-        if (connectionsRes.ok) setConnections(connectionsData.connections || []);
-        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
-        if (presetsRes.ok) {
-          const presetsData = await presetsRes.json();
-          setPresets(presetsData.presets || []);
-        }
-        if (modelsRes.ok) {
-          const modelsData = await modelsRes.json();
-          setModels(modelsData.models || []);
-        }
-      } catch (error) {
-        console.log("Error fetching data:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+  const fetchData = useCallback(async () => {
+    try {
+      const [connectionsRes, nodesRes, presetsRes, modelsRes] = await safeFetchJsonAll([
+        { key: "connections", url: "/api/providers" },
+        { key: "nodes", url: "/api/provider-nodes" },
+        { key: "presets", url: "/api/presets/provider-nodes" },
+        { key: "models", url: "/api/marketplace/models" },
+      ]);
+      if (connectionsRes.ok) setConnections(connectionsRes.data?.connections || []);
+      if (nodesRes.ok) setProviderNodes(nodesRes.data?.nodes || []);
+      if (presetsRes.ok) setPresets(presetsRes.data?.presets || []);
+      if (modelsRes.ok) setModels(modelsRes.data?.models || []);
+    } catch (error) {
+      console.log("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+      setScanning(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleSyncAllProviderModels = useCallback(async () => {
+    if (syncModelsLoading) return;
+    setSyncModelsLoading(true);
+    try {
+      const res = await safeFetchJson("/api/provider-sync/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
+      if (res.ok) await fetchData();
+    } catch (err) {
+      console.error("Sync all provider models failed:", err);
+    } finally {
+      setSyncModelsLoading(false);
+    }
+  }, [syncModelsLoading, fetchData]);
 
   const handleScan = async () => {
     setScanning(true);
     setDiscoveredCount(null);
     try {
-      const res = await fetch("/api/discovery", { method: "POST" });
-      const data = await res.json();
+      const res = await safeFetchJson("/api/discovery", { method: "POST" });
       if (res.ok) {
-        setDiscoveredCount(data.count);
+        setDiscoveredCount(res.data?.count);
         // Refresh nodes
-        const nodesRes = await fetch("/api/provider-nodes");
-        const nodesData = await nodesRes.json();
-        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        const nodesRes = await safeFetchJson("/api/provider-nodes");
+        if (nodesRes.ok) setProviderNodes(nodesRes.data?.nodes || []);
       }
     } catch (err) {
       console.error("Discovery failed:", err);
@@ -193,6 +241,7 @@ export default function ProvidersPage() {
       const status = getEffectiveStatus(c);
       return status === "error" || status === "expired" || status === "unavailable";
     });
+    const secretsMissing = providerConnections.filter((c) => c.oauthNeedsSecret).length;
 
     const error = errorConns.length;
     const total = providerConnections.length;
@@ -216,7 +265,31 @@ export default function ProvidersPage() {
     // Get active groups
     const groups = [...new Set(providerConnections.filter(c => c.isEnabled !== false).map(c => c.group || "default"))];
 
-    return { connected, error, total, errorCode, errorTime, avgLatency, avgTps, groups };
+    // Token expiry: find soonest-expiring OAuth connection
+    const oauthConns = providerConnections.filter(c => c.authType === "oauth" && c.expiresAt);
+    const soonestExpiry = oauthConns.reduce((soonest, c) => {
+      const t = new Date(c.expiresAt).getTime();
+      return (!soonest || t < soonest) ? t : soonest;
+    }, null);
+    const expiryLabel = soonestExpiry ? formatTokenExpiry(new Date(soonestExpiry).toISOString()) : null;
+    const isExpiringSoon = soonestExpiry && (soonestExpiry - Date.now()) < 2 * 60 * 60 * 1000; // < 2h
+    const isExpired = soonestExpiry && soonestExpiry <= Date.now();
+
+    // Needs reauth: any OAuth connection explicitly needs reauth or is expired
+    const needsReauthCount = providerConnections.filter(c =>
+      c.needsReauth || c.tokenExpired || c.testStatus === "needs_reauth"
+    ).length;
+
+    // Rate limiting: find active rate limit
+    const rateLimitedConn = providerConnections.find(c =>
+      c.rateLimitedUntil && new Date(c.rateLimitedUntil).getTime() > Date.now()
+    );
+    const rateLimitLabel = rateLimitedConn ? formatRateLimit(rateLimitedConn.rateLimitedUntil) : null;
+
+    return {
+      connected, error, total, errorCode, errorTime, avgLatency, avgTps, groups, secretsMissing,
+      expiryLabel, isExpiringSoon, isExpired, needsReauthCount, rateLimitLabel,
+    };
   };
 
   const compatibleProviders = providerNodes
@@ -237,6 +310,27 @@ export default function ProvidersPage() {
       color: "#E85C4A",
       textIcon: "AC",
     }));
+
+  // Local providers (Ollama, LMStudio) - dedupe by baseUrl to avoid showing multiple entries
+  const localProviders = (() => {
+    const seen = new Map();
+    for (const node of providerNodes.filter((n) => n.type === "local")) {
+      // Only show localhost entries to avoid clutter
+      if (!node.baseUrl?.includes("localhost") && !node.baseUrl?.includes("127.0.0.1")) continue;
+      const key = node.apiType === "ollama" ? "ollama" : "lmstudio";
+      if (!seen.has(key)) {
+        seen.set(key, {
+          id: key,
+          name: node.apiType === "ollama" ? "Ollama" : "LM Studio",
+          color: node.apiType === "ollama" ? "#FFFFFF" : "#4B5563",
+          textIcon: node.apiType === "ollama" ? "OL" : "LM",
+          baseUrl: node.baseUrl,
+          isLocal: true,
+        });
+      }
+    }
+    return Array.from(seen.values());
+  })();
 
   const apiKeyProviders = {
     ...APIKEY_PROVIDERS,
@@ -313,8 +407,40 @@ export default function ProvidersPage() {
         hasMultipleAccounts: stats.total >= 2,
       });
     }
+    // Add local providers (Ollama, LMStudio) with actual connection status
+    for (const info of localProviders) {
+      // Look up auto-managed connection for this local provider
+      const localConnections = connections.filter(
+        (c) => c.provider === info.id && c.isActive
+      );
+      const hasAutoConnection = localConnections.length > 0;
+      const connectedCount = localConnections.filter(
+        (c) => c.testStatus === "ok" || !c.testStatus
+      ).length;
+      const errorCount = localConnections.filter(
+        (c) => c.testStatus === "error"
+      ).length;
+
+      list.push({
+        id: info.id,
+        name: info.name,
+        provider: info,
+        providerType: "local",
+        authType: "local",
+        stats: {
+          connected: hasAutoConnection ? Math.max(connectedCount, 1) : 0,
+          error: errorCount,
+          total: Math.max(localConnections.length, 1),
+        },
+        hasConnection: hasAutoConnection || true, // Local providers always "exist"
+        connectionCount: localConnections.length || 1,
+        hasMultipleAccounts: false,
+        isLocal: true,
+        autoManaged: true,
+      });
+    }
     return list;
-  }, [connections, providerNodes]);
+  }, [connections, providerNodes, localProviders]);
 
   const filteredAndSortedProviders = useMemo(() => {
     let result = [...allProviders];
@@ -385,10 +511,19 @@ export default function ProvidersPage() {
   useEffect(() => {
     if (loading) return;
     setSpotPricesLoading(true);
-    fetch("/api/marketplace/spot-prices?limit=20")
-      .then((res) => res.json())
-      .then((data) => setSpotPrices(data.models || []))
-      .catch(() => setSpotPrices([]))
+    safeFetchJson("/api/marketplace/spot-prices?limit=20")
+      .then((res) => {
+        if (res.ok) {
+          setSpotPrices(res.data?.models || []);
+        } else {
+          console.error("Error fetching spot prices:", formatRequestError("Failed to load spot prices", res, "Request failed"));
+          setSpotPrices([]);
+        }
+      })
+      .catch((err) => {
+        console.error("Error fetching spot prices:", err);
+        setSpotPrices([]);
+      })
       .finally(() => setSpotPricesLoading(false));
   }, [loading]);
 
@@ -402,6 +537,21 @@ export default function ProvidersPage() {
   }
 
   const hasAnyConnection = connections.length > 0;
+
+  // Global health summary for banner
+  const healthSummary = (() => {
+    if (!hasAnyConnection) return null;
+    const total = connections.length;
+    const active = connections.filter(c => {
+      const isCooldown = c.rateLimitedUntil && new Date(c.rateLimitedUntil).getTime() > Date.now();
+      const status = (c.testStatus === "unavailable" && !isCooldown) ? "active" : c.testStatus;
+      return status === "active" || status === "success";
+    }).length;
+    const needAttention = connections.filter(c =>
+      c.needsReauth || c.tokenExpired || c.testStatus === "needs_reauth" || c.testStatus === "error"
+    ).length;
+    return { total, active, needAttention };
+  })();
 
   return (
     <div className="flex flex-col gap-6">
@@ -420,6 +570,39 @@ export default function ProvidersPage() {
           </button>
         </div>
       )}
+      {/* Global provider health banner - shown when there are connections */}
+      {healthSummary && (
+        <div className={`rounded-xl border p-3 flex items-center justify-between gap-3 ${
+          healthSummary.needAttention > 0
+            ? "border-yellow-200 dark:border-yellow-900/50 bg-yellow-50/60 dark:bg-yellow-950/20"
+            : "border-green-200 dark:border-green-900/50 bg-green-50/50 dark:bg-green-950/20"
+        }`}>
+          <div className="flex items-center gap-2.5">
+            <span className={`material-symbols-outlined text-lg ${
+              healthSummary.needAttention > 0 ? "text-yellow-600" : "text-green-600"
+            }`}>
+              {healthSummary.needAttention > 0 ? "warning" : "check_circle"}
+            </span>
+            <span className="text-sm font-medium">
+              {healthSummary.active} of {healthSummary.total} connection{healthSummary.total !== 1 ? "s" : ""} active
+            </span>
+            {healthSummary.needAttention > 0 && (
+              <span className="text-sm text-yellow-700 dark:text-yellow-400">
+                &mdash; {healthSummary.needAttention} connection{healthSummary.needAttention !== 1 ? "s" : ""} need attention
+              </span>
+            )}
+          </div>
+          {healthSummary.needAttention > 0 && (
+            <button
+              onClick={() => setFilterStatus("added")}
+              className="text-xs text-yellow-700 dark:text-yellow-400 underline underline-offset-2 hover:no-underline shrink-0"
+            >
+              Show connected
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Getting started callout - shown only when no connections exist */}
       {!hasAnyConnection && (
         <div className="rounded-xl border border-green-200 dark:border-green-900/50 bg-green-50/50 dark:bg-green-950/20 p-4 flex gap-3">
@@ -532,6 +715,16 @@ export default function ProvidersPage() {
             <Button
               size="sm"
               variant="secondary"
+              icon={syncModelsLoading ? "sync" : "sync"}
+              onClick={handleSyncAllProviderModels}
+              disabled={syncModelsLoading}
+              className={syncModelsLoading ? "animate-spin-slow" : ""}
+            >
+              {syncModelsLoading ? "Syncing…" : "Sync all provider model lists"}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
               icon={scanning ? "sync" : "travel_explore"}
               onClick={handleScan}
               disabled={scanning}
@@ -547,7 +740,7 @@ export default function ProvidersPage() {
               variant="secondary"
               icon="add"
               onClick={() => setShowAddCompatibleModal(true)}
-              className="!bg-white !text-black hover:!bg-gray-100"
+              className="bg-white! text-black! hover:bg-gray-100!"
             >
               Add OpenAI Compatible
             </Button>
@@ -610,6 +803,7 @@ export default function ProvidersPage() {
                   providerId={item.id}
                   provider={item.provider}
                   stats={item.stats}
+                  onAddToRules={() => setAddToRulesTarget({ id: item.id, name: item.name || item.id })}
                 />
               ) : (
                 <ApiKeyProviderCard
@@ -617,6 +811,7 @@ export default function ProvidersPage() {
                   providerId={item.id}
                   provider={item.provider}
                   stats={item.stats}
+                  onAddToRules={() => setAddToRulesTarget({ id: item.id, name: item.name || item.id })}
                 />
               )
             )
@@ -634,7 +829,7 @@ export default function ProvidersPage() {
                 Cheapest provider per model (tokens per $1). Compare spot prices across providers.
               </p>
             </div>
-            <Link href="/dashboard/marketplace">
+            <Link href="/dashboard/marketplace?view=spot">
               <Button variant="secondary" size="sm">
                 View full matrix
               </Button>
@@ -667,16 +862,21 @@ export default function ProvidersPage() {
                     if (!cheapest) return null;
                     const inputPerMUsd = cheapest.inputPerMUsd;
                     const outputPerMUsd = cheapest.outputPerMUsd;
-                    const tokensPerDollar =
-                      inputPerMUsd > 0 ? Math.round(1000000 / inputPerMUsd).toLocaleString() : "—";
+                    const isValidInput = inputPerMUsd > 0 && inputPerMUsd <= 1000;
+                    const isValidOutput = outputPerMUsd >= 0 && outputPerMUsd <= 1000;
+                    const tokensPerDollar = isValidInput
+                      ? Math.round(1000000 / inputPerMUsd).toLocaleString()
+                      : "—";
+                    const formatPrice = (val, isValid) =>
+                      isValid ? `$${Number(val).toFixed(2)}` : "—";
                     return (
                       <tr key={row.canonicalModelId} className="border-b border-border/50">
                         <td className="py-2 pr-4">
                           <span className="font-medium">{row.modelDisplayName || row.canonicalModelId}</span>
                         </td>
                         <td className="py-2 pr-4">{cheapest.provider}</td>
-                        <td className="py-2 pr-4">${Number(inputPerMUsd).toFixed(2)}</td>
-                        <td className="py-2 pr-4">${Number(outputPerMUsd).toFixed(2)}</td>
+                        <td className="py-2 pr-4">{formatPrice(inputPerMUsd, isValidInput)}</td>
+                        <td className="py-2 pr-4">{formatPrice(outputPerMUsd, isValidOutput)}</td>
                         <td className="py-2">{tokensPerDollar}</td>
                       </tr>
                     );
@@ -703,48 +903,76 @@ export default function ProvidersPage() {
           setShowAddAnthropicCompatibleModal(false);
         }}
       />
+      <AddToPlaybookModal
+        isOpen={!!addToRulesTarget}
+        onClose={() => setAddToRulesTarget(null)}
+        modelId={addToRulesTarget?.id}
+        modelName={addToRulesTarget?.name}
+      />
     </div>
   );
 }
 
-function ProviderCard({ providerId, provider, stats }) {
-  const { connected, error, errorCode, errorTime, avgLatency, avgTps } = stats;
+function ProviderCard({ providerId, provider, stats, onAddToRules }) {
+  const router = useRouter();
+  const {
+    connected, error, errorCode, errorTime, avgLatency, avgTps, secretsMissing,
+    expiryLabel, isExpiringSoon, isExpired, needsReauthCount, rateLimitLabel,
+  } = stats;
   const [imgError, setImgError] = useState(false);
   const signupUrl = getProviderSignupUrl(providerId);
 
+  // Color dot: green=active, yellow=expiring soon, red=expired/needs_reauth, gray=no connections
+  const statusDotColor = (() => {
+    if (needsReauthCount > 0 || isExpired) return "bg-red-500";
+    if (isExpiringSoon) return "bg-yellow-400";
+    if (connected > 0) return "bg-green-500";
+    return "bg-gray-300 dark:bg-gray-600";
+  })();
+
   return (
-    <Link href={`/dashboard/providers/${providerId}`} className="group">
-      <Card padding="xs" className="h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => router.push(`/dashboard/providers/${providerId}`)}
+      onKeyDown={(e) => e.key === "Enter" && router.push(`/dashboard/providers/${providerId}`)}
+      className="group cursor-pointer"
+    >
+      <Card padding="xs" className="h-full hover:bg-black/1 dark:hover:bg-white/1 transition-colors">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className="size-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: `${provider.color}15` }}
-            >
-              {imgError ? (
-                <span
-                  className="text-xs font-bold"
-                  style={{ color: provider.color }}
-                >
-                  {provider.textIcon || provider.id.slice(0, 2).toUpperCase()}
-                </span>
-              ) : (
-                <Image
-                  src={`/providers/${provider.id}.png`}
-                  alt={provider.name}
-                  width={30}
-                  height={30}
-                  className="object-contain rounded-lg max-w-[32px] max-h-[32px]"
-                  sizes="32px"
-                  onError={() => setImgError(true)}
-                />
-              )}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative shrink-0">
+              <div
+                className="size-8 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: `${provider.color}15` }}
+              >
+                {imgError ? (
+                  <span
+                    className="text-xs font-bold"
+                    style={{ color: provider.color }}
+                  >
+                    {provider.textIcon || provider.id.slice(0, 2).toUpperCase()}
+                  </span>
+                ) : (
+                  <Image
+                    src={getProviderIconUrl(provider.id)}
+                    alt={provider.name}
+                    width={30}
+                    height={30}
+                    className="object-contain rounded-lg max-w-[32px] max-h-[32px]"
+                    sizes="32px"
+                    onError={() => setImgError(true)}
+                  />
+                )}
+              </div>
+              {/* Status dot indicator */}
+              <span className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background ${statusDotColor}`} />
             </div>
-            <div>
-              <h3 className="font-semibold">{provider.name}</h3>
-              <div className="flex flex-col gap-1.5 mt-1">
+            <div className="min-w-0">
+              <h3 className="font-semibold truncate">{provider.name}</h3>
+              <div className="flex flex-col gap-1 mt-1">
                 <div className="flex items-center gap-2 text-xs flex-wrap">
-                  {getStatusDisplay(connected, error, errorCode)}
+                  {getStatusDisplay(connected, error, errorCode, secretsMissing)}
                   {avgLatency && (
                     <span className="text-text-muted flex items-center gap-1">
                       <span className="material-symbols-outlined text-[14px]">timer</span>
@@ -759,6 +987,33 @@ function ProviderCard({ providerId, provider, stats }) {
                   )}
                   {errorTime && <span className="text-text-muted">• {errorTime}</span>}
                 </div>
+                {/* Token expiry row */}
+                {expiryLabel && (
+                  <span className={`text-xs flex items-center gap-1 ${isExpired || needsReauthCount > 0 ? "text-red-500" : isExpiringSoon ? "text-yellow-600 dark:text-yellow-400" : "text-text-muted"}`}>
+                    <span className="material-symbols-outlined text-[13px]">schedule</span>
+                    {expiryLabel}
+                  </span>
+                )}
+                {/* Rate limit row */}
+                {rateLimitLabel && (
+                  <span className="text-xs text-orange-500 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px]">block</span>
+                    Rate limited until {rateLimitLabel}
+                  </span>
+                )}
+                {/* Reconnect prompt */}
+                {needsReauthCount > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/dashboard/providers/${providerId}`);
+                    }}
+                    className="mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors w-fit"
+                  >
+                    <span className="material-symbols-outlined text-[13px]">refresh</span>
+                    Reconnect
+                  </button>
+                )}
                 {stats.groups && stats.groups.length > 0 && (
                   <div className="flex gap-1 flex-wrap">
                     {stats.groups.map(g => (
@@ -775,7 +1030,18 @@ function ProviderCard({ providerId, provider, stats }) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
+
+            {onAddToRules && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onAddToRules(); }}
+                className="p-1 hover:bg-primary/10 rounded text-primary"
+                title="Add to Routing Rules"
+              >
+                <span className="material-symbols-outlined text-[18px]">alt_route</span>
+              </button>
+            )}
+
             {signupUrl && (
               <a
                 href={signupUrl}
@@ -794,7 +1060,7 @@ function ProviderCard({ providerId, provider, stats }) {
           </div>
         </div>
       </Card>
-    </Link>
+    </div>
   );
 }
 
@@ -811,16 +1077,30 @@ ProviderCard.propTypes = {
     error: PropTypes.number,
     errorCode: PropTypes.string,
     errorTime: PropTypes.string,
+    expiryLabel: PropTypes.string,
+    isExpiringSoon: PropTypes.bool,
+    isExpired: PropTypes.bool,
+    needsReauthCount: PropTypes.number,
+    rateLimitLabel: PropTypes.string,
   }).isRequired,
+  onAddToRules: PropTypes.func,
 };
 
 // API Key providers - use image with textIcon fallback (same as OAuth providers)
-function ApiKeyProviderCard({ providerId, provider, stats }) {
-  const { connected, error, errorCode, errorTime, avgLatency, avgTps } = stats;
+function ApiKeyProviderCard({ providerId, provider, stats, onAddToRules }) {
+  const router = useRouter();
+  const { connected, error, errorCode, errorTime, avgLatency, avgTps, secretsMissing, rateLimitLabel } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
   const [imgError, setImgError] = useState(false);
   const signupUrl = getProviderSignupUrl(providerId);
+
+  // Status dot: api-key type — gray if no connections, green if active, red if error
+  const statusDotColor = (() => {
+    if (error > 0 && connected === 0) return "bg-red-500";
+    if (connected > 0) return "bg-green-500";
+    return "bg-gray-300 dark:bg-gray-600";
+  })();
 
   // Determine icon path: OpenAI Compatible providers use specialized icons
   const getIconPath = () => {
@@ -834,38 +1114,48 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
   };
 
   return (
-    <Link href={`/dashboard/providers/${providerId}`} className="group">
-      <Card padding="xs" className="h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => router.push(`/dashboard/providers/${providerId}`)}
+      onKeyDown={(e) => e.key === "Enter" && router.push(`/dashboard/providers/${providerId}`)}
+      className="group cursor-pointer"
+    >
+      <Card padding="xs" className="h-full hover:bg-black/1 dark:hover:bg-white/1 transition-colors">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className="size-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: `${provider.color}15` }}
-            >
-              {imgError ? (
-                <span
-                  className="text-xs font-bold"
-                  style={{ color: provider.color }}
-                >
-                  {provider.textIcon || provider.id.slice(0, 2).toUpperCase()}
-                </span>
-              ) : (
-                <Image
-                  src={getIconPath()}
-                  alt={provider.name}
-                  width={30}
-                  height={30}
-                  className="object-contain rounded-lg max-w-[30px] max-h-[30px]"
-                  sizes="30px"
-                  onError={() => setImgError(true)}
-                />
-              )}
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative shrink-0">
+              <div
+                className="size-8 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: `${provider.color}15` }}
+              >
+                {imgError ? (
+                  <span
+                    className="text-xs font-bold"
+                    style={{ color: provider.color }}
+                  >
+                    {provider.textIcon || provider.id.slice(0, 2).toUpperCase()}
+                  </span>
+                ) : (
+                  <Image
+                    src={getIconPath()}
+                    alt={provider.name}
+                    width={30}
+                    height={30}
+                    className="object-contain rounded-lg max-w-[30px] max-h-[30px]"
+                    sizes="30px"
+                    onError={() => setImgError(true)}
+                  />
+                )}
+              </div>
+              {/* Status dot indicator */}
+              <span className={`absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background ${statusDotColor}`} />
             </div>
-            <div>
-              <h3 className="font-semibold">{provider.name}</h3>
-              <div className="flex flex-col gap-1.5 mt-1">
+            <div className="min-w-0">
+              <h3 className="font-semibold truncate">{provider.name}</h3>
+              <div className="flex flex-col gap-1 mt-1">
                 <div className="flex items-center gap-2 text-xs flex-wrap">
-                  {getStatusDisplay(connected, error, errorCode)}
+                  {getStatusDisplay(connected, error, errorCode, secretsMissing)}
                   {avgLatency && (
                     <span className="text-text-muted flex items-center gap-1">
                       <span className="material-symbols-outlined text-[14px]">timer</span>
@@ -890,6 +1180,13 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
                   )}
                   {errorTime && <span className="text-text-muted">• {errorTime}</span>}
                 </div>
+                {/* Rate limit row */}
+                {rateLimitLabel && (
+                  <span className="text-xs text-orange-500 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[13px]">block</span>
+                    Rate limited until {rateLimitLabel}
+                  </span>
+                )}
                 {stats.groups && stats.groups.length > 0 && (
                   <div className="flex gap-1 flex-wrap">
                     {stats.groups.map(g => (
@@ -906,7 +1203,18 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
+
+            {onAddToRules && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onAddToRules(); }}
+                className="p-1 hover:bg-primary/10 rounded text-primary"
+                title="Add to Routing Rules"
+              >
+                <span className="material-symbols-outlined text-[18px]">alt_route</span>
+              </button>
+            )}
+
             {signupUrl && (
               <a
                 href={signupUrl}
@@ -925,7 +1233,7 @@ function ApiKeyProviderCard({ providerId, provider, stats }) {
           </div>
         </div>
       </Card>
-    </Link>
+    </div>
   );
 }
 
@@ -943,7 +1251,9 @@ ApiKeyProviderCard.propTypes = {
     error: PropTypes.number,
     errorCode: PropTypes.string,
     errorTime: PropTypes.string,
+    rateLimitLabel: PropTypes.string,
   }).isRequired,
+  onAddToRules: PropTypes.func,
 };
 
 function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
@@ -993,7 +1303,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/provider-nodes", {
+      const res = await safeFetchJson("/api/provider-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1004,7 +1314,7 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
           type: "openai-compatible",
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (res.ok) {
         onCreated(data.node);
         setFormData({
@@ -1026,12 +1336,12 @@ function AddOpenAICompatibleModal({ isOpen, onClose, onCreated }) {
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const res = await fetch("/api/provider-nodes/validate", {
+      const res = await safeFetchJson("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ baseUrl: formData.baseUrl, apiKey: checkKey, type: "openai-compatible" }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       setValidationResult(data.valid ? "success" : "failed");
     } catch {
       setValidationResult("failed");
@@ -1131,7 +1441,7 @@ function AddAnthropicCompatibleModal({ isOpen, onClose, onCreated }) {
     if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
     try {
-      const res = await fetch("/api/provider-nodes", {
+      const res = await safeFetchJson("/api/provider-nodes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1141,7 +1451,7 @@ function AddAnthropicCompatibleModal({ isOpen, onClose, onCreated }) {
           type: "anthropic-compatible",
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       if (res.ok) {
         onCreated(data.node);
         setFormData({
@@ -1162,7 +1472,7 @@ function AddAnthropicCompatibleModal({ isOpen, onClose, onCreated }) {
   const handleValidate = async () => {
     setValidating(true);
     try {
-      const res = await fetch("/api/provider-nodes/validate", {
+      const res = await safeFetchJson("/api/provider-nodes/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1171,7 +1481,7 @@ function AddAnthropicCompatibleModal({ isOpen, onClose, onCreated }) {
           type: "anthropic-compatible"
         }),
       });
-      const data = await res.json();
+      const data = res.data || {};
       setValidationResult(data.valid ? "success" : "failed");
     } catch {
       setValidationResult("failed");

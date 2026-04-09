@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Card from "@/shared/components/Card";
+import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
 function statusClass(status) {
   if (status === "aligned") return "text-green-600 dark:text-green-400";
@@ -22,10 +23,11 @@ export default function ReconciliationTable() {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch("/api/usage/reconciliation?windowHours=168", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Failed to load reconciliation");
-        setRows(data.rows || []);
+        const response = await safeFetchJson("/api/usage/reconciliation?windowHours=168", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(formatRequestError("Failed to load reconciliation", response, "Failed to load reconciliation"));
+        }
+        setRows(response.data?.rows || []);
       } catch (err) {
         setError(err.message || "Failed to load reconciliation");
       } finally {

@@ -18,6 +18,7 @@ export default function LoginPage() {
       const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
 
       try {
+        console.log(`[Login] Checking settings...`);
         const res = await fetch(`${baseUrl}/api/settings`, {
           signal: controller.signal,
         });
@@ -25,17 +26,25 @@ export default function LoginPage() {
 
         if (res.ok) {
           const data = await res.json();
+          console.log(`[Login] hasPassword: ${data.hasPassword}, requireLogin: ${data.requireLogin}`);
           if (data.requireLogin === false) {
             router.push("/dashboard");
             router.refresh();
             return;
           }
-          setHasPassword(!!data.hasPassword);
+          if (data.hasPassword === false) {
+            router.push("/setup");
+            router.refresh();
+            return;
+          }
+          setHasPassword(true);
         } else {
+          console.error(`[Login] Settings fetch failed: ${res.status}`);
           // Safe fallback on non-OK response to avoid infinite loading state.
           setHasPassword(true);
         }
       } catch (err) {
+        console.error(`[Login] Error in checkAuth: ${err.message}`);
         clearTimeout(timeoutId);
         setHasPassword(true);
       }
@@ -56,10 +65,22 @@ export default function LoginPage() {
       });
 
       if (res.ok) {
-        router.push("/dashboard");
+        const data = await res.json();
+        // If logged in via env fallback (no permanent credential stored yet),
+        // redirect to setup to complete the permanent password setup.
+        if (data.needsPasswordSetup) {
+          router.push("/setup");
+        } else {
+          router.push("/dashboard");
+        }
         router.refresh();
       } else {
         const data = await res.json();
+        if (data.setupRequired) {
+          router.push("/setup");
+          router.refresh();
+          return;
+        }
         setError(data.error || "Invalid password");
       }
     } catch (err) {
@@ -114,7 +135,8 @@ export default function LoginPage() {
             </Button>
 
             <p className="text-xs text-center text-text-muted mt-2">
-              Use INITIAL_PASSWORD from .env for first-time login
+              Your credentials are stored securely and persist across updates.
+              Use INITIAL_PASSWORD from .env for first-time login or recovery.
             </p>
           </form>
         </Card>

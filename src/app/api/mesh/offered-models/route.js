@@ -4,8 +4,10 @@ import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { getPricing } from "@/lib/localDb.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
 import { getProviderSource } from "@/shared/constants/pricing.js";
+import { getSidecarUrl } from "@/lib/sidecar";
+import { apiError } from "@/lib/apiErrors";
 
-const SIDECAR_URL = process.env.SIDE_CAR_URL || "http://localhost:9480";
+const SIDECAR_URL = getSidecarUrl();
 
 /** Convert to USD per 1M tokens. Pricing stores $/1M directly. */
 function asUsdPerM(value) {
@@ -20,7 +22,7 @@ function scenarioCost(inputPerMUsd, outputPerMUsd, inputWeight = 1, outputWeight
 /**
  * GET - Returns offered models + available models with cost recommendations
  */
-export async function GET() {
+export async function GET(request) {
   try {
     const [offered, registryModels, pricing] = await Promise.all([
       getMeshOfferedModels(),
@@ -96,7 +98,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error fetching offered models:", error);
-    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch offered models");
   }
 }
 
@@ -109,7 +111,7 @@ export async function POST(request) {
     const { offered } = body;
 
     if (!Array.isArray(offered)) {
-      return NextResponse.json({ error: "offered must be an array" }, { status: 400 });
+      return apiError(request, 400, "offered must be an array");
     }
 
     const validated = offered
@@ -157,6 +159,6 @@ export async function POST(request) {
     return NextResponse.json({ offered: await getMeshOfferedModels() });
   } catch (error) {
     console.error("Error setting offered models:", error);
-    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    return apiError(request, 500, "Failed to save offered models");
   }
 }

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { getSettings, updateSettings } from "@/lib/localDb";
+import { getSettings, updateSettings, getFirstRun, writeAuditLog } from "@/lib/localDb";
 import bcrypt from "bcryptjs";
+import { apiError } from "@/lib/apiErrors.js";
 
-export async function GET() {
+export async function GET(request) {
   try {
     const settings = await getSettings();
     const { password, ...safeSettings } = settings;
@@ -16,7 +17,7 @@ export async function GET() {
     });
   } catch (error) {
     console.log("Error getting settings:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "Failed to load settings");
   }
 }
 
@@ -28,21 +29,29 @@ export async function PATCH(request) {
     if (body.newPassword) {
       const settings = await getSettings();
       const currentHash = settings.password;
+      const firstRun = await getFirstRun();
 
-      // Verify current password if it exists
-      if (currentHash) {
+      // During setup (firstRun), allow setting password without currentPassword
+      if (firstRun) {
+        // Initial setup: no current password needed
+      } else if (currentHash) {
+        // Post-setup: require current password to change
         if (!body.currentPassword) {
-          return NextResponse.json({ error: "Current password required" }, { status: 400 });
+          return apiError(request, 400, "Current password required");
         }
         const isValid = await bcrypt.compare(body.currentPassword, currentHash);
         if (!isValid) {
-          return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
+          return apiError(request, 401, "Invalid current password");
         }
       } else {
-        // First time setting password: allow empty or INITIAL_PASSWORD from env
+        // No hash yet, not first run: allow if INITIAL_PASSWORD matches (env bootstrap)
+        // This is also a recovery path — the setup wizard should have set a password,
+        // but if the DB was cleared or migrated this lets the user recover via /setup.
         const initialPassword = process.env.INITIAL_PASSWORD;
-        if (body.currentPassword && initialPassword && body.currentPassword !== initialPassword) {
-          return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
+        const envPassword = typeof initialPassword === "string" ? initialPassword.trim() : "";
+        const current = typeof body.currentPassword === "string" ? body.currentPassword.trim() : "";
+        if (current && envPassword && current !== envPassword) {
+          return apiError(request, 401, "Invalid current password");
         }
       }
 
@@ -53,6 +62,9 @@ export async function PATCH(request) {
     }
 
     const settings = await updateSettings(body);
+
+    // Non-blocking audit log write
+    writeAuditLog({ action: 'settings_change', resourceType: 'settings' });
 
     // Sync pricing to Sidecar if pricePer1k was updated
     if (body.pricePer1k !== undefined) {
@@ -82,6 +94,6 @@ export async function PATCH(request) {
     return NextResponse.json(safeSettings);
   } catch (error) {
     console.log("Error updating settings:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiError(request, 500, "Failed to update settings");
   }
 }

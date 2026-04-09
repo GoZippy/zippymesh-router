@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { Badge, Toggle } from "@/shared/components";
-import { getSidecarHealth, getSidecarInfo, getWalletBalance } from "@/lib/sidecar";
 import { useDevMode } from "./DevModeContext";
 import { useSettings } from "@/shared/hooks";
+import { formatRequestError, safeFetchJsonAll } from "@/shared/utils";
 
 export default function ZippyStatusBar() {
     const { isDevOpen, toggleDevMode } = useDevMode();
@@ -15,63 +15,63 @@ export default function ZippyStatusBar() {
     const [nodeInfo, setNodeInfo] = useState(null);
     const [walletInfo, setWalletInfo] = useState({ balance: 0, currency: 'ZIP' });
     const [isLoading, setIsLoading] = useState(true);
-    const [mode, setMode] = useState("Edge"); // Edge, Relay, Full Node, Validator
     const [isBroadcast, setIsBroadcast] = useState(false);
+    const [nodeError, setNodeError] = useState("");
+    const [walletError, setWalletError] = useState("");
 
     const [networkStats, setNetworkStats] = useState(nodeInfo?.stats || null);
 
     useEffect(() => {
         const checkStatus = async () => {
             try {
-                const [nodeRes, balRes] = await Promise.all([
-                    fetch("/api/zippy/node"),
-                    fetch("/api/v1/wallet/balance")
+                // If in demo mode, override status and avoid blocking on API failures.
+                if (isDemoMode) {
+                    setIsConnected(true);
+                    setNodeInfo({ node_id: "demo-node", status: "running" });
+                    setWalletInfo({ balance: 10240, currency: "ZIP", address: "ZIP-DEMO" });
+                    setNetworkStats({ peerCount: 42, health: 98 });
+                    setNodeError("");
+                    setWalletError("");
+                    return;
+                }
+
+                const [nodeRes, walletRes] = await safeFetchJsonAll([
+                    { key: "node", url: "/api/zippy/node" },
+                    { key: "wallet", url: "/api/v1/wallet/balance" }
                 ]);
 
-                if (nodeRes.ok) {
-                    const data = await nodeRes.json();
-
-                    // If in demo mode, override status
-                    if (isDemoMode) {
-                        setIsConnected(true);
-                        setNodeInfo({ node_id: "demo-node", status: "running" });
-                        setNetworkStats({ peerCount: 42, health: 98 });
-                        return;
-                    }
-
+                if (!nodeRes.ok) {
+                    console.error("Node status check failed:", nodeRes.error);
+                    setNodeError(formatRequestError("Node status unavailable", nodeRes, "Request failed"));
+                    setIsConnected(false);
+                    setNodeInfo(null);
+                    setNetworkStats(null);
+                } else {
+                    const data = nodeRes.data || {};
                     const running = data.status === "running";
                     setIsConnected(running);
                     setNodeInfo(data);
-
-                    if (data.stats) {
-                        setNetworkStats(data.stats);
-                    }
-                } else {
-                    if (isDemoMode) {
-                        setIsConnected(true);
-                        setNodeInfo({ node_id: "demo-node", status: "running" });
-                        setNetworkStats({ peerCount: 42, health: 98 });
-                    } else {
-                        setIsConnected(false);
-                        setNodeInfo(null);
-                    }
+                    setNetworkStats(data.stats || null);
+                    setNodeError("");
                 }
 
-                if (balRes.ok && !isDemoMode) {
-                    const balData = await balRes.json();
+                if (!walletRes.ok) {
+                    console.error("Wallet balance check failed:", walletRes.error);
+                    setWalletError(formatRequestError("Wallet balance unavailable", walletRes, "Request failed"));
+                } else {
+                    const balData = walletRes.data || {};
                     setWalletInfo({
                         balance: balData.balance,
                         currency: balData.currency || "ZIP",
                         address: balData.address,
                         name: balData.name
                     });
+                    setWalletError("");
                 }
-            } catch (error) {
-                console.error("Status check failed:", error);
-                if (!isDemoMode) setIsConnected(false);
             } finally {
                 setIsLoading(false);
             }
+
         };
 
         checkStatus();
@@ -95,11 +95,20 @@ export default function ZippyStatusBar() {
 
             if (res.ok) {
                 setIsConnected(enabled);
+                setNodeError("");
             } else {
-                console.error("Failed to toggle node:", await res.text());
+                const text = await res.text();
+                let message = "Toggle failed";
+                try {
+                    const data = JSON.parse(text);
+                    message = data?.error?.message || data?.error || message;
+                } catch {
+                    if (text) message = text.slice(0, 120);
+                }
+                setNodeError(formatRequestError("Node", { ok: false, status: res.status, error: message }, message));
             }
         } catch (error) {
-            console.error("Error toggling node:", error);
+            setNodeError(formatRequestError("Node", { ok: false, error: error?.message || "Network error" }, "Toggle failed"));
         } finally {
             setIsLoading(false);
         }
@@ -114,6 +123,7 @@ export default function ZippyStatusBar() {
     };
 
     const protocolVersion = "1.0";
+    const displayError = nodeError || walletError;
     const displayAddress = walletInfo.address
         ? `${walletInfo.address.substring(0, 10)}...${walletInfo.address.substring(walletInfo.address.length - 4)}`
         : nodeInfo?.node_id
@@ -130,6 +140,11 @@ export default function ZippyStatusBar() {
                 <Badge variant={isConnected ? "success" : "secondary"} className="scale-90">
                     {isConnected ? "Connected" : "Offline"}
                 </Badge>
+                {displayError && (
+                    <Badge variant="warning" className="scale-90 px-1 py-0 text-[11px]">
+                        {displayError}
+                    </Badge>
+                )}
                 {isDemoMode && (
                     <Badge variant="warning" className="scale-75 font-black px-1 py-0! opacity-80">DEMO</Badge>
                 )}

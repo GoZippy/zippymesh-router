@@ -4,19 +4,20 @@ import { getCombos, createCombo, getComboByName } from "@/lib/localDb";
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { apiError } from "@/lib/apiErrors.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
 
 // GET /api/combos - Get all combos
-export async function GET() {
+export async function GET(request) {
   try {
     const combos = await getCombos();
     return NextResponse.json({ combos });
   } catch (error) {
     console.log("Error fetching combos:", error);
-    return NextResponse.json({ error: "Failed to fetch combos" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch combos");
   }
 }
 
@@ -27,18 +28,18 @@ export async function POST(request) {
     const { name, models } = body;
 
     if (!name) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      return apiError(request, 400, "Name is required");
     }
 
     // Validate name format
     if (!VALID_NAME_REGEX.test(name)) {
-      return NextResponse.json({ error: "Name can only contain letters, numbers, - and _" }, { status: 400 });
+      return apiError(request, 400, "Name can only contain letters, numbers, - and _");
     }
 
     // Check if name already exists
     const existing = await getComboByName(name);
     if (existing) {
-      return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
+      return apiError(request, 400, "Combo name already exists");
     }
 
     const combo = await createCombo({ name, models: models || [] });
@@ -49,7 +50,7 @@ export async function POST(request) {
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {
     console.log("Error creating combo:", error);
-    return NextResponse.json({ error: "Failed to create combo" }, { status: 500 });
+    return apiError(request, 500, "Failed to create combo");
   }
 }
 

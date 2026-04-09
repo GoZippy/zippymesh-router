@@ -1,16 +1,14 @@
 import { NextResponse } from "next/server";
 import { getWallets, createWallet, updateWallet, deleteWallet } from "@/lib/localDb.js";
 import { encrypt } from "@/lib/cryptoUtils.js";
+import { apiError } from "@/lib/apiErrors.js";
 
-export async function GET() {
+export async function GET(request) {
     try {
         const wallets = await getWallets();
         return NextResponse.json(wallets);
     } catch (error) {
-        return NextResponse.json(
-            { error: "Internal Server Error", details: error.message },
-            { status: 500 }
-        );
+        return apiError(request, 500, "Internal Server Error");
     }
 }
 
@@ -19,7 +17,7 @@ export async function POST(req) {
         const data = await req.json();
 
         if (!data.name || !data.address) {
-            return NextResponse.json({ error: "Name and address are required" }, { status: 400 });
+            return apiError(req, 400, "Name and address are required");
         }
 
         let encryptedPrivateKey = data.encryptedPrivateKey;
@@ -39,10 +37,7 @@ export async function POST(req) {
 
         return NextResponse.json(wallet);
     } catch (error) {
-        return NextResponse.json(
-            { error: "Internal Server Error", details: error.message },
-            { status: 500 }
-        );
+        return apiError(req, 500, "Internal Server Error");
     }
 }
 
@@ -52,20 +47,17 @@ export async function PATCH(req) {
         const { id, ...updates } = data;
 
         if (!id) {
-            return NextResponse.json({ error: "Wallet ID is required" }, { status: 400 });
+            return apiError(req, 400, "Wallet ID is required");
         }
 
         const updated = await updateWallet(id, updates);
         if (!updated) {
-            return NextResponse.json({ error: "Wallet not found" }, { status: 404 });
+            return apiError(req, 404, "Wallet not found");
         }
 
         return NextResponse.json(updated);
     } catch (error) {
-        return NextResponse.json(
-            { error: "Internal Server Error", details: error.message },
-            { status: 500 }
-        );
+        return apiError(req, 500, "Internal Server Error");
     }
 }
 
@@ -84,19 +76,16 @@ export async function DELETE(req) {
         }
 
         if (!id) {
-            return NextResponse.json({ error: "Wallet ID is required" }, { status: 400 });
+            return apiError(req, 400, "Wallet ID is required");
         }
 
         const deleted = await deleteWallet(id);
         if (!deleted) {
-            return NextResponse.json({ error: "Wallet not found or already deleted" }, { status: 404 });
+            return apiError(req, 404, "Wallet not found or already deleted");
         }
 
         return NextResponse.json({ success: true, wallet: deleted });
     } catch (error) {
-        return NextResponse.json(
-            { error: "Internal Server Error", details: error.message },
-            { status: 500 }
-        );
+        return apiError(req, 500, "Internal Server Error");
     }
 }

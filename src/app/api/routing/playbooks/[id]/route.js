@@ -1,6 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { updateRoutingPlaybook, deleteRoutingPlaybook } from "@/models";
+import { apiError } from "@/lib/apiErrors.js";
 
 // PUT /api/routing/playbooks/[id] - Update playbook
 export async function PUT(request, { params }) {
@@ -10,13 +11,13 @@ export async function PUT(request, { params }) {
 
         const updated = await updateRoutingPlaybook(id, body);
         if (!updated) {
-            return NextResponse.json({ error: "Playbook not found" }, { status: 404 });
+            return apiError(request, 404, "Playbook not found");
         }
 
         return NextResponse.json({ playbook: updated });
     } catch (error) {
         console.log("Error updating playbook:", error);
-        return NextResponse.json({ error: "Failed to update playbook" }, { status: 500 });
+        return apiError(request, 500, "Failed to update playbook");
     }
 }
 
@@ -27,12 +28,12 @@ export async function DELETE(request, { params }) {
         const success = await deleteRoutingPlaybook(id);
 
         if (!success) {
-            return NextResponse.json({ error: "Playbook not found" }, { status: 404 });
+            return apiError(request, 404, "Playbook not found");
         }
 
         return NextResponse.json({ success: true });
     } catch (error) {
         console.log("Error deleting playbook:", error);
-        return NextResponse.json({ error: "Failed to delete playbook" }, { status: 500 });
+        return apiError(request, 500, "Failed to delete playbook");
     }
 }

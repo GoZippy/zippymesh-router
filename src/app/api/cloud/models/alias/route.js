@@ -5,7 +5,8 @@ const validateApiKey = async () => true;
 const isCloudEnabled = async () => false;
 
 import { getConsistentMachineId } from "@/shared/utils/machineId";
-import { syncToCloud } from "@/app/api/sync/cloud/route";
+import { syncToCloud } from "@/lib/syncCloud";
+import { apiError } from "@/lib/apiErrors.js";
 
 // PUT /api/cloud/models/alias - Set model alias (for cloud/CLI)
 export async function PUT(request) {
@@ -14,28 +15,26 @@ export async function PUT(request) {
     const apiKey = authHeader?.replace("Bearer ", "");
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing API key" }, { status: 401 });
+      return apiError(request, 401, "Missing API key");
     }
 
     const isValid = await validateApiKey(apiKey);
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      return apiError(request, 401, "Invalid API key");
     }
 
     const body = await request.json();
     const { model, alias } = body;
 
     if (!model || !alias) {
-      return NextResponse.json({ error: "Model and alias required" }, { status: 400 });
+      return apiError(request, 400, "Model and alias required");
     }
 
     // Check if alias already exists for different model
     const aliases = await getModelAliases();
     const existingModel = aliases[alias];
     if (existingModel && existingModel !== model) {
-      return NextResponse.json({
-        error: `Alias '${alias}' already in use for model '${existingModel}'`
-      }, { status: 400 });
+      return apiError(request, 400, `Alias '${alias}' already in use for model '${existingModel}'`);
     }
 
     // Update alias
@@ -52,7 +51,7 @@ export async function PUT(request) {
     });
   } catch (error) {
     console.log("Error updating alias:", error);
-    return NextResponse.json({ error: "Failed to update alias" }, { status: 500 });
+    return apiError(request, 500, "Failed to update alias");
   }
 }
 
@@ -78,12 +77,12 @@ export async function GET(request) {
     const apiKey = authHeader?.replace("Bearer ", "");
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Missing API key" }, { status: 401 });
+      return apiError(request, 401, "Missing API key");
     }
 
     const isValid = await validateApiKey(apiKey);
     if (!isValid) {
-      return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+      return apiError(request, 401, "Invalid API key");
     }
 
     const aliases = await getModelAliases();
@@ -91,6 +90,6 @@ export async function GET(request) {
     return NextResponse.json({ aliases });
   } catch (error) {
     console.log("Error fetching aliases:", error);
-    return NextResponse.json({ error: "Failed to fetch aliases" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch aliases");
   }
 }

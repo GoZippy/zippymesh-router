@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import {
   getRoutingFilters,
   getRoutingControls,
@@ -237,16 +238,13 @@ function ipInCidr(ip, cidr) {
 export async function POST(request) {
   try {
     if (!(await checkAuth())) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError(request, 401, "Unauthorized");
     }
 
     const { peers } = await request.json();
 
     if (!Array.isArray(peers)) {
-      return NextResponse.json(
-        { error: "Request body must include a 'peers' array" },
-        { status: 400 }
-      );
+      return apiError(request, 400, "Request body must include a 'peers' array");
     }
 
     // Get active filters and controls
@@ -285,10 +283,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("Failed to filter peers:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error", details: error.message },
-      { status: 500 }
-    );
+    return apiError(request, 500, "Internal Server Error");
   }
 }
 
@@ -296,10 +291,10 @@ export async function POST(request) {
  * GET /api/mesh/peers/filtered
  * Get filter status for all known peers
  */
-export async function GET() {
+export async function GET(request) {
   try {
     if (!(await checkAuth())) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return apiError(request, 401, "Unauthorized");
     }
 
     // Fetch current peers from network status

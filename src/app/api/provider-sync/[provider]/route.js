@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getProviderConnections, getRateLimitConfig, getPricing } from "@/lib/localDb.js";
+import { getProviderConnections, getRateLimitConfig, getPricing, getSettings } from "@/lib/localDb.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";
 import { syncProviderCatalog } from "@/lib/providers/sync.js";
+import { apiError } from "@/lib/apiErrors";
 
-export async function POST(_request, { params }) {
+export async function POST(request, { params }) {
   try {
     const { provider } = await params;
     const providerConnections = await getProviderConnections({
@@ -13,13 +14,14 @@ export async function POST(_request, { params }) {
     });
 
     if (!providerConnections.length) {
-      return NextResponse.json(
-        { error: `No active connections found for provider '${provider}'` },
-        { status: 404 }
-      );
+      return apiError(request, 404, `No active connections found for provider '${provider}'`);
     }
 
-    const [rateLimits, pricing] = await Promise.all([getRateLimitConfig(provider), getPricing()]);
+    const [rateLimits, pricing, settings] = await Promise.all([
+      getRateLimitConfig(provider),
+      getPricing(),
+      getSettings(),
+    ]);
     const usageSnapshots = [];
     const warnings = [];
 
@@ -52,6 +54,7 @@ export async function POST(_request, { params }) {
     return NextResponse.json({
       provider,
       syncedAt: new Date().toISOString(),
+      providerHealth: settings.providerCatalogSyncHealth?.[provider] || {},
       summary: {
         connections: providerConnections.length,
         usageSnapshots: usageSnapshots.length,
@@ -67,7 +70,7 @@ export async function POST(_request, { params }) {
     });
   } catch (error) {
     console.error("Error syncing provider:", error);
-    return NextResponse.json({ error: "Provider sync failed" }, { status: 500 });
+    return apiError(request, 500, "Provider sync failed");
   }
 }
 

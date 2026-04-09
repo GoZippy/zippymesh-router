@@ -159,17 +159,17 @@ class ZippyNodeManager extends EventEmitter {
         });
     }
 
-    async waitForHealth(retries = 10) {
+    async waitForHealth(retries = 25) {
         for (let i = 0; i < retries; i++) {
             try {
-                const res = await axios.get(`http://localhost:${this.config.apiPort}/version`);
+                const res = await axios.get(`http://localhost:${this.config.apiPort}/version`, { timeout: 3000 });
                 if (res.status === 200) return true;
             } catch (e) {
-                // Wait
+                // Wait and retry
             }
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 1500));
         }
-        throw new Error("ZippyNode health check timed out");
+        throw new Error("ZippyNode health check timed out (node may still be starting; check status in a moment)");
     }
 
     startPolling() {
@@ -270,6 +270,8 @@ class ZippyNodeManager extends EventEmitter {
             mode: this.config.mode,
             broadcast: this.config.broadcast,
             pid: this.nodeProcess ? this.nodeProcess.pid : null,
+            binaryMissing: !require('fs').existsSync(this.config.binaryPath),
+            binaryPath: this.config.binaryPath,
             stats: this.networkStats
         };
     }

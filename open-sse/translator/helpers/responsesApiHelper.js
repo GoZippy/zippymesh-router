@@ -1,3 +1,2 @@
-// open-core placeholder — proprietary code in private repo zippymesh-dist
-// See docs/OPEN_CORE_MANIFEST.md
-module.exports = {};
+// OPEN_CORE_STUB — Responses API helper (community edition)
+export function convertResponsesApiFormat(body) { return body; }

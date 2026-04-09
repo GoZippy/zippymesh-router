@@ -13,12 +13,25 @@ How to run the app in development, standalone, or as a stable instance for agent
 
 ---
 
+## Production build flow
+
+- **`npm run build:next`** — Next.js build with `output: 'standalone'`; produces `.next/standalone/`.
+- **`npm run prepare-standalone`** — Copies static/public into standalone and creates data-directory symlink.
+- **`npm run build:standalone`** — Runs both (recommended for release).
+- **`npm run build`** — Same as `build:standalone` (via `scripts/build.cjs`). On Windows, this script runs a secrets check, then Next.js build with retry: if a transient lock (e.g. `better_sqlite3` unlink EPERM) occurs, it retries using an alternate output dir (`.next-win-retry-*`) so the main `.next` dir is not locked.
+
+**Build and .next lock (Windows):** If `npm run build` fails with a file-in-use or EPERM error, stop any running dev server (`npm run dev`) or other process using `.next` and run `npm run build` again. The build script retries up to 3 times with isolated output dirs when it detects the Windows better_sqlite3 unlink issue.
+
+Always run the server from the **project root** (where `.env` lives), not from inside `.next/standalone`.
+
+---
+
 ## First install
 
 1. Clone or unpack the release.
 2. `npm install`
 3. `npm run setup` (creates `.env` from `.env.example` with generated secrets)
-4. `npm run build:next` then `npm run prepare-standalone`
+4. `npm run build:standalone` (or `npm run build:next` then `npm run prepare-standalone`)
 5. Run from project root: `run-standalone.cmd` or `$env:PORT=20128; node .next/standalone/server.js`
 
 ---
@@ -50,13 +63,16 @@ Or use `start-stable.cmd` (sets PORT=20128, HOSTNAME=0.0.0.0 for network access)
 
 ### Network access (other PCs on LAN)
 
-To allow agents on other machines to use the router:
+To allow agents on other machines (Claude Code, OpenClaw, etc.) to use the router:
 
-1. Set `HOSTNAME=0.0.0.0` so the server listens on all interfaces.
-2. Open firewall port 20128.
-3. Use base URL: `http://<this-PC-IP>:20128`
+1. **Use `start-stable.cmd`** (sets `HOSTNAME=0.0.0.0`) or set `HOSTNAME=0.0.0.0` when running.
+2. **Dev mode**: `npm run dev` now binds to `0.0.0.0` by default (`-H 0.0.0.0`).
+3. Open firewall port 20128.
+4. Use base URL: `http://<this-PC-IP>:20128`
 
 Example for agents: `ZIPPYMESH_ROUTER_URL=http://192.168.1.100:20128`
+
+**Validation**: Run `npm run test:connectors` to verify health, models, provider status, and chat.
 
 ### Health and version
 
@@ -109,6 +125,8 @@ ZippyMesh stores user data (settings, provider connections, playbooks, logs) in 
 | `zippymesh.db` | SQLite: providers, models, wallets, routing |
 | `guardrails.config.json` | Guardrail rules (optional) |
 
+The ZippyCoin mesh wallet lives in **`~/.zippy/wallet.json`** (separate from DATA_DIR). **Backup:** Users should back up DATA_DIR and `~/.zippy`; installers and updaters must **never overwrite** these. See [WALLET_BACKUP_AND_INSTALLER_SAFETY.md](WALLET_BACKUP_AND_INSTALLER_SAFETY.md).
+
 ### Migration on rebuild
 
 When you rebuild the standalone bundle:
@@ -128,8 +146,8 @@ When you rebuild the standalone bundle:
 ## Upgrading an existing install
 
 1. Stop the server.
-2. Backup `DATA_DIR` and `.env`.
-3. Replace app files (standalone bundle) — do **not** overwrite `.env` or data.
+2. Backup `DATA_DIR`, `~/.zippy` (ZippyCoin wallet), and `.env`.
+3. Replace app files (standalone bundle) — do **not** overwrite `.env`, DATA_DIR, or `~/.zippy`. Preserve existing wallets and user data. See [WALLET_BACKUP_AND_INSTALLER_SAFETY.md](WALLET_BACKUP_AND_INSTALLER_SAFETY.md).
 4. Run `npm run prepare-standalone` to re-create symlinks.
 5. Restart.
 

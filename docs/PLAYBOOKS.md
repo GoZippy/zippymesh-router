@@ -11,42 +11,22 @@ ZMLR supports automatic intent detection from request context. When `routingMode
 
 ## Example Playbooks
 
-Located in `docs/example-playbooks/`:
+High-level intent profiles supported by the router:
 
-### ZippyMesh Mode-Based (Kilo Code Compatible)
+| Intent | Focus | Typical model families |
+|--------|-------|--------------------|
+| `code` | High quality coding responses | Claude, DeepSeek, Gemini Coder |
+| `fast_code` | Low-latency coding + edits | Groq, Cerebras, local runtimes |
+| `architect` | Systems design and architecture | Claude Opus, GPT-5, Gemini Pro |
+| `debug` | Troubleshooting and root-cause analysis | Claude, DeepSeek, GPT-4 |
+| `review` | Auditing and code review | GPT-4/Claude/Gemini |
+| `local` / `free_*` | Data-sensitive or budget-first paths | Ollama, LMStudio, Groq, Cerebras |
 
-| File | Intent | Description |
-|------|--------|-------------|
-| `zippymesh-code-focus.json` | `code` | High-quality code gen: Claude Sonnet, DeepSeek, Qwen-Coder |
-| `zippymesh-fast-code.json` | `fast_code` | Low-latency code: Groq, Cerebras, local models |
-| `zippymesh-architect.json` | `architect` | System design: Claude Opus, GPT-5, Gemini Pro |
-| `zippymesh-ask.json` | `ask` | General Q&A: GLM, Qwen, free tiers |
-| `zippymesh-debug.json` | `debug` | Debugging: Claude, DeepSeek, GPT-4 |
-| `zippymesh-review.json` | `review` | Code review: Claude, GPT-4, Gemini |
-| `zippymesh-orchestrator.json` | `orchestrator` | Multi-agent coordination: GPT-4, Claude, Gemini |
-| `document-analysis.json` | `document` | Long docs: Gemini (1M ctx), Claude, GPT-4 Turbo |
-| `tool-agent.json` | `tool_use` | Function calling: GPT-4o, Claude, Gemini |
+For concrete JSON examples, use the rule-by-rule schema in [docs/PLAYBOOK_GUIDE.md](PLAYBOOK_GUIDE.md)
+and import through the dashboard/API after your first provider setup.
 
-### Free-Only Playbooks (No Paid APIs)
-
-| File | Intent | Description |
-|------|--------|-------------|
-| `free-code-focus.json` | `free_code` | Coding with Groq, Cerebras, Kilo, Ollama |
-| `free-fast.json` | `free_fast` | Ultra-fast free inference |
-| `free-reasoning.json` | `free_reasoning` | Complex reasoning: Llama 3.3 70B, DeepSeek-R1 |
-| `free-chat.json` | `free_chat` | General chat with free models |
-| `local-only.json` | `local` | Privacy-strict: Ollama/LMStudio only |
-
-### Mixed and Special Purpose
-
-| File | Description |
-|------|-------------|
-| `mixed-budget-quality.json` | Free tiers first, paid fallback |
-| `urgent-premium.json` | Maximum quality for critical tasks |
-| `coding-priorities.json` | Legacy: Claude 3.5 Sonnet, Qwen, GPT-4o |
-| `budget-routing.json` | Legacy: Groq, Cerebras, GitHub Models |
-| `privacy-first.json` | Local-only: excludes cloud providers |
-| `performance-balanced.json` | General-purpose failover |
+If you need pre-built starter templates, use the examples in your private
+operations notes until they are reintroduced into this repository.
 
 ## Agent Intent Integration
 
@@ -103,7 +83,7 @@ X-ZippyMesh-Mode: premium
 curl -X POST http://localhost:20128/api/routing/playbooks \
   -H "Content-Type: application/json" \
   -H "Cookie: <session-cookie>" \
-  -d @docs/example-playbooks/coding-priorities.json
+  -d '{"name":"zippymesh/code-focus","rules":[{"type":"boost","target":"claude-sonnet","value":80000},{"type":"filter-in","value":"openai"},{"type":"sort-by-cheapest","target":"*"}]}'
 ```
 
 You must be logged in. The API creates a new playbook with a generated ID.

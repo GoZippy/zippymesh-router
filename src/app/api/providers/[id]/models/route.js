@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getProviderConnectionById } from "@/lib/localDb";
 import { fetchProviderModels } from "@/lib/providers/models";
 
@@ -11,7 +12,7 @@ export async function GET(request, { params }) {
     const connection = await getProviderConnectionById(id);
 
     if (!connection) {
-      return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+      return apiError(request, 404, "Connection not found");
     }
 
     try {
@@ -23,13 +24,10 @@ export async function GET(request, { params }) {
       });
     } catch (error) {
       console.log(`Error fetching models from ${connection.provider}:`, error.message);
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      );
+      return apiError(request, 500, error.message || "Failed to fetch models");
     }
   } catch (error) {
     console.log("Error in models API:", error);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return apiError(request, 500, "Internal server error");
   }
 }

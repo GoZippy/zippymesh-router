@@ -15,6 +15,12 @@ const ALIAS_TO_PROVIDER_ID = {
   gemini: "gemini",
   openrouter: "openrouter",
   cursor: "cursor",
+  // Local providers
+  ollama: "ollama",
+  ol: "ollama",
+  lmstudio: "lmstudio",
+  lms: "lmstudio",
+  lm: "lmstudio",
 };
 
 /**

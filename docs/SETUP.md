@@ -17,7 +17,7 @@ Download the latest release and extract to a folder:
 
 ```bash
 # Example
-unzip zippymesh-router-v0.3.0-alpha.zip -d ~/zippymesh
+unzip zippymesh-router-v1.0.0.zip -d ~/zippymesh
 cd ~/zippymesh
 ```
 
@@ -33,11 +33,8 @@ Edit `.env` and set required values:
 
 ```env
 # Security (REQUIRED for production)
+# Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 JWT_SECRET=your-random-32-char-secret-here
-API_KEY_SECRET=another-random-secret-here
-
-# Initial admin password (optional)
-INITIAL_PASSWORD=your-admin-password
 
 # Port (default: 20128)
 PORT=20128
@@ -71,7 +68,7 @@ Open your browser to: http://localhost:20128
 
 ## First-Time Setup
 
-1. **Login** (if password set): Use the password from `INITIAL_PASSWORD` or the one you set
+1. **Login**: Use the password you set during the setup wizard (`/setup`)
 2. **Add Providers**: Go to Providers page and add your API keys
 3. **Test Connection**: Click "Test" on each provider to verify
 4. **Create Router API Key**: Go to Profile page to create API keys for external clients
@@ -85,9 +82,8 @@ Open your browser to: http://localhost:20128
 | `PORT` | 20128 | Server port |
 | `HOSTNAME` | localhost | Bind address (use `0.0.0.0` for network access) |
 | `DATA_DIR` | Platform-specific | Custom data directory |
-| `JWT_SECRET` | (random) | Session encryption key |
-| `API_KEY_SECRET` | (random) | API key encryption |
-| `INITIAL_PASSWORD` | (none) | Initial admin password |
+| `JWT_SECRET` | (auto-generated) | Session encryption key — stored in user data dir |
+| `ZIPPY_NODE_BIN` | (none) | Custom path to ZippyCoin node binary |
 
 ### Data Directory Locations
 

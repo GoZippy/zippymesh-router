@@ -1,4 +1,5 @@
-import { NextResponse } from "next/server";
+import { errorResponse } from "open-sse/utils/error.js";
+import { generateRequestId } from "@/lib/usageDb.js";
 
 /**
  * GET /api/providers/client
@@ -6,5 +7,5 @@ import { NextResponse } from "next/server";
  * fields (API keys, tokens) without authentication for cloud sync.
  */
 export async function GET() {
-  return NextResponse.json({ error: "Endpoint removed" }, { status: 410 });
+  return errorResponse(410, "Endpoint removed", { requestId: generateRequestId() });
 }

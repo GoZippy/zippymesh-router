@@ -1,6 +1,6 @@
 # ZippyMesh LLM Router — Installer and platform matrix
 
-Target artifacts and one clean install path per platform. Current baseline: distribution zip produced by `scripts/create-distribution.cjs`.
+Target artifacts and one clean install path per platform. **Consumer installs** should use **installers with onboarding** that store secrets in OS-native secure storage (no `.env` on disk). See [INSTALLER_AND_SECURE_STORAGE.md](INSTALLER_AND_SECURE_STORAGE.md).
 
 ---
 
@@ -8,15 +8,14 @@ Target artifacts and one clean install path per platform. Current baseline: dist
 
 | Platform | Artifact | Status | Notes |
 |----------|----------|--------|-------|
-| **Windows** | Zip + `run-standalone.cmd` / `start-stable.cmd` | ✅ Baseline | Unpack → `.env` from `.env.example` → run script. Node.js required. |
-| **Windows** | NSIS installer / portable exe | 📋 Planned | Post-MVP; optional bundled Node or launcher. |
-| **Linux** | Zip + `start-stable.sh` | ✅ Baseline | Unpack → `.env` → `chmod +x start-stable.sh` → `./start-stable.sh`. |
-| **Linux** | AppImage | 📋 Planned | Single-file; post-MVP. |
-| **Linux** | .deb | 📋 Planned | Package manager; post-MVP. |
-| **macOS** | Zip + `start-stable.sh` | ✅ Same as Linux | Use Linux flow. |
-| **macOS** | .dmg | 📋 Planned | When Apple tooling available. |
-| **Raspberry Pi OS** | arm64 zip + `start-stable.sh` | 📋 Planned | Same as Linux; build with Node arm64 or use generic zip + system Node. |
-| **npm** | Wrapper package + bootstrap script | 📋 Optional | `npx`-style install; metadata only, fetches payload. |
+| **Windows** | NSIS (or similar) installer | 📋 Target | First-run wizard → store JWT + password in Credential Manager / DPAPI; no .env. |
+| **Windows** | Zip + `start-stable.cmd` | ✅ Advanced | Unpack → `.env` from `.env.example` → run. For from-source/scripted use. |
+| **Linux** | AppImage / .deb + first-run wizard | 📋 Target | Onboarding → libsecret or 0600 file; no .env for consumer path. |
+| **Linux** | Zip + `start-stable.sh` | ✅ Advanced | Same as today; advanced use. |
+| **macOS** | .dmg + first-run wizard | 📋 Target | Onboarding → Keychain; no .env for consumer path. |
+| **macOS** | Zip + `start-stable.sh` | ✅ Advanced | Same as Linux zip. |
+| **Raspberry Pi OS** | arm64 zip / package | 📋 Planned | Same secure-storage approach as Linux. |
+| **npm** | Wrapper package + bootstrap | 📋 Optional | `npx`-style; metadata only, fetches payload. |
 
 ---
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnections, getRateLimitConfigs, getRateLimitState } from "@/lib/localDb.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 function toMillis(value) {
   if (!value) return 0;
@@ -40,7 +41,7 @@ function deriveBucketUsage(provider, bucket, windows) {
   };
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
     const [connections, configs, state] = await Promise.all([
       getProviderConnections({ isActive: true, isEnabled: true }),
@@ -97,7 +98,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Error fetching usage limits:", error);
-    return NextResponse.json({ error: "Failed to fetch usage limits" }, { status: 500 });
+    return apiError(request, 500, "Failed to fetch usage limits");
   }
 }
 

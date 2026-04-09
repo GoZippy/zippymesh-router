@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { apiError } from "@/lib/apiErrors.js";
 import { getProviderConnectionById } from "@/models";
 import { connectionTester } from "@/lib/maintenance/connectionTester";
 
@@ -10,12 +11,12 @@ export async function POST(request) {
     try {
         const { id } = await request.json();
         if (!id) {
-            return NextResponse.json({ error: "Connection ID is required" }, { status: 400 });
+            return apiError(request, 400, "Connection ID is required");
         }
 
         const connection = await getProviderConnectionById(id);
         if (!connection) {
-            return NextResponse.json({ error: "Connection not found" }, { status: 404 });
+            return apiError(request, 404, "Connection not found");
         }
 
         const result = await connectionTester.testConnection(connection);
@@ -28,6 +29,6 @@ export async function POST(request) {
         });
     } catch (error) {
         console.error("[API] Maintenance test failed:", error);
-        return NextResponse.json({ error: "Maintenance test failed" }, { status: 500 });
+        return apiError(request, 500, "Maintenance test failed");
     }
 }
