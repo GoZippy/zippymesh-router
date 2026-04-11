@@ -1,3 +1,29 @@
+## v1.1.0 (2026-04-10)
+
+### Bug Fixes & Stability
+- **ZippyCoin NODE toggle** — Fixed: node status shows correctly after HMR/restart. Route probes RPC (port 8545) directly; returns 202 on health timeout instead of 500.
+- **Provider icons** — Fixed 400 errors on icon routes caused by Next.js 16 async params API change.
+- **smartRouter infinite loop** — Fixed: normalRoute() was calling smartRouter() recursively. Now calls selectModel() directly.
+- **Providers page stuck loading** — Fixed: setLoading(false) missing in finally block.
+- **Duplicate Marketplace nav entries** — Fixed: LLM plugin manifest no longer injects duplicate nav item.
+- **Seed peer hardcoding** — Fixed: now configurable via ZIPPY_SEED_PEERS environment variable.
+
+### Navigation & UX
+- Dashboard sidebar reorganized into sections: Get Started, AI Models, Usage & Insights, Access & Security, ZippyMesh Network, Tools.
+- AI Marketplace replaces duplicate Marketplace nav item; Node Network page added for node operator view.
+- Offer Models and Wallet & Pricing renames; three pricing pages clarified with distinct scopes.
+- Version mismatch detection: amber banner when router version differs from installed binary.
+
+### TokenBuddy UX
+- Empty contributor state replaced with rich onboarding guide explaining what TokenBuddy is, how to contribute, and what tokens earn you.
+- Submit Community Price modal: explainer banner, field hints, source URL guidance added.
+- User contribution progress card shows personal points, rank, submissions, and verifications.
+
+### Download
+- [zippymesh-router-v1.1.0.zip](https://github.com/GoZippy/zippymesh-dist/releases/tag/v1.1.0) — standalone Windows/macOS/Linux package (full proprietary build)
+
+---
+
 ## v0.5.0-beta (2026-03-19)
 
 ### Data Persistence & Migration

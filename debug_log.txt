@@ -1,4 +1,0 @@
-isCloud: false
-DATA_DIR: C:\Users\gotad\AppData\Roaming\zippy-mesh
-DB_FILE: C:\Users\gotad\AppData\Roaming\zippy-mesh\db.json
-CWD: K:\Projects\ZippyMesh_LLM_Router

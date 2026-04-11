@@ -90,3 +90,29 @@ README1.md
 
 # AutoClaw runtime state
 .autoclaw/
+
+# Internal/debug artifacts — never commit these
+debug_log.txt
+debug_session*.log
+frontend_debug.log
+startup*.log
+startup_error*.log
+*.log
+diff_output.txt
+cargo_check_output.txt
+network-scan-report.json
+pricing_update.json
+null
+
+# Internal planning / session docs
+SESSION_COMPLETE.md
+COMPLETION_REPORT.md
+EXECUTION_SUMMARY.md
+CRITICAL_FIX_PLAN.md
+DEPLOYMENT_READINESS_REPORT.md
+ECOSYSTEM_CONTEXT.md.resolved
+FREE-TIER-FILES-OVERVIEW.txt
+FREE-TIER-IMPLEMENTATION-SUMMARY.md
+
+# Security tooling binaries
+gitleaks_bin/

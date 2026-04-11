@@ -1,1 +1,0 @@
-error: could not find `Cargo.toml` in `K:\Projects\ZippyMesh_LLM_Router` or any parent directory

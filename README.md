@@ -163,8 +163,6 @@ Tools: `list_models`, `recommend_model`, `validate_model`, `execute_with_routing
 
 ---
 
-<<<<<<< HEAD
-=======
 ## AutoClaw AI Agent Skills
 
 **AutoClaw** is a VS Code extension from Zippy Technologies that adds persistent background agents,
@@ -203,7 +201,6 @@ ensuring no single provider is exhausted.
 
 ---
 
->>>>>>> origin/ZippyMesh_LLM_main
 ## ZippyCoin / P2P mesh
 
 Wallet, network, and node monetization features are **early alpha / testnet only**. ZMLR works fully without them. See the [Early Alpha banner](#) in the dashboard for details.
