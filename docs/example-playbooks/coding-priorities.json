@@ -1,0 +1,11 @@
+{
+  "name": "Coding Priorities",
+  "description": "Prioritizes high-end coding models like Claude 3.5 Sonnet and Qwen-2.5-Coder.",
+  "isActive": true,
+  "priority": 100,
+  "rules": [
+    { "type": "boost", "target": "cc/claude-3-5-sonnet", "value": 50000 },
+    { "type": "boost", "target": "qw/qwen-2.5-coder", "value": 40000 },
+    { "type": "boost", "target": "openai/gpt-4o", "value": 30000 }
+  ]
+}

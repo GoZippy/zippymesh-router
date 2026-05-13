@@ -1,0 +1,18 @@
+{
+  "name": "zippymesh/review",
+  "description": "Code review, security analysis, and quality audits. Prioritizes models known for catching issues and nuanced analysis: Claude (thorough), GPT-4 (broad knowledge). For PR reviews and audits.",
+  "isActive": true,
+  "priority": 160,
+  "trigger": { "type": "intent", "value": "review" },
+  "rules": [
+    { "type": "boost", "target": "claude-sonnet", "value": 75000 },
+    { "type": "boost", "target": "claude-3-5-sonnet", "value": 73000 },
+    { "type": "boost", "target": "gpt-4o", "value": 70000 },
+    { "type": "boost", "target": "gpt-4-turbo", "value": 65000 },
+    { "type": "boost", "target": "deepseek-v3", "value": 60000 },
+    { "type": "boost", "target": "gemini-pro", "value": 55000 },
+    { "type": "boost", "target": "glm-4", "value": 50000 },
+    { "type": "boost", "target": "qwen-max", "value": 45000 },
+    { "type": "stack", "target": "anthropic,openai,gemini,deepinfra,openrouter", "value": "failover" }
+  ]
+}
