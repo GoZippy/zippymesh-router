@@ -1,0 +1,16 @@
+{
+  "name": "free/reasoning",
+  "description": "Complex reasoning using only free models. Prioritizes larger Llama models on Groq, DeepSeek-R1 where available, Ollama for local thinking models.",
+  "isActive": true,
+  "priority": 88,
+  "trigger": { "type": "intent", "value": "free_reasoning" },
+  "rules": [
+    { "type": "filter-in", "value": ["groq", "cerebras", "github_models", "kilo", "ollama", "lmstudio"] },
+    { "type": "boost", "target": "llama-3.3-70b", "value": 65000 },
+    { "type": "boost", "target": "deepseek-r1", "value": 60000 },
+    { "type": "boost", "target": "qwen-max", "value": 55000 },
+    { "type": "boost", "target": "glm-4", "value": 50000 },
+    { "type": "boost", "target": "mixtral-8x22b", "value": 45000 },
+    { "type": "stack", "target": "groq,kilo,github_models,ollama,lmstudio,cerebras", "value": "failover" }
+  ]
+}

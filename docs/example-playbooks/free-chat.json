@@ -1,0 +1,16 @@
+{
+  "name": "free/chat",
+  "description": "General chat and Q&A using only free models. Balanced between speed and quality. Good for routine conversations and simple questions.",
+  "isActive": true,
+  "priority": 80,
+  "trigger": { "type": "intent", "value": "free_chat" },
+  "rules": [
+    { "type": "filter-in", "value": ["groq", "cerebras", "github_models", "kilo", "cohere", "ollama", "lmstudio"] },
+    { "type": "sort-by-cheapest", "target": "*" },
+    { "type": "boost", "target": "llama-3.3", "value": 50000 },
+    { "type": "boost", "target": "gemma-2", "value": 45000 },
+    { "type": "boost", "target": "mistral", "value": 40000 },
+    { "type": "boost", "target": "command-r", "value": 35000 },
+    { "type": "stack", "target": "kilo,groq,cerebras,github_models,cohere,ollama,lmstudio", "value": "failover" }
+  ]
+}

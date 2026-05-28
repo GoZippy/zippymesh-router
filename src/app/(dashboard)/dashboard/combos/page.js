@@ -1,0 +1,530 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { formatRequestError, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
+
+// Validate combo name: only a-z, A-Z, 0-9, -, _
+const VALID_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+export default function CombosPage() {
+  const [combos, setCombos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingCombo, setEditingCombo] = useState(null);
+  const [activeProviders, setActiveProviders] = useState([]);
+  const [totalConnections, setTotalConnections] = useState(0);
+  const { copied, copy } = useCopyToClipboard();
+
+  useEffect(() => {
+    fetchData();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fetchData = async () => {
+    try {
+      const [combosRes, providersRes] = await safeFetchJsonAll([
+        { key: "combos", url: "/api/combos" },
+        { key: "providers", url: "/api/providers" },
+      ]);
+      const combosData = combosRes.data || {};
+      const providersData = providersRes.data || {};
+      if (combosRes.ok) setCombos(combosData.combos || []);
+      if (providersRes.ok) {
+        const connections = providersData.connections || [];
+        setTotalConnections(connections.length);
+        const active = connections.filter(
+          c => c.testStatus === "active" || c.testStatus === "success"
+        );
+        setActiveProviders(active);
+      }
+    } catch (error) {
+      console.log("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreate = async (data) => {
+    try {
+      const res = await safeFetchJson("/api/combos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchData();
+        setShowCreateModal(false);
+      } else {
+        const err = res.data || {};
+        alert(err.error || formatRequestError("Failed to create combo", res, "Failed to create combo"));
+      }
+    } catch (error) {
+      console.log("Error creating combo:", error);
+    }
+  };
+
+  const handleUpdate = async (id, data) => {
+    try {
+      const res = await safeFetchJson(`/api/combos/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (res.ok) {
+        await fetchData();
+        setEditingCombo(null);
+      } else {
+        const err = res.data || {};
+        alert(err.error || formatRequestError("Failed to update combo", res, "Failed to update combo"));
+      }
+    } catch (error) {
+      console.log("Error updating combo:", error);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm("Delete this combo?")) return;
+    try {
+      const res = await safeFetchJson(`/api/combos/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setCombos(combos.filter(c => c.id !== id));
+      }
+    } catch (error) {
+      console.log("Error deleting combo:", error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <CardSkeleton />
+        <CardSkeleton />
+      </div>
+    );
+  }
+
+  const hasActiveProviders = activeProviders.length > 0;
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Model Combos</h1>
+          <p className="text-sm text-text-muted mt-1">
+            Named failover groups — if the first model fails, the next one is tried automatically
+          </p>
+        </div>
+        <Button icon="add" onClick={() => setShowCreateModal(true)} disabled={!hasActiveProviders}>
+          Create Combo
+        </Button>
+      </div>
+
+      {/* What is a Combo? */}
+      <div className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 p-4 flex gap-3">
+        <span className="material-symbols-outlined text-blue-500 shrink-0 mt-0.5">info</span>
+        <div className="text-sm text-text-main flex flex-col gap-1">
+          <p className="font-semibold text-blue-700 dark:text-blue-300">What is a Combo?</p>
+          <p className="text-text-muted">
+            A <strong>Combo</strong> is a named, ordered list of models. When you send a request using the combo name,
+            ZippyMesh tries each model in order. If a model is rate-limited, unavailable, or errors,
+            it automatically falls through to the next one — with zero code changes on your side.
+          </p>
+          <p className="text-text-muted mt-1">
+            <strong>Example:</strong> Create a combo called <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">fast-fallback</code> with{" "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">groq/llama-3.3-70b</code>{" → "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">openai/gpt-4o-mini</code>{" → "}
+            <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">anthropic/claude-haiku</code>.
+            Your app sends <code className="bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-xs font-mono">model: "fast-fallback"</code> and never has to think about which provider is healthy.
+          </p>
+        </div>
+      </div>
+
+      {/* Prerequisite warning */}
+      {!hasActiveProviders && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-950/20 p-4 flex gap-3">
+          <span className="material-symbols-outlined text-amber-500 shrink-0 mt-0.5">warning</span>
+          <div className="text-sm">
+            <p className="font-semibold text-amber-700 dark:text-amber-300 mb-1">No active provider connections</p>
+            <p className="text-text-muted mb-2">
+              Combos need at least one tested and active provider connection before you can add models.
+            </p>
+            <a
+              href="/dashboard/providers/new"
+              className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300 font-medium hover:underline text-xs"
+            >
+              <span className="material-symbols-outlined text-[14px]">add_circle</span>
+              Add a provider (Groq, Cerebras, GitHub Models — free options available)
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Combos List */}
+      {combos.length === 0 ? (
+        <Card>
+          <div className="text-center py-10">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary/10 text-primary mb-4">
+              <span className="material-symbols-outlined text-[28px]">layers</span>
+            </div>
+            <p className="text-text-main font-semibold mb-1">No combos yet</p>
+            <p className="text-sm text-text-muted mb-6 max-w-sm mx-auto">
+              Create your first combo to get automatic failover between models.
+            </p>
+
+            {/* Setup steps */}
+            <div className="text-left max-w-sm mx-auto mb-6 flex flex-col gap-3">
+              {[
+                { done: totalConnections > 0, step: "1", label: "Connect a provider", sub: "Go to Providers → Add a provider (Groq is free)", link: totalConnections === 0 ? "/dashboard/providers/new" : null },
+                { done: activeProviders.length > 0, step: "2", label: "Test the connection", sub: "Click \"Test\" on your provider card to activate it", link: (totalConnections > 0 && activeProviders.length === 0) ? "/dashboard/providers" : null },
+                { done: false, step: "3", label: "Create a combo", sub: "Add models in priority order — first = preferred" },
+                { done: false, step: "4", label: "Use it in your app", sub: 'Pass the combo name as `model` in your API call' },
+              ].map((item) => (
+                <div key={item.step} className="flex items-start gap-3">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold ${item.done ? "bg-green-500/20 text-green-500" : "bg-black/5 dark:bg-white/10 text-text-muted"
+                    }`}>
+                    {item.done ? <span className="material-symbols-outlined text-[14px]">check</span> : item.step}
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`text-sm font-medium ${item.done ? "line-through text-text-muted" : "text-text-main"}`}>{item.label}</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      {item.link ? (
+                        <a href={item.link} className="text-primary hover:underline">{item.sub}</a>
+                      ) : item.sub}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Button icon="add" onClick={() => setShowCreateModal(true)} disabled={!hasActiveProviders}>
+              Create First Combo
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {/* API usage tip */}
+          <div className="text-xs text-text-muted bg-black/[0.02] dark:bg-white/[0.02] border border-black/5 dark:border-white/5 rounded-lg px-3 py-2 flex items-center gap-2">
+            <span className="material-symbols-outlined text-[14px] text-primary">lightbulb</span>
+            Use the combo name as your <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">model</code> in any OpenAI-compatible request.
+            Example: <code className="font-mono bg-black/5 dark:bg-white/5 px-1 rounded">{`{ "model": "${combos[0].name}" }`}</code>
+          </div>
+          {combos.map((combo) => (
+            <ComboCard
+              key={combo.id}
+              combo={combo}
+              copied={copied}
+              onCopy={copy}
+              onEdit={() => setEditingCombo(combo)}
+              onDelete={() => handleDelete(combo.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Create Modal - Use key to force remount and reset state */}
+      <ComboFormModal
+        key="create"
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSave={handleCreate}
+        activeProviders={activeProviders}
+      />
+
+      {/* Edit Modal - Use key to force remount and reset state */}
+      <ComboFormModal
+        key={editingCombo?.id || "new"}
+        isOpen={!!editingCombo}
+        combo={editingCombo}
+        onClose={() => setEditingCombo(null)}
+        onSave={(data) => handleUpdate(editingCombo.id, data)}
+        activeProviders={activeProviders}
+      />
+    </div>
+  );
+}
+
+function ComboCard({ combo, copied, onCopy, onEdit, onDelete }) {
+  return (
+    <Card padding="sm" className="group">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+            <span className="material-symbols-outlined text-primary text-[18px]">layers</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <code className="text-sm font-medium font-mono truncate">{combo.name}</code>
+              <button
+                onClick={(e) => { e.stopPropagation(); onCopy(combo.name, `combo-${combo.id}`); }}
+                className="p-0.5 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-colors opacity-0 group-hover:opacity-100"
+                title="Copy combo name"
+              >
+                <span className="material-symbols-outlined text-[14px]">
+                  {copied === `combo-${combo.id}` ? "check" : "content_copy"}
+                </span>
+              </button>
+            </div>
+            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+              {combo.models.length === 0 ? (
+                <span className="text-xs text-text-muted italic">No models</span>
+              ) : (
+                combo.models.slice(0, 3).map((model, index) => (
+                  <code key={index} className="text-[10px] font-mono bg-black/5 dark:bg-white/5 px-1.5 py-0.5 rounded text-text-muted">
+                    {model}
+                  </code>
+                ))
+              )}
+              {combo.models.length > 3 && (
+                <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          <button
+            onClick={onEdit}
+            className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-colors"
+            title="Edit"
+          >
+            <span className="material-symbols-outlined text-[16px]">edit</span>
+          </button>
+          <button
+            onClick={onDelete}
+            className="p-1.5 hover:bg-red-500/10 rounded text-red-500 transition-colors"
+            title="Delete"
+          >
+            <span className="material-symbols-outlined text-[16px]">delete</span>
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders }) {
+  // Initialize state with combo values - key prop on parent handles reset on remount
+  const [name, setName] = useState(combo?.name || "");
+  const [models, setModels] = useState(combo?.models || []);
+  const [showModelSelect, setShowModelSelect] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [nameError, setNameError] = useState("");
+  const [modelAliases, setModelAliases] = useState({});
+  const [providerNodes, setProviderNodes] = useState([]);
+
+  const fetchModalData = async () => {
+    try {
+      const [aliasesRes, nodesRes] = await safeFetchJsonAll([
+        { key: "aliases", url: "/api/models/alias" },
+        { key: "nodes", url: "/api/provider-nodes" },
+      ]);
+
+      if (!aliasesRes.ok || !nodesRes.ok) {
+        throw new Error(formatRequestError("Failed to fetch modal data", aliasesRes, `Failed to fetch aliases: ${aliasesRes.status}`));
+      }
+
+      const aliasesData = aliasesRes.data || {};
+      const nodesData = nodesRes.data || {};
+      setModelAliases(aliasesData.aliases || {});
+      setProviderNodes(nodesData.nodes || []);
+    } catch (error) {
+      console.error("Error fetching modal data:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) fetchModalData();
+  }, [isOpen]);
+
+  const validateName = (value) => {
+    if (!value.trim()) {
+      setNameError("Name is required");
+      return false;
+    }
+    if (!VALID_NAME_REGEX.test(value)) {
+      setNameError("Only letters, numbers, - and _ allowed");
+      return false;
+    }
+    setNameError("");
+    return true;
+  };
+
+  const handleNameChange = (e) => {
+    const value = e.target.value;
+    setName(value);
+    if (value) validateName(value);
+    else setNameError("");
+  };
+
+  const handleAddModel = (model) => {
+    if (!models.includes(model.value)) {
+      setModels([...models, model.value]);
+    }
+  };
+
+  const handleRemoveModel = (index) => {
+    setModels(models.filter((_, i) => i !== index));
+  };
+
+  // Format model display name with readable provider name
+  const formatModelDisplay = useCallback((modelValue) => {
+    const parts = modelValue.split('/');
+    if (parts.length !== 2) return modelValue;
+
+    const [providerId, modelId] = parts;
+    const matchedNode = providerNodes.find(node => node.id === providerId);
+
+    if (matchedNode) {
+      return `${matchedNode.name}/${modelId}`;
+    }
+
+    return modelValue;
+  }, [providerNodes]);
+
+  const handleMoveUp = (index) => {
+    if (index === 0) return;
+    const newModels = [...models];
+    [newModels[index - 1], newModels[index]] = [newModels[index], newModels[index - 1]];
+    setModels(newModels);
+  };
+
+  const handleMoveDown = (index) => {
+    if (index === models.length - 1) return;
+    const newModels = [...models];
+    [newModels[index], newModels[index + 1]] = [newModels[index + 1], newModels[index]];
+    setModels(newModels);
+  };
+
+  const handleSave = async () => {
+    if (!validateName(name)) return;
+    setSaving(true);
+    await onSave({ name: name.trim(), models });
+    setSaving(false);
+  };
+
+  const isEdit = !!combo;
+
+  return (
+    <>
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={isEdit ? "Edit Combo" : "Create Combo"}
+      >
+        <div className="flex flex-col gap-3">
+          {/* Name */}
+          <div>
+            <Input
+              label="Combo Name"
+              value={name}
+              onChange={handleNameChange}
+              placeholder="my-combo"
+              error={nameError}
+            />
+            <p className="text-[10px] text-text-muted mt-0.5">
+              Only letters, numbers, - and _ allowed
+            </p>
+          </div>
+
+          {/* Models */}
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">Models <span className="font-normal text-xs text-text-muted ml-1">(ordered by priority — #1 tried first)</span></label>
+
+            {models.length === 0 ? (
+              <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">
+                <span className="material-symbols-outlined text-text-muted text-xl mb-1">layers</span>
+                <p className="text-xs text-text-muted">No models added yet</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1 max-h-[200px] overflow-y-auto">
+                {models.map((model, index) => (
+                  <div
+                    key={index}
+                    className="group flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors"
+                  >
+                    {/* Index badge */}
+                    <span className="text-[10px] font-medium text-text-muted w-3 text-center shrink-0">{index + 1}</span>
+
+                    {/* Model display - show readable name only */}
+                    <div className="flex-1 min-w-0 px-1.5 py-0.5 text-xs text-text-main truncate">
+                      {formatModelDisplay(model)}
+                    </div>
+
+                    {/* Priority arrows - horizontal, always visible */}
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => handleMoveUp(index)}
+                        disabled={index === 0}
+                        className={`p-0.5 rounded ${index === 0 ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
+                        title="Move up"
+                      >
+                        <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
+                      </button>
+                      <button
+                        onClick={() => handleMoveDown(index)}
+                        disabled={index === models.length - 1}
+                        className={`p-0.5 rounded ${index === models.length - 1 ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
+                        title="Move down"
+                      >
+                        <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
+                      </button>
+                    </div>
+
+                    {/* Remove - always visible */}
+                    <button
+                      onClick={() => handleRemoveModel(index)}
+                      className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 transition-all"
+                      title="Remove"
+                    >
+                      <span className="material-symbols-outlined text-[12px]">close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add Model button - moved to bottom */}
+            <button
+              onClick={() => setShowModelSelect(true)}
+              className="w-full mt-2 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-text-muted hover:text-primary hover:border-primary/30 transition-colors flex items-center justify-center gap-1"
+            >
+              <span className="material-symbols-outlined text-[16px]">add</span>
+              Add Model
+            </button>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-1">
+            <Button onClick={onClose} variant="ghost" fullWidth size="sm">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSave}
+              fullWidth
+              size="sm"
+              disabled={!name.trim() || !!nameError || saving}
+            >
+              {saving ? "Saving..." : isEdit ? "Save" : "Create"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Model Select Modal */}
+      <ModelSelectModal
+        isOpen={showModelSelect}
+        onClose={() => setShowModelSelect(false)}
+        onSelect={handleAddModel}
+        activeProviders={activeProviders}
+        modelAliases={modelAliases}
+        title="Add Model to Combo"
+      />
+    </>
+  );
+}
+

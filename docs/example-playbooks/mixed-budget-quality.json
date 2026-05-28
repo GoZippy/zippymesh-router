@@ -1,0 +1,20 @@
+{
+  "name": "mixed/budget-quality",
+  "description": "Smart cost optimization: uses free tiers first, falls back to paid only when needed. Best balance of cost and capability for daily use.",
+  "isActive": true,
+  "priority": 110,
+  "rules": [
+    { "type": "sort-by-cheapest", "target": "*" },
+    { "type": "boost", "target": "groq", "value": 70000 },
+    { "type": "boost", "target": "cerebras", "value": 68000 },
+    { "type": "boost", "target": "kilo", "value": 65000 },
+    { "type": "boost", "target": "github_models", "value": 63000 },
+    { "type": "boost", "target": "ollama", "value": 60000 },
+    { "type": "boost", "target": "lmstudio", "value": 60000 },
+    { "type": "boost", "target": "deepseek", "value": 50000 },
+    { "type": "boost", "target": "gpt-4o-mini", "value": 40000 },
+    { "type": "boost", "target": "claude-haiku", "value": 38000 },
+    { "type": "boost", "target": "gemini-flash", "value": 35000 },
+    { "type": "stack", "target": "groq,cerebras,kilo,github_models,ollama,lmstudio,deepinfra,openai,anthropic,gemini", "value": "failover" }
+  ]
+}
