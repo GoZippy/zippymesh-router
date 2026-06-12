@@ -1,0 +1,19 @@
+{
+  "name": "zippymesh/architect",
+  "description": "System design, planning, and architecture tasks. Prioritizes models with strong reasoning and large context windows: Claude Opus, GPT-5, Gemini Pro. For complex multi-step planning.",
+  "isActive": true,
+  "priority": 180,
+  "trigger": { "type": "intent", "value": "architect" },
+  "rules": [
+    { "type": "boost", "target": "claude-opus", "value": 90000 },
+    { "type": "boost", "target": "claude-3-opus", "value": 85000 },
+    { "type": "boost", "target": "gpt-5", "value": 80000 },
+    { "type": "boost", "target": "gpt-4-turbo", "value": 70000 },
+    { "type": "boost", "target": "gemini-2.5-pro", "value": 75000 },
+    { "type": "boost", "target": "gemini-pro", "value": 65000 },
+    { "type": "boost", "target": "deepseek-r1", "value": 60000 },
+    { "type": "boost", "target": "qwen-max", "value": 55000 },
+    { "type": "boost", "target": "glm-5", "value": 50000 },
+    { "type": "stack", "target": "anthropic,openai,gemini,deepinfra,openrouter", "value": "failover" }
+  ]
+}

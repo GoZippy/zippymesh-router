@@ -1,0 +1,63 @@
+{
+    "version": "1.0",
+    "description": "ZippyMesh LLM Router — Guardrail Rule Configuration",
+    "rules": [
+        {
+            "id": "block-violence",
+            "type": "keyword",
+            "terms": [
+                "explosive",
+                "poison",
+                "weapon-making",
+                "bomb",
+                "illegal",
+                "hack",
+                "bypass security"
+            ],
+            "action": "block",
+            "message": "Blocked content: prohibited term detected"
+        },
+        {
+            "id": "pii-email",
+            "type": "regex",
+            "pattern": "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}",
+            "action": "redact",
+            "replacement": "[EMAIL REDACTED]",
+            "message": "PII detected: email address redacted"
+        },
+        {
+            "id": "pii-phone",
+            "type": "regex",
+            "pattern": "\\b(\\+?1[-\\s.]?)?\\(?[2-9]\\d{2}\\)?[-\\s.]?\\d{3}[-\\s.]?\\d{4}\\b",
+            "action": "redact",
+            "replacement": "[PHONE REDACTED]",
+            "message": "PII detected: phone number redacted"
+        },
+        {
+            "id": "pii-ssn",
+            "type": "regex",
+            "pattern": "\\b\\d{3}-\\d{2}-\\d{4}\\b",
+            "action": "block",
+            "message": "PII detected: SSN pattern not allowed"
+        },
+        {
+            "id": "max-length",
+            "type": "length",
+            "max_chars": 32000,
+            "action": "truncate",
+            "message": "Request truncated: exceeds maximum character limit"
+        }
+    ],
+    "per_route": {
+        "/v1/messages": {
+            "inherit": true,
+            "extra_rules": [
+                "block-violence",
+                "pii-email"
+            ]
+        },
+        "/v1/chat/completions": {
+            "inherit": true
+        }
+    }
+}

@@ -1,0 +1,81 @@
+{
+  "name": "free-models-tier-1",
+  "displayName": "Free Models - Tier 1 (Speed Optimized)",
+  "description": "Zero-cost LLM routing using only free/freemium providers. Optimized for speed with Groq as primary, fallback to Gemini, OpenRouter, and local Ollama.",
+  "intent": "free_fast",
+  "trigger": {
+    "type": "intent",
+    "value": "free_fast"
+  },
+  "isActive": true,
+  "priority": 100,
+  "rules": [
+    {
+      "type": "filter-in",
+      "target": "groq",
+      "value": "groq",
+      "description": "Include Groq (fastest free)"
+    },
+    {
+      "type": "filter-in",
+      "target": "google-gemini",
+      "value": "google-gemini",
+      "description": "Include Google Gemini"
+    },
+    {
+      "type": "filter-in",
+      "target": "openrouter",
+      "value": "openrouter",
+      "description": "Include OpenRouter"
+    },
+    {
+      "type": "filter-in",
+      "target": "ollama",
+      "value": "ollama",
+      "description": "Include local Ollama as fallback"
+    },
+    {
+      "type": "boost",
+      "target": "groq",
+      "value": 1000,
+      "description": "Prioritize Groq (fastest)"
+    },
+    {
+      "type": "boost",
+      "target": "google-gemini",
+      "value": 2000,
+      "description": "Secondary: Google Gemini"
+    },
+    {
+      "type": "boost",
+      "target": "openrouter",
+      "value": 3000,
+      "description": "Tertiary: OpenRouter"
+    },
+    {
+      "type": "boost",
+      "target": "ollama",
+      "value": 100000,
+      "description": "Last resort: Local Ollama"
+    },
+    {
+      "type": "cost-threshold",
+      "value": 0,
+      "description": "Free providers only"
+    }
+  ],
+  "metadata": {
+    "tier": "free",
+    "costPerDay": "$0",
+    "expectedLatency": "400ms-60s",
+    "providers": ["groq", "google-gemini", "openrouter", "ollama"],
+    "bestFor": ["chat", "coding", "general-qa"],
+    "worstFor": ["none"],
+    "quotaLimits": {
+      "groq": "unlimited",
+      "gemini": "1M tokens/day",
+      "openrouter": "free-models-only",
+      "ollama": "unlimited"
+    }
+  }
+}

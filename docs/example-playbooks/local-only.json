@@ -1,0 +1,16 @@
+{
+  "name": "local/privacy-strict",
+  "description": "Strictly local inference only. No data leaves your network. For sensitive code and private documents. Uses Ollama and LM Studio exclusively.",
+  "isActive": true,
+  "priority": 95,
+  "trigger": { "type": "intent", "value": "local" },
+  "rules": [
+    { "type": "filter-in", "value": ["ollama", "lmstudio"] },
+    { "type": "boost", "target": "deepseek-coder", "value": 60000 },
+    { "type": "boost", "target": "qwen-2.5-coder", "value": 55000 },
+    { "type": "boost", "target": "codellama", "value": 50000 },
+    { "type": "boost", "target": "llama-3.3", "value": 45000 },
+    { "type": "boost", "target": "mistral", "value": 40000 },
+    { "type": "stack", "target": "ollama,lmstudio", "value": "failover" }
+  ]
+}
