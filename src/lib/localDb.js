@@ -11,6 +11,7 @@ import { SMART_PLAYBOOKS, INITIAL_SETTINGS } from "../shared/constants/defaults.
 import { PROVIDER_ID_TO_ALIAS } from "../shared/constants/models.js";
 import { emitProviderLifecycleEvent } from "./lifecycleEvents.js";
 import { blacklistIp as firewallBlacklistIp } from "./firewall.js";
+import { getSidecarUrl, sidecarAuthHeaders } from "./sidecar.js";
 
 // Detect environment: Cloud (Workers/Edge) vs Local (Node.js)
 // Simple check: if process.versions.node exists, we're in Node.js (local)
@@ -558,6 +559,28 @@ export function getSqliteDb() {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Scoped bearer tokens for agent/cron access to specific vault entries
+    CREATE TABLE IF NOT EXISTS vault_agent_tokens (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      scopes TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER,
+      last_used_at INTEGER,
+      revoked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_vault_agent_tokens_hash ON vault_agent_tokens(token_hash);
+
+    -- Audit trail: which token read which entry and when
+    CREATE TABLE IF NOT EXISTS vault_token_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token_id TEXT NOT NULL,
+      entry_name TEXT NOT NULL,
+      accessed_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_vault_token_usage_token ON vault_token_usage(token_id);
   `);
 
   // Token ledger for per-request billing (created once if missing)
@@ -1662,6 +1685,7 @@ const defaultData = {
   modelAliases: {},
   combos: [],
   apiKeys: [],
+  users: [], // Local user accounts for admin/user system (foundation for RBAC)
   settings: { ...INITIAL_SETTINGS },
 
   pricing: {}, // pricing configuration
@@ -1689,6 +1713,7 @@ function cloneDefaultData() {
     modelAliases: {},
     combos: [],
     apiKeys: [],
+    users: [],
     settings: { ...INITIAL_SETTINGS },
     pricing: {},
     routingPlaybooks: [...SMART_PLAYBOOKS],
@@ -2224,6 +2249,53 @@ export async function deleteProviderNode(id) {
 // ============ Wallets ============
 
 /**
+ * Columns `updateWallet` is allowed to write, mirroring updateRoutingControls'
+ * ALLOWED_FIELDS below.
+ *
+ * SECURITY (adversarial review 2026-08-30, items 4/16d): updateWallet built its
+ * SET clause by interpolating the RAW object keys it was handed, and its only
+ * caller — PATCH /api/v1/wallet — is on the middleware's `/api/v1` bypass with
+ * no route-level guard, so an unauthenticated body key such as
+ * `"name = 'x', balance"` was spliced straight into the SQL. An allowlist of
+ * literal column names is the fix: everything else is dropped, and the values
+ * stay parameterised as before.
+ *
+ * `encryptedPrivateKey` is deliberately NOT here — createWallet owns that
+ * column, and no update path should be able to overwrite (or plant) key
+ * material.
+ */
+const WALLET_UPDATABLE_FIELDS = new Set([
+  "name", "address", "balance", "isDefault", "metadata", "type",
+]);
+
+/**
+ * Projection for anything that leaves the process over HTTP.
+ *
+ * SECURITY (adversarial review 2026-08-30, item 4 / audit F7): `wallets` carries
+ * `encryptedPrivateKey`, and getWallets()/getWalletById() are `SELECT *`, so
+ * GET /api/v1/wallet, PATCH /api/v1/wallet and GET /api/mesh/connections all
+ * returned the ciphertext verbatim to unauthenticated callers. A repo-wide grep
+ * for `encryptedPrivateKey` finds no reader of an HTTP *response* — only the
+ * schema, the create path and the POST *input* — and the union of fields the
+ * four consumer pages read is {id, name, address, balance, isDefault}. So this
+ * drops exactly one field and replaces it with a boolean, the same shape
+ * src/shared/utils/providerSecurity.js#toSafeProviderConnection uses.
+ *
+ * @param {object|null|undefined} wallet a row from getWallets()/getWalletById()
+ * @returns {object|null} the row minus `encryptedPrivateKey`, plus `hasPrivateKey`
+ */
+export function toSafeWallet(wallet) {
+  if (!wallet) return null;
+  const { encryptedPrivateKey, ...rest } = wallet;
+  return { ...rest, hasPrivateKey: !!encryptedPrivateKey };
+}
+
+/** Map an array of wallet rows through toSafeWallet(). Non-arrays pass as []. */
+export function toSafeWallets(wallets) {
+  return Array.isArray(wallets) ? wallets.map(toSafeWallet) : [];
+}
+
+/**
  * Get all wallets
  */
 export async function getWallets() {
@@ -2338,8 +2410,13 @@ export async function updateWallet(id, data) {
   const fields = [];
   const params = [];
 
+  // Only WALLET_UPDATABLE_FIELDS reach the SET clause. Anything else — a typo,
+  // `encryptedPrivateKey`, or an injected identifier like
+  // `"name = 'x', balance"` — is dropped, never interpolated. See the constant
+  // for why (unauthenticated route, raw key in the SQL).
   for (const [key, value] of Object.entries(data)) {
     if (key === "id") continue;
+    if (!WALLET_UPDATABLE_FIELDS.has(key)) continue;
     fields.push(`${key} = ?`);
     params.push(key === "metadata" || key === "isDefault" ?
       (key === "metadata" ? JSON.stringify(value) : (value ? 1 : 0)) : value);
@@ -2909,6 +2986,130 @@ export async function deleteApiKey(id) {
 export async function validateApiKey(key) {
   const db = await getDb();
   return db.data.apiKeys.some(k => k.key === key);
+}
+
+// ============ Users ============
+// Local user accounts (foundation for an admin/user RBAC system).
+// NOTE: This layer only STORES password_hash as given. Password hashing/verification
+// belongs in the auth layer. The legacy single-password (settings.password) is left
+// untouched and keeps working independently of this table.
+
+const USER_ROLES = ["superadmin", "admin", "user", "viewer"];
+
+/**
+ * Get all users
+ */
+export async function listUsers() {
+  const db = await getDb();
+  return db.data.users || [];
+}
+
+/**
+ * Get user by ID
+ */
+export async function getUserById(id) {
+  const db = await getDb();
+  return (db.data.users || []).find(u => u.id === id) || null;
+}
+
+/**
+ * Get user by username
+ */
+export async function getUserByUsername(username) {
+  const db = await getDb();
+  return (db.data.users || []).find(u => u.username === username) || null;
+}
+
+/**
+ * Create a user. Enforces a unique username.
+ * Stores password_hash verbatim — hashing is the auth layer's responsibility.
+ * @param {{username:string, password_hash?:string, role?:string, email?:string, is_active?:boolean}} data
+ */
+export async function createUser(data) {
+  const db = await getDb();
+  if (!db.data.users) db.data.users = [];
+
+  if (!data || !data.username) {
+    throw new Error("username is required");
+  }
+
+  // Enforce unique username
+  if (db.data.users.some(u => u.username === data.username)) {
+    throw new Error(`User with username "${data.username}" already exists`);
+  }
+
+  const role = USER_ROLES.includes(data.role) ? data.role : "user";
+  const now = new Date().toISOString();
+  const user = {
+    id: uuidv4(),
+    username: data.username,
+    password_hash: data.password_hash || null,
+    role,
+    email: data.email || null,
+    is_active: data.is_active === false ? false : true,
+    created_at: now,
+    updated_at: now,
+  };
+
+  db.data.users.push(user);
+  await db.write();
+  return user;
+}
+
+/**
+ * Update a user. Username uniqueness is preserved if username is changed.
+ */
+export async function updateUser(id, data) {
+  const db = await getDb();
+  if (!db.data.users) db.data.users = [];
+
+  const index = db.data.users.findIndex(u => u.id === id);
+  if (index === -1) return null;
+
+  const updates = { ...data };
+  // Never allow id mutation via update
+  delete updates.id;
+
+  // If username is changing, enforce uniqueness
+  if (updates.username !== undefined && updates.username !== db.data.users[index].username) {
+    if (db.data.users.some(u => u.username === updates.username && u.id !== id)) {
+      throw new Error(`User with username "${updates.username}" already exists`);
+    }
+  }
+
+  // Validate role if provided
+  if (updates.role !== undefined && !USER_ROLES.includes(updates.role)) {
+    delete updates.role;
+  }
+
+  db.data.users[index] = {
+    ...db.data.users[index],
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+
+  await db.write();
+  return db.data.users[index];
+}
+
+/**
+ * Soft-delete a user by marking is_active = false.
+ */
+export async function deactivateUser(id) {
+  const db = await getDb();
+  if (!db.data.users) db.data.users = [];
+
+  const index = db.data.users.findIndex(u => u.id === id);
+  if (index === -1) return null;
+
+  db.data.users[index] = {
+    ...db.data.users[index],
+    is_active: false,
+    updated_at: new Date().toISOString(),
+  };
+
+  await db.write();
+  return db.data.users[index];
 }
 
 // ============ Data Cleanup ============
@@ -3669,7 +3870,9 @@ export async function createP2pSubscription(offerId, name) {
 export async function getWalletBalance() {
   // Try to use the sidecar API, or return 0 if failed
   try {
-    const res = await fetch("http://localhost:9480/wallet/balance");
+    const res = await fetch(`${getSidecarUrl()}/wallet/balance`, {
+      headers: { ...sidecarAuthHeaders() },
+    });
     if (!res.ok) return 0;
     const data = await res.json();
     return data.balance || 0;
@@ -3683,9 +3886,9 @@ export async function getWalletBalance() {
  */
 export async function recordP2pTransaction(transaction) {
   try {
-    const res = await fetch("http://localhost:9480/wallet/send", {
+    const res = await fetch(`${getSidecarUrl()}/wallet/send`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
       body: JSON.stringify(transaction)
     });
     return res.ok;
@@ -4177,7 +4380,12 @@ export async function getPriceHistory(providerId, modelId = null, activeOnly = f
   const db = await getDb();
   let history = db.data.priceHistory || [];
 
-  history = history.filter(h => h.providerId === providerId);
+  // A falsy providerId or the "*" wildcard means "all providers" — previously
+  // this filtered for the literal "*", which never matched, so the no-provider
+  // ("return all history") path always came back empty.
+  if (providerId && providerId !== "*") {
+    history = history.filter(h => h.providerId === providerId);
+  }
   if (modelId) {
     history = history.filter(h => h.modelId === modelId);
   }
@@ -4609,18 +4817,31 @@ export async function createPendingSubmission(submission, submitterId) {
 
   db.data.pendingSubmissions.push(pendingSubmission);
 
-  // If auto-verified, also add to communityPriceSubmissions
+  // If auto-verified, also add to communityPriceSubmissions using the SAME
+  // shape + source as the vote-to-verified path (voteOnSubmission), so
+  // leaderboards / community-prices see one consistent record type rather than
+  // two subtly different ones (workflow-only fields like rateLimits/notes must
+  // not leak into the community store).
   if (autoVerify) {
     if (!db.data.communityPriceSubmissions) {
       db.data.communityPriceSubmissions = [];
     }
     db.data.communityPriceSubmissions.push({
-      ...submission,
       id: pendingSubmission.id,
+      providerId: submission.providerId,
+      modelId: submission.modelId,
+      canonicalModelId: submission.canonicalModelId,
+      tier: submission.tier,
+      inputPerMUsd: submission.inputPerMUsd,
+      outputPerMUsd: submission.outputPerMUsd,
+      source: "community_verified",
       submittedBy: submitterId,
       submittedAt: pendingSubmission.submittedAt,
       verified: true,
       verifiedAt: pendingSubmission.verifiedAt,
+      verifiedBy: pendingSubmission.verifiedBy,
+      isFree: submission.isFree,
+      freeLimit: submission.freeLimit,
     });
   }
 
@@ -5031,10 +5252,37 @@ export async function syncLocalProviderConnection(node) {
   const providerId = node.apiType === "ollama" ? "ollama" : "lmstudio";
   const connectionName = `${providerId}-local-${node.id}`;
 
-  // Check if auto-managed connection already exists
-  const existing = await getProviderConnections({
-    provider: providerId,
-    name: connectionName,
+  /* ------------------------------------------------------------------ *
+   * Find THIS node's auto-managed connection — not just any connection for
+   * the provider.
+   *
+   * SECURITY FIX, 2026-08-30 (adversarial round, root cause of finding C1).
+   *
+   * `getProviderConnections()` supports `provider`, `group`, `isActive` and
+   * `isEnabled` filters and NOTHING else (src/lib/localDb.js:2008-2044), so the
+   * `name: connectionName` passed here was silently ignored. For the SECOND
+   * local node of a given apiType the lookup therefore returned the FIRST
+   * node's connection, and this function then overwrote its metadata —
+   * repointing the operator's existing, live Ollama connection at the newly
+   * registered node's baseUrl.
+   *
+   * Verified against the standalone build: after registering a second "local"
+   * Ollama at 127.0.0.1:20369, the ONE surviving `ollama` connection was
+   *   name:     "ollama-local-<FIRST node id>"
+   *   metadata: {"nodeId":"<SECOND node id>","baseUrl":"http://127.0.0.1:20369"}
+   * and every `ollama/*` request went to the second node. That is what made C1
+   * reproduce end to end: one POST silently hijacks the operator's runtime.
+   *
+   * The match is now done in JS, on the fields that actually identify the
+   * connection: the auto-managed name, or a metadata.nodeId equal to this node.
+   * ------------------------------------------------------------------ */
+  const all = await getProviderConnections({ provider: providerId });
+  const existing = all.filter((c) => {
+    if (c?.name === connectionName) return true;
+    const meta = typeof c?.metadata === "string"
+      ? (() => { try { return JSON.parse(c.metadata); } catch { return {}; } })()
+      : (c?.metadata || {});
+    return meta?.autoManaged === true && meta?.nodeId === node.id;
   });
 
   if (existing.length > 0) {
@@ -5594,6 +5842,46 @@ export function vaultMetaSet(key, value) {
 export function vaultMetaDelete(key) {
   const db = getSqliteDb(); if (!db) return;
   db.prepare(`DELETE FROM vault_meta WHERE key = ?`).run(key);
+}
+
+// ── Vault agent tokens ────────────────────────────────────────────────────────
+
+export function vaultTokenInsert({ id, name, token_hash, scopes, created_at, expires_at }) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`INSERT INTO vault_agent_tokens (id, name, token_hash, scopes, created_at, expires_at)
+              VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(id, name, token_hash, JSON.stringify(scopes), created_at, expires_at ?? null);
+}
+
+export function vaultTokenList() {
+  const db = getSqliteDb(); if (!db) return [];
+  return db.prepare(`SELECT id, name, scopes, created_at, expires_at, last_used_at, revoked
+                     FROM vault_agent_tokens ORDER BY created_at DESC`).all();
+}
+
+export function vaultTokenFindByHash(token_hash) {
+  const db = getSqliteDb(); if (!db) return null;
+  return db.prepare(`SELECT * FROM vault_agent_tokens WHERE token_hash = ?`).get(token_hash) ?? null;
+}
+
+export function vaultTokenRevoke(id) {
+  const db = getSqliteDb(); if (!db) return 0;
+  // Only a live token counts: SQLite reports a matched row as a change even
+  // when nothing changed, so an already-revoked id must be excluded for the
+  // caller's "found and revoked" answer to be true.
+  return db.prepare(`UPDATE vault_agent_tokens SET revoked = 1 WHERE id = ? AND revoked = 0`).run(id).changes;
+}
+
+export function vaultTokenTouchLastUsed(id) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`UPDATE vault_agent_tokens SET last_used_at = ? WHERE id = ?`)
+    .run(Date.now(), id);
+}
+
+export function vaultTokenLogUsage(token_id, entry_name) {
+  const db = getSqliteDb(); if (!db) return;
+  db.prepare(`INSERT INTO vault_token_usage (token_id, entry_name, accessed_at) VALUES (?, ?, ?)`)
+    .run(token_id, entry_name, Date.now());
 }
 
 // ============ Token Ledger ============

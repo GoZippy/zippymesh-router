@@ -16,11 +16,34 @@ export default function CombosPage() {
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState([]);
   const [totalConnections, setTotalConnections] = useState(0);
+  const [lifecycleMap, setLifecycleMap] = useState({});
   const { copied, copy } = useCopyToClipboard();
 
   useEffect(() => {
     fetchData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flag combo entries whose provider/model pair has gone missing or
+  // deprecated since the combo was saved. /api/models/available only lists
+  // *active* models, so a stale reference would otherwise disappear silently
+  // instead of surfacing as a warning where it's actually used.
+  const checkLifecycle = useCallback(async (combosList) => {
+    const pairs = Array.from(new Set(combosList.flatMap((c) => c.models || [])));
+    if (pairs.length === 0) {
+      setLifecycleMap({});
+      return;
+    }
+    try {
+      const res = await safeFetchJson("/api/models/lifecycle-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pairs }),
+      });
+      if (res.ok) setLifecycleMap(res.data?.results || {});
+    } catch (error) {
+      console.log("Error checking model lifecycle:", error);
+    }
+  }, []);
 
   const fetchData = async () => {
     try {
@@ -30,7 +53,11 @@ export default function CombosPage() {
       ]);
       const combosData = combosRes.data || {};
       const providersData = providersRes.data || {};
-      if (combosRes.ok) setCombos(combosData.combos || []);
+      if (combosRes.ok) {
+        const nextCombos = combosData.combos || [];
+        setCombos(nextCombos);
+        checkLifecycle(nextCombos);
+      }
       if (providersRes.ok) {
         const connections = providersData.connections || [];
         setTotalConnections(connections.length);
@@ -220,6 +247,7 @@ export default function CombosPage() {
               onCopy={copy}
               onEdit={() => setEditingCombo(combo)}
               onDelete={() => handleDelete(combo.id)}
+              lifecycleMap={lifecycleMap}
             />
           ))}
         </div>
@@ -247,7 +275,13 @@ export default function CombosPage() {
   );
 }
 
-function ComboCard({ combo, copied, onCopy, onEdit, onDelete }) {
+// "missing" = absent from the last N sync cycles, may come back.
+// "deprecated" = confirmed gone; treat as needs-attention, not just a warning.
+const STALE_LIFECYCLE_STATES = new Set(["missing", "deprecated"]);
+
+function ComboCard({ combo, copied, onCopy, onEdit, onDelete, lifecycleMap = {} }) {
+  const staleModels = combo.models.filter((model) => STALE_LIFECYCLE_STATES.has(lifecycleMap[model]?.lifecycleState));
+
   return (
     <Card padding="sm" className="group">
       <div className="flex items-center justify-between">
@@ -267,16 +301,36 @@ function ComboCard({ combo, copied, onCopy, onEdit, onDelete }) {
                   {copied === `combo-${combo.id}` ? "check" : "content_copy"}
                 </span>
               </button>
+              {staleModels.length > 0 && (
+                <span
+                  className="flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                  title={`${staleModels.length} model${staleModels.length > 1 ? "s" : ""} in this combo ${staleModels.length > 1 ? "are" : "is"} no longer offered by the provider: ${staleModels.join(", ")}`}
+                >
+                  <span className="material-symbols-outlined text-[13px]">warning</span>
+                  {staleModels.length} unavailable
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1 mt-0.5 flex-wrap">
               {combo.models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
               ) : (
-                combo.models.slice(0, 3).map((model, index) => (
-                  <code key={index} className="text-[10px] font-mono bg-black/5 dark:bg-white/5 px-1.5 py-0.5 rounded text-text-muted">
-                    {model}
-                  </code>
-                ))
+                combo.models.slice(0, 3).map((model, index) => {
+                  const isStale = STALE_LIFECYCLE_STATES.has(lifecycleMap[model]?.lifecycleState);
+                  return (
+                    <code
+                      key={index}
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                        isStale
+                          ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                          : "bg-black/5 dark:bg-white/5 text-text-muted"
+                      }`}
+                      title={isStale ? "No longer offered by the provider" : undefined}
+                    >
+                      {model}
+                    </code>
+                  );
+                })
               )}
               {combo.models.length > 3 && (
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>

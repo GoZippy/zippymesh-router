@@ -275,7 +275,7 @@ Test 5: Provider Routing
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Setup:
-  cd /home/sysop/projects/ZippyMesh_LLM_Router
+  cd <your ZippyMesh_LLM_Router checkout>
   ./scripts/setup-free-providers.sh
 
 Add Provider:

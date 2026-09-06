@@ -29,10 +29,19 @@ services:
       # Core
       NODE_ENV: production
       ZIPPY_PORT: 20128
+      # Bind inside the container. The built standalone server defaults to
+      # 127.0.0.1 (scripts/prepare-standalone.cjs), which inside a container is
+      # unreachable from the host — the published port above would refuse every
+      # connection. Containment is the "127.0.0.1:20128:20128" publish, not the
+      # bind. Mirrors `ENV HOST=0.0.0.0` in the Dockerfile so an image built
+      # elsewhere, or an older tag, still binds deterministically.
+      HOST: 0.0.0.0
       ZIPPY_NODE_NAME: ${ZIPPY_NODE_NAME:-zippymesh-alpha}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       INITIAL_PASSWORD: ${INITIAL_PASSWORD:?INITIAL_PASSWORD must be set}
       SIDE_CAR_URL: http://zippy-sidecar:9480
+      # Shared bearer secret for sidecar API auth — must match zippy-sidecar's.
+      SIDE_CAR_SECRET: ${SIDE_CAR_SECRET:?SIDE_CAR_SECRET must be set}
 
       # API Keys (optional - set for Marketplace features)
       # ZIPPY_API_KEY: ${ZIPPY_API_KEY:-}
@@ -93,6 +102,11 @@ services:
     build: ./sidecar
     container_name: zippy-sidecar
     restart: unless-stopped
+    environment:
+      # All sidecar routes except /health and /version require
+      # "Authorization: Bearer <SIDE_CAR_SECRET>"; must match the zippymesh
+      # service's value above. Unset => sidecar fails closed (401).
+      SIDE_CAR_SECRET: ${SIDE_CAR_SECRET:?SIDE_CAR_SECRET must be set}
     ports:
       - "9480:9480"
     networks:

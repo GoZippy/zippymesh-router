@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getMeshExposedProviders, setMeshExposedProviders } from "@/lib/localDb.js";
 import { getProviderNodes } from "@/models";
-import { getSidecarUrl } from "@/lib/sidecar";
+import { getSidecarUrl, sidecarAuthHeaders } from "@/lib/sidecar";
 import { apiError } from "@/lib/apiErrors";
 
 const SIDECAR_URL = getSidecarUrl();
@@ -45,12 +45,40 @@ export async function POST(request) {
 
     const res = await fetch(`${SIDECAR_URL}/mesh/exposed-providers`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
       body: JSON.stringify({ provider_ids: exposed, models }),
     }).catch(() => null);
 
     if (!res?.ok) {
       console.warn("Sidecar mesh endpoint not available; config saved locally.");
+    }
+
+    // Register this node as an on-chain provider so peers can discover it via
+    // zippycoin_getProviders. Core requires a SIGNED registerProvider op, so we
+    // go through the sidecar (which holds the ML-DSA key) — not an unsigned RPC.
+    // Gated on MESH_PUBLIC_ENDPOINT so we never publish a bogus/unreachable
+    // endpoint; set it to the URL peers should call for inference.
+    const publicEndpoint = process.env.MESH_PUBLIC_ENDPOINT;
+    if (publicEndpoint && exposed.length > 0) {
+      try {
+        const primary = models[0] || {};
+        const reg = await fetch(`${SIDECAR_URL}/provider/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
+          body: JSON.stringify({
+            endpoint: publicEndpoint,
+            model: primary.name || "",
+            rate_zat_per_token: Number.isFinite(primary.rate_zat_per_token)
+              ? primary.rate_zat_per_token
+              : 1000,
+          }),
+        }).catch(() => null);
+        if (!reg?.ok) {
+          console.warn("On-chain provider registration skipped (sidecar/node unavailable).");
+        }
+      } catch (e) {
+        console.warn("On-chain provider registration skipped:", e.message);
+      }
     }
 
     return NextResponse.json({ exposed: await getMeshExposedProviders() });

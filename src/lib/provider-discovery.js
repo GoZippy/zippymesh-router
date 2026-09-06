@@ -96,66 +96,74 @@ export async function discoverProviders(rpcUrl, contractAddress) {
 }
 
 /**
- * Query ServiceRegistry contract for providers of a specific service type
+ * Query the ZippyCoin node's on-chain provider registry for LLM providers.
+ *
+ * Calls the native `zippycoin_getProviders` RPC (no contract/ABI needed) and
+ * maps each on-chain provider record into the shape the rest of this module
+ * expects. Returns `[]` on empty/failure so callers surface "no providers"
+ * rather than routing real inference to a fabricated endpoint.
+ *
+ * On-chain record: { address(zpc1), endpoint, service_type, model,
+ *   rate_zat_per_token, active, registered_at, last_heartbeat }.
  */
 async function queryServiceRegistry(rpcUrl, contractAddress, serviceType) {
-    // In production, would use ethers.js or web3.js to make contract calls
-    // For now, simulate provider data structure
-    
-    const providers = [
-        {
-            node_id: "en_001",
-            wallet: "0x1234567890123456789012345678901234567890",
-            region: "us-east",
-            node_name: "zippy-edge-1",
-            trust_score: 92,
-            services: [{
-                name: "llama2",
-                capability: "general-purpose",
-                max_throughput: 1000,
-                latency_sla_ms: 500
-            }],
-            pricing: {
-                per_token_wei: "100",
-                per_second_gwei: "50",
-                network_fee_bps: 25
-            },
-            endpoints: {
-                http: "http://edge1.example.local:8080",
-                rpc: "http://edge1.example.local:8545"
-            },
-            heartbeat_timestamp: Math.floor(Date.now() / 1000),
-            avg_latency_ms: 145,
-            error_rate: 0.002
-        },
-        {
-            node_id: "en_002",
-            wallet: "0x2345678901234567890123456789012345678901",
-            region: "us-west",
-            node_name: "zippy-edge-2",
-            trust_score: 88,
-            services: [{
-                name: "mistral",
-                capability: "code-generation",
-                max_throughput: 800,
-                latency_sla_ms: 600
-            }],
-            pricing: {
-                per_token_wei: "120",
-                per_second_gwei: "60",
-                network_fee_bps: 30
-            },
-            endpoints: {
-                http: "http://edge2.example.local:8080",
-                rpc: "http://edge2.example.local:8545"
-            },
-            heartbeat_timestamp: Math.floor(Date.now() / 1000),
-            avg_latency_ms: 182,
-            error_rate: 0.005
-        }
-    ];
+    // Only the LLM service maps to on-chain "llm_inference" providers.
+    if (serviceType !== SERVICE_TYPES.LLM) {
+        return [];
+    }
+    let records = [];
+    try {
+        const res = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'zippycoin_getProviders',
+                params: [{ service_type: 'llm_inference' }],
+            }),
+            signal: AbortSignal.timeout(5000),
+        });
+        const json = await res.json();
+        if (json.error) throw new Error(json.error.message || 'RPC error');
+        records = json.result?.providers ?? [];
+    } catch (err) {
+        console.warn('[Discovery] zippycoin_getProviders failed:', err.message);
+        return [];
+    }
 
-    return providers;
+    // Map on-chain records → internal provider shape. rate_zat_per_token is the
+    // smallest-unit (ZAT) price per token, which is exactly what estimateCost
+    // treats `per_token_wei` as (1 ZIP = 1e18 ZAT), so the ZIP cost comes out
+    // correct without a conversion.
+    return records
+        .filter((p) => p.active !== false && p.address)
+        .map((p) => ({
+            node_id: p.address.slice(0, 12),
+            address: p.address,      // zpc1 — used for on-chain settlement
+            wallet: p.address,
+            region: p.region || '',
+            node_name: p.model ? `${p.model}@${p.address.slice(0, 8)}` : p.address.slice(0, 8),
+            trust_score: typeof p.trust_score === 'number' ? p.trust_score : 80,
+            services: [{
+                name: p.model || 'llama2',
+                capability: p.service_type || 'llm_inference',
+                max_throughput: 0,
+                latency_sla_ms: 1000,
+            }],
+            pricing: {
+                per_token_wei: String(p.rate_zat_per_token ?? 1000),
+                per_second_gwei: '0',
+                network_fee_bps: 0,
+            },
+            endpoints: {
+                http: p.endpoint || '',
+                rpc: '',
+            },
+            heartbeat_timestamp: p.last_heartbeat || 0,
+            avg_latency_ms: 0,
+            error_rate: 0,
+        }));
 }
 
 /**
@@ -249,9 +257,11 @@ export function clearProviderCache() {
 /**
  * Register a provider on-chain via the native ZippyCoin RPC.
  *
- * Calls `zippycoin_registerProvider` directly on the ZippyCoin node — no
- * contract address or ABI encoding required.  Safe to call at startup and
- * on provider config changes.
+ * @deprecated Current core requires a valid ML-DSA signature over
+ * `zippy-op-v1|registerProvider|address|endpoint||nonce` (see core
+ * `zippycoin_register_provider` → `authorize_op`). This unsigned JS call is
+ * REJECTED by the node. Use the sidecar's signed `POST /provider/register`
+ * instead (it holds the ML-DSA key). Retained only for reference.
  *
  * @param {string} rpcUrl - ZippyCoin RPC endpoint
  * @param {Object} providerInfo - { address, endpoint, model, rate_zat_per_token, ... }

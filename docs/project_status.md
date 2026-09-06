@@ -65,7 +65,7 @@ All 5 roadmap milestones are complete.
 - Cost Simulator (playbook dry-run with score breakdown)
 - Community Marketplace (5 seed playbooks, browse/download/rate/publish)
 - PII guardrails with default patterns (email, SSN, credit card, phone, API key)
-- MCP server (`src/mcp/zmlr-server.js`): `list_models`, `recommend_model`, `validate_model`
+- MCP server (`src/mcp/zmlr-server.js`): `list_models`, `recommend_model`, `validate_model`; ZippyVault tools `vault_status`, `vault_list`, `vault_get`, `vault_store` (gated by a scoped agent token: `x-zippyvault-token` header over HTTP, `ZIPPYVAULT_TOKEN` env for a standalone process)
 
 ---
 

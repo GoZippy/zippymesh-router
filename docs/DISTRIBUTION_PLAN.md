@@ -63,7 +63,7 @@ Separate repos give you **open code** in one place and **versioned prebuilt inst
    npm run build
    npm run package-release
    ```
-   `package-release` zips `.next/standalone/` (excluding `.env`) to `dist/zippymesh-router-v<version>.zip` and prints the next commands.
+   `package-release` zips `.next/standalone/` (excluding `.env`) to `dist/zippymesh-router-v<version>-<platform>-<arch>.zip` and prints the next commands. The platform tag is `${process.platform}-${process.arch}` of the machine that built it, because the archive carries a compiled `better-sqlite3`; run it once per target platform.
 
 2. **Sync to zippymesh-dist** (manual or script)
    - Push the same tag/branch to zippymesh-dist, or copy the built `.next/standalone` and the zip into zippymesh-dist and commit the zip under a `releases/` or attach it via GitHub UI.
@@ -73,7 +73,7 @@ Separate repos give you **open code** in one place and **versioned prebuilt inst
 3. **Create GitHub Release from zippymesh-dist**
    ```bash
    cd /path/to/zippymesh-dist
-   gh release create v1.0.0 dist/zippymesh-router-v1.0.0.zip --notes "Release v1.0.0"
+   gh release create v1.0.0 dist/zippymesh-router-v1.0.0-win32-x64.zip --notes "Release v1.0.0"
    ```
    Or create the release in the GitHub UI and upload the zip. Add SHA-256 checksum to the notes if desired.
 

@@ -1,168 +1,141 @@
 /**
  * API route: /api/mesh/wallet
- * Handles wallet generation, retrieval, and management
+ *
+ * The ZippyCoin wallet is owned by the Rust sidecar: it generates a single
+ * ML-DSA-65 keypair at startup, derives the canonical `zpc1` address (the
+ * exact formula the core node accepts), and auto-registers its pubkey. This
+ * route is a thin, read-mostly bridge to that wallet.
+ *
+ * NOTE: the old Ed25519 `0x` keygen (src/lib/wallet-management.js) was retired
+ * — it produced an address the chain can never register or verify. Do NOT mint
+ * keys in JS; always surface the sidecar's zpc1 wallet.
  */
 
-import { initializeWallet, generateNewWallet, getCurrentWallet, getWalletDetails, removeWallet, restoreWalletFromBackup } from '@/lib/wallet-management';
+import { getSidecarWalletBalance } from '@/lib/sidecar.js';
+import { zippyRpc } from '@/lib/zippycoin-wallet.js';
+
+function json(body, status = 200) {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
+
+/** Fetch the node-managed wallet (address + live balance) from the sidecar. */
+async function sidecarWallet() {
+    // { balance, currency, address, source }
+    return getSidecarWalletBalance();
+}
 
 export async function GET(request) {
     try {
-        const url = new URL(request.url);
-        const action = url.searchParams.get('action');
-
+        const action = new URL(request.url).searchParams.get('action');
         switch (action) {
-            case 'details':
-                return handleGetDetails();
             case 'status':
                 return handleGetStatus();
+            case 'details':
             default:
-                return handleGetCurrent();
+                return handleGetDetails();
         }
     } catch (error) {
-        return new Response(JSON.stringify({
-            error: error.message,
-            code: 'WALLET_ERROR'
-        }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return json({ error: error.message, code: 'WALLET_ERROR' }, 500);
     }
 }
 
 export async function POST(request) {
     try {
-        const body = await request.json();
-        const { action } = body;
-
+        const { action } = await request.json();
         switch (action) {
             case 'initialize':
-                return handleInitialize();
             case 'generate':
+                // The sidecar wallet always exists; "generate" just surfaces it.
                 return handleGenerate();
-            case 'remove':
-                return handleRemove(body);
             case 'export':
-                return handleExport();
             case 'restore':
-                return handleRestore(body);
+            case 'remove':
+                return handleNodeManaged(action);
             default:
-                return new Response(JSON.stringify({
-                    error: 'Unknown action',
-                    code: 'INVALID_ACTION'
-                }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+                return json({ error: 'Unknown action', code: 'INVALID_ACTION' }, 400);
         }
     } catch (error) {
-        return new Response(JSON.stringify({
-            error: error.message,
-            code: 'WALLET_ERROR'
-        }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        return json({ error: error.message, code: 'WALLET_ERROR' }, 500);
     }
-}
-
-async function handleInitialize() {
-    const walletDir = await initializeWallet();
-    return new Response(JSON.stringify({
-        success: true,
-        message: 'Wallet directory initialized',
-        walletDir
-    }), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function handleGenerate() {
-    const wallet = await generateNewWallet();
-    return new Response(JSON.stringify({
-        success: true,
-        wallet: {
-            address: wallet.address,
-            createdAt: wallet.createdAt,
-            keyType: wallet.keyType
-        }
-    }), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function handleGetCurrent() {
-    const wallet = await getCurrentWallet();
-    if (!wallet) {
-        return new Response(JSON.stringify({
-            success: false,
-            message: 'No wallet found. Generate a new one first.',
-            wallet: null
-        }), { headers: { 'Content-Type': 'application/json' } });
-    }
-
-    return new Response(JSON.stringify({
-        success: true,
-        wallet: {
-            address: wallet.address,
-            createdAt: wallet.createdAt,
-            keyType: wallet.keyType,
-            isActive: wallet.isActive
-        }
-    }), { headers: { 'Content-Type': 'application/json' } });
 }
 
 async function handleGetDetails() {
-    const rpcUrl = process.env.NEXT_PUBLIC_ZIPPYCOIN_RPC_URL || 'http://localhost:8545';
-    const details = await getWalletDetails(rpcUrl);
-    return new Response(JSON.stringify({
-        success: true,
-        details
-    }), { headers: { 'Content-Type': 'application/json' } });
+    try {
+        const w = await sidecarWallet();
+        // Best-effort nonce + exact ZAT balance direct from the node RPC
+        // (falls back gracefully if the node is unreachable).
+        let nonce = 0;
+        let balanceWei;
+        try {
+            const nonceHex = await zippyRpc('zippycoin_getNonce', [w.address, 'latest']);
+            nonce = parseInt(nonceHex, 16) || 0;
+        } catch { /* node down — leave nonce 0 */ }
+        try {
+            const balHex = await zippyRpc('zippycoin_getBalance', [w.address, 'latest']);
+            balanceWei = BigInt(balHex).toString(); // ZAT, exact
+        } catch { /* use sidecar balance only */ }
+
+        return json({
+            success: true,
+            details: {
+                address: w.address,
+                balance: (w.balance ?? 0).toString(),
+                balanceWei,
+                nonce,
+                keyType: 'ml-dsa-65',
+                source: w.source,
+            },
+        });
+    } catch {
+        return json({
+            success: false,
+            message: 'Node wallet unavailable — is the ZippyCoin sidecar running?',
+            wallet: null,
+        });
+    }
+}
+
+async function handleGenerate() {
+    try {
+        const w = await sidecarWallet();
+        return json({
+            success: true,
+            wallet: {
+                address: w.address,
+                balance: (w.balance ?? 0).toString(),
+                keyType: 'ml-dsa-65',
+                isActive: true,
+            },
+        });
+    } catch {
+        return json({
+            success: false,
+            error: 'Cannot reach the ZippyCoin sidecar. Start the node/sidecar; the wallet is created automatically.',
+        }, 502);
+    }
 }
 
 async function handleGetStatus() {
     try {
-        const wallet = await getCurrentWallet();
-        return new Response(JSON.stringify({
-            success: true,
-            hasWallet: !!wallet,
-            address: wallet?.address
-        }), { headers: { 'Content-Type': 'application/json' } });
-    } catch (error) {
-        return new Response(JSON.stringify({
-            success: false,
-            hasWallet: false
-        }), { headers: { 'Content-Type': 'application/json' } });
+        const w = await sidecarWallet();
+        return json({ success: true, hasWallet: !!w.address, address: w.address });
+    } catch {
+        return json({ success: false, hasWallet: false });
     }
 }
 
-async function handleExport() {
-    const { exportWalletForBackup } = await import('@/lib/wallet-management');
-    const backup = await exportWalletForBackup();
-    return new Response(JSON.stringify({
-        success: true,
-        backup
-    }), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function handleRestore(body) {
-    const { backup, overwrite } = body || {};
-    if (!backup) {
-        return new Response(JSON.stringify({ success: false, error: 'Missing backup payload' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    }
-    try {
-        const wallet = await restoreWalletFromBackup(backup, { overwrite: !!overwrite });
-        return new Response(JSON.stringify({
-            success: true,
-            message: 'Wallet restored',
-            wallet: { address: wallet.address, createdAt: wallet.createdAt, keyType: wallet.keyType }
-        }), { headers: { 'Content-Type': 'application/json' } });
-    } catch (e) {
-        return new Response(JSON.stringify({
-            success: false,
-            error: e.message || 'Restore failed'
-        }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    }
-}
-
-async function handleRemove(body) {
-    const { confirmationCode } = body;
-    try {
-        await removeWallet(confirmationCode);
-        return new Response(JSON.stringify({
-            success: true,
-            message: 'Wallet removed'
-        }), { headers: { 'Content-Type': 'application/json' } });
-    } catch (error) {
-        return new Response(JSON.stringify({
-            error: error.message
-        }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-    }
+/**
+ * export / restore / remove used to operate on the retired JS keystore. The
+ * zpc1 wallet's key material is the sidecar's ML-DSA seed file on this host,
+ * so these are node-managed operations, not JSON-keystore ones.
+ */
+function handleNodeManaged(action) {
+    return json({
+        success: false,
+        error: `'${action}' is managed by the node sidecar. The wallet key is the sidecar's ML-DSA seed file on this machine; back it up / restore it at the node level rather than through the browser.`,
+        code: 'NODE_MANAGED_WALLET',
+    }, 400);
 }

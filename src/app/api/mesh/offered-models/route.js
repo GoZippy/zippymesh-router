@@ -4,7 +4,7 @@ import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { getPricing } from "@/lib/localDb.js";
 import { toCanonicalModel } from "@/lib/modelNormalization.js";
 import { getProviderSource } from "@/shared/constants/pricing.js";
-import { getSidecarUrl } from "@/lib/sidecar";
+import { getSidecarUrl, sidecarAuthHeaders } from "@/lib/sidecar";
 import { apiError } from "@/lib/apiErrors";
 
 const SIDECAR_URL = getSidecarUrl();
@@ -148,7 +148,7 @@ export async function POST(request) {
 
     const res = await fetch(`${SIDECAR_URL}/mesh/exposed-providers`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
       body: JSON.stringify({ provider_ids: [], models }),
     }).catch(() => null);
 

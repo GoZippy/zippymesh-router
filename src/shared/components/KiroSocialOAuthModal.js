@@ -30,7 +30,7 @@ export default function KiroSocialOAuthModal({ isOpen, provider, onSuccess, onCl
         const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(data.error);
+          throw new Error((typeof data.error === "string" ? data.error : data.error?.message) || "Failed to start authorization");
         }
 
         setAuthData(data);
@@ -85,7 +85,7 @@ export default function KiroSocialOAuthModal({ isOpen, provider, onSuccess, onCl
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error((typeof data.error === "string" ? data.error : data.error?.message) || "Token exchange failed");
 
       setStep("success");
       onSuccess?.();

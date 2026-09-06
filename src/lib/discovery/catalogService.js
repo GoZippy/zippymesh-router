@@ -23,6 +23,11 @@ import {
   APIKEY_PROVIDERS,
   FREE_PROVIDERS,
 } from "@/shared/constants/providers";
+import {
+  baseNamespaceFor,
+  ownerNodeIdFor,
+  prefixForNode,
+} from "@/lib/routing/localModelIndex.js";
 
 /**
  * Intent definitions and their characteristics
@@ -244,9 +249,18 @@ export async function getCatalogModels() {
     console.log("Could not fetch local nodes");
   }
 
+  // Per-node namespacing, 2026-08-30 adversarial round (finding C1). This used
+  // to be `node.apiType === "ollama" ? "ollama" : "lmstudio"` for EVERY node, so
+  // two Ollama runtimes serving the same tag produced the same `fullModel` and
+  // `seenLocal` silently kept whichever came back first. The recommender scores
+  // this catalogue, so `model:"auto"` could have picked an id that
+  // RoutingEngine then pins to a different node — a 404 at best. One owner keeps
+  // the bare `ollama/` namespace; everything else is `ollama@<host>-<port>/`.
+  // See src/lib/routing/localModelIndex.js for the scheme and why it exists.
+  const localOwners = ownerNodeIdFor(localNodes);
   const localModelPromises = localNodes.map(async (node) => {
     const nodeModels = await fetchLocalModels(node);
-    const prefix = node.apiType === "ollama" ? "ollama" : "lmstudio";
+    const prefix = prefixForNode(node, localOwners.get(baseNamespaceFor(node)) ?? null);
     return nodeModels.map(m =>
       enrichModel(m, prefix, "local", {
         fullModel: `${prefix}/${m.id}`,

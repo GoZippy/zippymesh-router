@@ -2,7 +2,7 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
-import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
+import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, normalizeOpenAIChunk, applyClientModelToChunk } from "./streamHelpers.js";
 
 export { COLORS, formatSSE };
 
@@ -28,6 +28,10 @@ const STREAM_MODE = {
  * @param {string} options.model - Model name
  * @param {string} options.connectionId - Connection ID for usage tracking
  * @param {object} options.body - Request body (for input token estimation)
+ * @param {string} options.clientModel - Provider-qualified model id to echo back
+ *   to the client (e.g. "ollama/qwen3.5:4b"). Providers echo their own local tag
+ *   ("qwen3.5:4b"), which is not an id a client can send back. See
+ *   docs/_internal/OPENAI_COMPAT_CONTRACT_2026-08-30.md §4 (defect 7).
  */
 export function createSSEStream(options = {}) {
   const {
@@ -39,7 +43,8 @@ export function createSSEStream(options = {}) {
     toolNameMap = null,
     model = null,
     connectionId = null,
-    body = null
+    body = null,
+    clientModel = null
   } = options;
 
   let buffer = "";
@@ -73,6 +78,15 @@ export function createSSEStream(options = {}) {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
               const idFixed = fixInvalidId(parsed);
+              // Map every vendor spelling of the reasoning delta onto
+              // `reasoning_content` BEFORE the empty-frame filter runs, so a
+              // thinking model's tokens reach the client instead of being
+              // dropped (defect 6).
+              const reasoningNormalized = normalizeOpenAIChunk(parsed);
+              // Echo the provider-qualified id, not the provider's local tag
+              // (defect 7).
+              const modelRewritten = applyClientModelToChunk(parsed, clientModel);
+              const rewritten = idFixed || reasoningNormalized || modelRewritten;
 
               if (!hasValuableContent(parsed, FORMATS.OPENAI)) {
                 continue;
@@ -101,7 +115,7 @@ export function createSSEStream(options = {}) {
                 parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
-              } else if (idFixed) {
+              } else if (rewritten) {
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
               }
@@ -134,9 +148,15 @@ export function createSSEStream(options = {}) {
           continue;
         }
 
+        // Normalise vendor reasoning spellings on an OpenAI-shaped provider
+        // chunk before it is translated, so downstream formats see it too.
+        if (targetFormat === FORMATS.OPENAI) {
+          normalizeOpenAIChunk(parsed);
+        }
+
         // Track content length for estimation (from various formats)
         // Include both regular content and reasoning/thinking content
-        
+
         // Claude format
         if (parsed.delta?.text) {
           totalContentLength += parsed.delta.text.length;
@@ -182,6 +202,11 @@ export function createSSEStream(options = {}) {
             // Filter empty chunks
             if (!hasValuableContent(item, sourceFormat)) {
               continue; // Skip this empty chunk
+            }
+
+            // Echo the provider-qualified model id on OpenAI-shaped output
+            if (sourceFormat === FORMATS.OPENAI) {
+              applyClientModelToChunk(item, clientModel);
             }
 
             // Inject estimated usage if finish chunk has no valid usage
@@ -299,7 +324,7 @@ export function createSSEStream(options = {}) {
 }
 
 // Convenience functions for backward compatibility
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, clientModel = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -309,17 +334,19 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     toolNameMap,
     model,
     connectionId,
-    body
+    body,
+    clientModel
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, clientModel = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
     reqLogger,
     model,
     connectionId,
-    body
+    body,
+    clientModel
   });
 }

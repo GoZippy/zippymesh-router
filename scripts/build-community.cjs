@@ -44,44 +44,25 @@ info("Output: ", DIST_DIR);
 // ── Helpers ──────────────────────────────────────────────────────────────────
 // Directory names that must never be copied into community-dist. Anything internal,
 // user-runtime, build-artifact, agent-scratchpad, or IDE-state goes here.
-const EXCLUDE_DIRS = new Set([
-  ".git", "node_modules", ".next", "community-dist", "stubs",
-  ".claude", ".cursor", ".voidspec", ".autoclaw", ".github", ".kilo",
-  "data", "logs", "experiments", "tester", "test-results", "dist",
-  "src-tauri", "sidecar", "out", ".bin", "bin", "tmp", ".vscode", ".idea",
-  ".next-win-retry-2", ".next-win-retry-3",
-  "_deprecated", "archive", "_archive", "_old", "backup",
-  "plans",  // internal planning docs — never ship
-]);
+const {
+  INTERNAL_DIR_NAMES,
+  BUILD_ARTIFACT_DIRS,
+  INTERNAL_REL_PATHS,
+  INTERNAL_FILE_REGEXES,
+  selfTest: exclusionsSelfTest,
+} = require("./open-core-exclusions.cjs");
 
-// docs/_internal/ is the canonical home for internal-only notes (plans, session
-// reports, deploy runbooks). Must never appear in community-dist.
-const EXCLUDE_PATHS = new Set([
-  path.join("docs", "_internal"),
-]);
+// A list that has silently stopped covering something builds a payload that
+// looks clean. Prove the rules still hold before copying anything.
+exclusionsSelfTest();
 
-// File-name patterns that must never be copied (logs, dumps, env, db, AI-state).
-const EXCLUDE_FILE_PATTERNS = [
-  /^\.env(\.|$)/i,                       // .env, .env.local, .env.mesh, etc.
-  /\.log$/i,                             // *.log
-  /^debug_/i,                            // debug_log.txt, debug_session*.log
-  /^startup.*\.log$/i,
-  /\.sqlite(-shm|-wal)?$/i,
-  /^oauth-secrets\.json$/i,
-  /^db\.json$/i,
-  /\.bak$/i,
-  /\.resolved(\.|$)/i,                   // *.resolved.* merge leftovers
-  /^null$/,                              // accidental stdout redirect
-  /^diff_output\.txt$/i,
-  /^cargo_check_output\.txt$/i,
-  /^network-scan-report\.json$/i,
-  /^frontend_debug\.log$/i,
-  /^\.kilocodemodes$/i,
-  /^\.zippy-private$/i,                  // the boundary manifest itself
-  /-debug\.log$/i,
-  /\.tsbuildinfo$/i,
-  /-error\.log$/i,
-];
+// Internal material plus build output. The two are kept apart in the shared
+// module because the validator must fail on the first and ignore the second.
+const EXCLUDE_DIRS = new Set([...INTERNAL_DIR_NAMES, ...BUILD_ARTIFACT_DIRS]);
+
+const EXCLUDE_PATHS = new Set(INTERNAL_REL_PATHS.map((r) => path.join(...r.split("/"))));
+
+const EXCLUDE_FILE_PATTERNS = INTERNAL_FILE_REGEXES;
 
 function isExcluded(relPath, basename, isDirectory) {
   if (EXCLUDE_DIRS.has(basename)) return true;

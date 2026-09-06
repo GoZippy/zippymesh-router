@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getP2pSubscriptions, createP2pSubscription, getWalletBalance, getWalletTransactions } from "@/lib/localDb";
-import { getSidecarUrl, getWalletEarnings } from "@/lib/sidecar";
+import { getSidecarUrl, getWalletEarnings, sidecarAuthHeaders } from "@/lib/sidecar";
 
 const SIDECAR_URL = getSidecarUrl();
 
@@ -12,7 +12,7 @@ export async function GET() {
     try {
         let offers = [];
         try {
-            const peersRes = await fetch(`${SIDECAR_URL}/peers`, { cache: "no-store" });
+            const peersRes = await fetch(`${SIDECAR_URL}/peers`, { cache: "no-store", headers: { ...sidecarAuthHeaders() } });
             if (peersRes.ok) {
                 const peers = await peersRes.json();
                 offers = (Array.isArray(peers) ? peers : []).map((p) => ({

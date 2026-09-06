@@ -8,7 +8,9 @@ import os from "os";
 
 const execAsync = promisify(exec);
 
-const getDroidDir = () => `${os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]()}/.factory`;
+// Plain os.homedir() — see review item 16h; the String.fromCharCode() spelling
+// only blinded this repo's own path/secret scanners.
+const getDroidDir = () => `${os.homedir()}/.factory`;
 const getDroidSettingsPath = () => `${getDroidDir()}/settings.json`;
 
 // Check if droid CLI is installed

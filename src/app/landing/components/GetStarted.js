@@ -61,17 +61,29 @@ export default function GetStarted() {
               
               {/* Terminal content */}
               <div className="p-6 font-mono text-sm leading-relaxed overflow-x-auto">
-                <div 
+                {/*
+                  This used to offer `npx zippymesh` — a command that has never
+                  resolved: the package is `@zippy/mesh`, `private: true`, with
+                  no `files`, no server `bin`, and a compiled native dependency
+                  (adversarial review 2026-08-30, item 16i). The real first
+                  command is unpacking the release zip and running the launcher.
+                */}
+                <div
                   className="flex items-center gap-2 mb-4 group cursor-pointer"
-                  onClick={() => handleCopy("npx zippymesh")}
+                  onClick={() => handleCopy("./start-stable.sh")}
                 >
                   <span className="text-green-400">$</span>
-                  <span className="text-white">npx zippymesh</span>
+                  <span className="text-white">./start-stable.sh</span>
                   <span className="ml-auto text-gray-500 text-xs opacity-0 group-hover:opacity-100">
                     {copied ? "✓ Copied" : "Copy"}
                   </span>
                 </div>
-                
+
+                <div className="text-gray-500 text-xs mb-4">
+                  (Windows: <span className="text-white">start-stable.cmd</span>. Unpack the release
+                  zip first — see the download page.)
+                </div>
+
                 <div className="text-gray-400 mb-6">
                   <span className="text-[#f97815]">&gt;</span> Starting ZippyMesh...<br/>
                   <span className="text-[#f97815]">&gt;</span> Server running on <span className="text-blue-400">http://localhost:20128</span><br/>

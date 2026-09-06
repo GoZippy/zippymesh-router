@@ -1,10 +1,13 @@
 # Public Release Checklist — zippymesh-router
 
+This is the **publish gate** for the public open-core repo specifically: secrets, paths, and history. It assumes the general release checklist in [RELEASE.md](RELEASE.md) — tests, doctor, version bump, tag — has already passed; this list does not repeat those steps.
+
 Before making the public repo (zippymesh-router) public or pushing a release:
 
 ## Validation (pre-publish gate)
 
-- [ ] In zippymesh-router tree, run `npm run validate-open-core -- --allow-stubs` — **must pass** (exit 0). If it fails, proprietary paths are present; run `node scripts/stub-open-core.cjs` then validate again. Do not push or make repo public until this passes.
+- [ ] From the root repo, `npm run build:community && node scripts/validate-open-core.cjs --allow-stubs --tree=community-dist` — **must pass** (exit 0). This is the same command as gate 5 in [RELEASE.md](RELEASE.md); running it here re-validates the tree you are about to push to the public repo, not just the build output. If it fails, proprietary paths are present; run `node scripts/stub-open-core.cjs` (or fix the leak at the source) then validate again. Do not push or make the repo public until this passes.
+- [ ] If validating an already-checked-out `zippymesh-router` tree directly (rather than a freshly built `community-dist`), the equivalent is `npm run validate-open-core -- --allow-stubs` run from inside that tree, with no `--tree` flag.
 - [ ] Ensure `scripts/validate-open-core.cjs` and `scripts/stub-open-core.cjs` exist (see scripts allowlist in .gitignore)
 
 ## Secrets and paths

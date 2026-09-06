@@ -10,6 +10,7 @@ import { normalizeAlternativesToClientFormat } from "@/lib/alternativesFormat.js
 import { saveRoutingMemorySuccess } from "@/lib/routingMemory.js";
 import { detectMultimodal } from "@/lib/multimodalDetect.js";
 import { getDefaultModel, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models.js";
+import { pickLocalDefaultModel } from "@/lib/routing/localModelIndex.js";
 import { emitProviderLifecycleEvent } from "@/lib/lifecycleEvents.js";
 import { isAvailable as isCircuitAvailable, recordSuccess as circuitRecordSuccess, recordFailure as circuitRecordFailure } from "@/lib/circuitBreaker.js";
 import { isRetryable as isRetryableStatus, getDelayMs as getRetryDelayMs, getDefaultMaxRetries } from "@/lib/retryPolicy.js";
@@ -195,7 +196,22 @@ async function _executeOrchestratedChat(params) {
         let resolvedModel = modelInfo.model;
         if (resolvedModel === "auto") {
             const providerAlias = PROVIDER_ID_TO_ALIAS[modelInfo.provider] || modelInfo.provider;
-            const defaultModel = getDefaultModel(providerAlias);
+            let defaultModel = getDefaultModel(providerAlias);
+
+            // PROVIDER_MODELS has no table for a local runtime — its inventory is
+            // whatever the user pulled — so getDefaultModel() returns null and
+            // the literal "auto" used to be forwarded to Ollama, which 404s.
+            // Ask the runtime instead. (fixed 2026-08-30)
+            if (!defaultModel) {
+                const meta = typeof connection.metadata === "string"
+                    ? (() => { try { return JSON.parse(connection.metadata); } catch { return {}; } })()
+                    : (connection.metadata || {});
+                defaultModel = await pickLocalDefaultModel(modelInfo.provider, {
+                    nodeId: meta.nodeId,
+                    baseUrl: meta.baseUrl,
+                });
+            }
+
             if (defaultModel) {
                 resolvedModel = defaultModel;
                 log?.info?.("ORCHESTRATOR", `Resolved 'auto' to '${resolvedModel}' for ${modelInfo.provider} (alias: ${providerAlias})`);
@@ -318,9 +334,12 @@ async function _executeOrchestratedChat(params) {
 
             const providerUsage = extractProviderUsageFromHeaders(result.providerHeaders);
             let ourExpectedCostUsd = 0;
+            // Held so writeLedgerRow below can re-price the SETTLED streaming
+            // usage without a second async lookup (see the closure).
+            let modelPricing = null;
             try {
-                const pricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
-                ourExpectedCostUsd = completionCost(result.usage || {}, modelInfo.provider, modelInfo.model, pricing);
+                modelPricing = await getPricingForModel(modelInfo.provider, modelInfo.model);
+                ourExpectedCostUsd = completionCost(result.usage || {}, modelInfo.provider, modelInfo.model, modelPricing);
             } catch {
                 // Pricing can be unavailable for passthrough models; keep zero
             }
@@ -351,25 +370,82 @@ async function _executeOrchestratedChat(params) {
                 log?.warn?.("ORCHESTRATOR", `Usage tracking failed: ${usageErr.message}`);
             }
 
-            // Token ledger — SQLite row for billing / multi-tenant accounting
-            try {
-                recordTokenUsage({
-                    requestId,
-                    provider: modelInfo.provider,
-                    modelId: modelInfo.model,
-                    virtualKey: params.virtualKey || null,
-                    clientId: params.clientId || null,
-                    inputTokens: result.usage?.prompt_tokens || result.usage?.input_tokens || 0,
-                    outputTokens: result.usage?.completion_tokens || result.usage?.output_tokens || 0,
-                    latencyMs: latency,
-                    costUsd: ourExpectedCostUsd || 0,
-                    status: 'success',
-                });
-            } catch (ledgerErr) {
-                log?.warn?.("ORCHESTRATOR", `Token ledger failed: ${ledgerErr.message}`);
+            // Token ledger — SQLite row for billing / multi-tenant accounting.
+            //
+            // Fixed 2026-08-30: handleChatCore returned no `usage` at all, so
+            // every row ever written here carried 0 input / 0 output tokens
+            // (docs/_internal/OPENAI_COMPAT_CONTRACT_2026-08-30.md §11 item 1).
+            // It now returns the provider's own numbers on a non-streaming
+            // result, and `usagePromise` — settling with the final estimated
+            // stream usage — on a streaming one.
+            //
+            // The `token_ledger` table has no column for the estimated flag and
+            // this is not the place to migrate the schema, so a streaming row is
+            // written from the estimate without saying so; `usage.estimated` on
+            // the final chunk remains the authoritative signal on the wire.
+            //
+            // Fixed 2026-08-30 (adversarial review item 9a): `cost_usd` used to
+            // be the `ourExpectedCostUsd` snapshot computed ABOVE, from
+            // `result.usage || {}`. A streaming result carries `usagePromise`,
+            // not `usage`, so that snapshot is derived from `{}` and pricing
+            // yields 0 — every streamed request booked $0. The cost is now
+            // recomputed from the usage this row was actually handed, inside the
+            // closure, so the streaming path prices the settled numbers.
+            const writeLedgerRow = (usage) => {
+                let costUsd = ourExpectedCostUsd || 0;
+                if (usage) {
+                    try {
+                        // modelPricing was resolved above; reusing it keeps this
+                        // closure synchronous, so a non-streaming request still
+                        // writes its row before the handler returns.
+                        costUsd = completionCost(usage, modelInfo.provider, modelInfo.model, modelPricing) || 0;
+                    } catch {
+                        // Pricing can be unavailable for passthrough models; keep
+                        // whatever the pre-stream snapshot had (0 for a stream).
+                    }
+                }
+                try {
+                    recordTokenUsage({
+                        requestId,
+                        provider: modelInfo.provider,
+                        modelId: modelInfo.model,
+                        virtualKey: params.virtualKey || null,
+                        clientId: params.clientId || null,
+                        inputTokens: usage?.prompt_tokens ?? usage?.input_tokens ?? 0,
+                        outputTokens: usage?.completion_tokens ?? usage?.output_tokens ?? 0,
+                        latencyMs: latency,
+                        costUsd,
+                        status: 'success',
+                    });
+                } catch (ledgerErr) {
+                    log?.warn?.("ORCHESTRATOR", `Token ledger failed: ${ledgerErr.message}`);
+                }
+            };
+
+            if (result.usage) {
+                writeLedgerRow(result.usage);
+            } else if (typeof result.usagePromise?.then === "function") {
+                // Streaming: the usage frame is the LAST thing on the wire. Never
+                // awaited — the client's response must not wait on the ledger. A
+                // stream the client aborts settles nothing and writes no row.
+                result.usagePromise
+                    .then((streamUsage) => writeLedgerRow(streamUsage))
+                    .catch(() => { /* ledger is best-effort */ });
+            } else {
+                writeLedgerRow(null);
             }
 
-            // Attach response cost for client header (LiteLLM-style: x-litellm-response-cost)
+            // Attach response cost for client header (LiteLLM-style:
+            // x-litellm-response-cost; emitted as X-Zippy-Response-Cost by
+            // src/sse/handlers/chat.js:207-210).
+            //
+            // This one CANNOT be recomputed from the settled stream usage the way
+            // the ledger row above now is: the header is written onto the Response
+            // that is about to be handed to the client, and the streaming usage
+            // frame does not exist until that response has finished draining. A
+            // streamed request therefore still reports 0 here, by construction.
+            // The honest fix is upstream — `stream_options:{include_usage:true}`
+            // so the provider's real numbers arrive with the stream (review 16k).
             result.responseCostUsd = ourExpectedCostUsd;
 
             // P2P Billing Integration

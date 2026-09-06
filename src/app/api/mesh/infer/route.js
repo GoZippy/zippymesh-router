@@ -4,7 +4,8 @@
  */
 
 import { discoverProviders, selectProvider, estimateCost } from '@/lib/provider-discovery';
-import { getCurrentWallet, getWalletBalance, createPaymentCommitment } from '@/lib/wallet-management';
+import { getSidecarWalletBalance } from '@/lib/sidecar.js';
+import { sendInferencePayment } from '@/lib/zippycoin-wallet.js';
 
 export async function POST(request) {
     try {
@@ -25,11 +26,16 @@ export async function POST(request) {
             }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
 
-        // Get wallet and check balance
-        const wallet = await getCurrentWallet();
-        if (!wallet) {
+        // Get the node-managed zpc1 wallet (from the sidecar) and check balance.
+        let wallet = null;
+        try {
+            wallet = await getSidecarWalletBalance(); // { balance, currency, address, source }
+        } catch (e) {
+            console.warn('[Infer] Could not reach sidecar wallet:', e.message);
+        }
+        if (!wallet || !wallet.address) {
             return new Response(JSON.stringify({
-                error: 'No wallet found. Generate a wallet first.',
+                error: 'ZippyCoin wallet unavailable — is the sidecar running?',
                 code: 'NO_WALLET'
             }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
@@ -37,20 +43,14 @@ export async function POST(request) {
         const rpcUrl = process.env.NEXT_PUBLIC_ZIPPYCOIN_RPC_URL || 'http://localhost:8545';
         const contractAddress = process.env.SERVICE_REGISTRY_ADDRESS || '0x0000000000000000000000000000000000000000';
 
-        // Check wallet balance
-        try {
-            const balance = await getWalletBalance(rpcUrl, wallet.address);
-            const balanceZip = parseFloat(balance.balanceZip);
-            if (balanceZip < 0.001) {
-                return new Response(JSON.stringify({
-                    error: 'Insufficient balance for inference',
-                    code: 'INSUFFICIENT_BALANCE',
-                    balance: balance.balanceZip
-                }), { status: 400, headers: { 'Content-Type': 'application/json' } });
-            }
-        } catch (error) {
-            console.warn("[Infer] Could not check balance:", error);
-            // Allow to proceed if balance check fails
+        // Balance gate (ZIP). source:"unavailable" means the sidecar/node was
+        // unreachable — proceed rather than hard-fail on a transient read.
+        if (wallet.source !== 'unavailable' && Number(wallet.balance ?? 0) < 0.001) {
+            return new Response(JSON.stringify({
+                error: 'Insufficient balance for inference',
+                code: 'INSUFFICIENT_BALANCE',
+                balance: String(wallet.balance ?? 0)
+            }), { status: 400, headers: { 'Content-Type': 'application/json' } });
         }
 
         // Discover providers
@@ -92,9 +92,6 @@ export async function POST(request) {
             costZip: cost.totalCostZip
         });
 
-        // Create payment commitment
-        const paymentCommitment = createPaymentCommitment(selectedProvider, estimatedTokens, '0x' + '0'.repeat(64));
-
         // Route inference request to edge node
         const inferenceResponse = await routeInferenceRequest(selectedProvider, {
             prompt,
@@ -103,22 +100,42 @@ export async function POST(request) {
             temperature
         });
 
+        // Settle on-chain: pay the provider's zpc1 address for the tokens used.
+        // The sidecar signs (ML-DSA-65) and submits a real zippycoin_sendTransaction.
+        // A settlement failure does NOT discard the already-generated answer —
+        // we return it with the settlement error surfaced so the caller can retry
+        // payment (e.g. after funding the wallet).
+        const settledTokens = inferenceResponse.tokensGenerated || estimatedTokens;
+        let settlement = { status: 'skipped', reason: 'provider has no zpc1 address' };
+        const providerAddr = selectedProvider.address || selectedProvider.wallet;
+        if (typeof providerAddr === 'string' && providerAddr.startsWith('zpc1')) {
+            try {
+                const txResult = await sendInferencePayment(wallet.address, providerAddr, settledTokens);
+                settlement = { status: 'submitted', tokens: settledTokens, result: txResult };
+            } catch (e) {
+                console.warn('[Infer] On-chain settlement failed:', e.message);
+                settlement = { status: 'error', tokens: settledTokens, error: e.message };
+            }
+        }
+
         return new Response(JSON.stringify({
             success: true,
             response: inferenceResponse.response,
             provider: {
                 nodeId: selectedProvider.node_id,
+                address: providerAddr,
                 region: selectedProvider.region
             },
             usage: {
                 promptTokens: prompt.split(/\s+/).length,
                 completionTokens: inferenceResponse.response.split(/\s+/).length,
-                totalTokens: estimatedTokens
+                totalTokens: settledTokens
             },
             cost: {
                 charged: cost.totalCostZip,
                 currency: 'ZIP'
             },
+            settlement,
             metadata: {
                 latency: inferenceResponse.latencyMs,
                 model: model,
@@ -156,7 +173,8 @@ async function routeInferenceRequest(provider, request) {
                 temperature: request.temperature,
                 max_tokens: request.maxTokens
             }),
-            timeout: 30000
+            // WHATWG fetch ignores `timeout`; use AbortSignal for a real deadline.
+            signal: AbortSignal.timeout(30000)
         });
 
         if (!response.ok) {

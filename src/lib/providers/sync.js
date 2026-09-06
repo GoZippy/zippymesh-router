@@ -1,6 +1,6 @@
 import { fetchProviderModels } from "./models.js";
 import { registerModel, reconcileProviderModelLifecycle } from "../modelRegistry.js";
-import { getProviderConnections, getSettings, updateSettings, updatePricing } from "../localDb.js";
+import { getProviderConnections, getSettings, updateSettings, updatePricing, recordPriceHistory, getPriceHistory } from "../localDb.js";
 import { emitProviderLifecycleEvent } from "../lifecycleEvents.js";
 
 let syncInFlight = null;
@@ -215,45 +215,6 @@ export async function syncProviderCatalog(options = {}) {
     }
   }
 
-  // 1. Pre-sync Oracle models if ORACLE_SYNC_ENABLED is true
-  if (toBool(settings.ORACLE_SYNC_ENABLED)) {
-    try {
-      const oracleRes = await fetch("http://localhost:20200/v1/models", {
-        signal: AbortSignal.timeout(5000)
-      });
-      if (oracleRes.ok) {
-        const oracleData = await oracleRes.json();
-        const oracleModels = oracleData.data || [];
-        for (const m of oracleModels) {
-          if (!m.id) continue;
-          await registerModel({
-             id: m.id,
-             name: m.name || m.id,
-             provider: "oracle",
-             source: "oracle",
-             tier: "local",
-             capabilities: {
-               chat: true,
-               vision: false,
-             },
-          });
-        }
-        results.push({ provider: "oracle", fetchedModels: oracleModels.length, registeredModels: oracleModels.length });
-        providerRuns.set("oracle", {
-          provider: "oracle",
-          connectionsAttempted: 1,
-          connectionsSucceeded: 1,
-          connectionErrors: [],
-          modelsRegistered: oracleModels.length,
-          pricingModels: 0,
-          discoveredModelIds: new Set(oracleModels.map(m => m.id))
-        });
-      }
-    } catch (err) {
-      warnings.push({ provider: "oracle", error: "Oracle sync failed: " + err.message });
-    }
-  }
-
   const getProviderRun = (provider) => {
     if (providerRuns.has(provider)) return providerRuns.get(provider);
     const state = {
@@ -374,6 +335,29 @@ export async function syncProviderCatalog(options = {}) {
 
   if (Object.keys(mergedPricing).length > 0) {
     await updatePricing(mergedPricing);
+
+    // Snapshot changed prices into price history so the marketplace
+    // price-history endpoint has real data. Only record when a model's
+    // input/output actually changed vs the current active record (recordPriceHistory
+    // has no dedupe and writes each call, so unconditional recording would churn).
+    try {
+      const active = await getPriceHistory(null, null, true);
+      const key = (p, m) => `${p} ${m}`;
+      const activeMap = new Map(active.map((r) => [key(r.providerId, r.modelId), r]));
+      for (const [providerId, byModel] of Object.entries(mergedPricing)) {
+        for (const [modelId, pricing] of Object.entries(byModel || {})) {
+          const input = Number(pricing.input) || 0;
+          const output = Number(pricing.output) || 0;
+          const prev = activeMap.get(key(providerId, modelId));
+          if (prev && Number(prev.inputPerMUsd) === input && Number(prev.outputPerMUsd) === output) {
+            continue; // unchanged — skip
+          }
+          await recordPriceHistory({ providerId, modelId, inputPerMUsd: input, outputPerMUsd: output, source: "live_sync" });
+        }
+      }
+    } catch (e) {
+      console.warn("[Sync] price-history recording skipped:", e.message);
+    }
   }
 
   const summary = {

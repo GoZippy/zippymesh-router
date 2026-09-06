@@ -6,41 +6,39 @@ import Button from "@/shared/components/Button";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
 
+/**
+ * What this page may offer.
+ *
+ * RULE: every entry here must correspond to an artifact that actually exists.
+ * This list used to advertise three that did not (adversarial review
+ * 2026-08-30, item 16i):
+ *
+ *   - `npx zippymesh@latest` — the package is `@zippy/mesh`, it is
+ *     `private: true`, it declares no `files` and no server `bin`, and it
+ *     depends on a compiled native module (better-sqlite3). That command has
+ *     never resolved and cannot be made to without publishing a different
+ *     package. Item 7c in the review rejects doing so.
+ *   - `ZippyMesh-Setup-1.0.0.exe` / `.dmg` / `.AppImage`, with hand-written
+ *     sizes ("45 MB", "52 MB", "48 MB") for files nobody has ever built. No
+ *     Tauri installer has been published (docs/INSTALLER_MATRIX.md), the
+ *     bundle targets are `["nsis","dmg","deb"]` so an AppImage will never be
+ *     produced at all, and the "Download" button ran
+ *     `alert("Download would start for …")`.
+ *   - version `1.0.0`, against a package at 1.3.1.
+ *
+ * The two real paths are the platform-tagged release zip and Docker.
+ */
 const DOWNLOAD_OPTIONS = [
   {
-    id: "npm",
-    name: "NPM Package",
-    description: "Install via npm/npx for Node.js projects",
-    icon: "terminal",
-    command: "npx zippymesh@latest",
+    id: "zip",
+    name: "Release zip (recommended)",
+    description:
+      "Prebuilt standalone bundle. Unpack it, run the launcher, open the dashboard. Needs Node.js 20.9+.",
+    icon: "folder_zip",
+    href: "https://github.com/GoZippy/zippymesh-router/releases/latest",
+    linkLabel: "Open the latest release",
+    note: "Pick the archive matching your OS — zippymesh-router-v<version>-<platform>-<arch>.zip. It contains a compiled native module, so a Windows zip will not run on Linux or macOS.",
     platform: "all",
-  },
-  {
-    id: "windows",
-    name: "Windows Installer",
-    description: "Standalone installer for Windows 10/11",
-    icon: "desktop_windows",
-    filename: "ZippyMesh-Setup-1.0.0.exe",
-    size: "45 MB",
-    platform: "windows",
-  },
-  {
-    id: "mac",
-    name: "macOS App",
-    description: "Universal binary for Intel and Apple Silicon",
-    icon: "laptop_mac",
-    filename: "ZippyMesh-1.0.0.dmg",
-    size: "52 MB",
-    platform: "mac",
-  },
-  {
-    id: "linux",
-    name: "Linux AppImage",
-    description: "Portable AppImage for most Linux distributions",
-    icon: "computer",
-    filename: "ZippyMesh-1.0.0.AppImage",
-    size: "48 MB",
-    platform: "linux",
   },
   {
     id: "docker",
@@ -48,6 +46,15 @@ const DOWNLOAD_OPTIONS = [
     description: "Pre-built container for server deployments",
     icon: "deployed_code",
     command: "docker pull zippymesh/router:latest",
+    platform: "all",
+  },
+  {
+    id: "source",
+    name: "Build from source",
+    description:
+      "The supported path on any platform we do not publish a zip for, macOS included.",
+    icon: "code",
+    command: "git clone https://github.com/GoZippy/zippymesh-router && cd zippymesh-router && npm install && npm run build",
     platform: "all",
   },
 ];
@@ -114,11 +121,10 @@ export default function DownloadPage() {
   }
 
   function handleDownload(option) {
-    if (option.command) {
-      copyToClipboard(option.command, option.id);
-    } else {
-      alert(`Download would start for ${option.filename}`);
-    }
+    // Only two shapes exist now: a command to copy, or a real link the markup
+    // renders as an anchor. The old `alert("Download would start for …")`
+    // branch existed because the artifacts it named had never been built.
+    if (option.command) copyToClipboard(option.command, option.id);
   }
 
   if (loading) {
@@ -289,20 +295,24 @@ export default function DownloadPage() {
                     </div>
                   )}
 
-                  {option.filename && (
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="text-xs text-text-muted">
-                        {option.filename} ({option.size})
-                      </div>
-                      <Button
-                        size="sm"
-                        icon="download"
-                        onClick={() => handleDownload(option)}
-                        disabled={!license}
+                  {option.href && (
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <a
+                        href={option.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-500 hover:underline truncate"
                       >
-                        Download
-                      </Button>
+                        {option.linkLabel || option.href}
+                      </a>
+                      <span className="material-symbols-outlined text-indigo-500 text-base shrink-0">
+                        open_in_new
+                      </span>
                     </div>
+                  )}
+
+                  {option.note && (
+                    <p className="mt-2 text-xs text-text-muted">{option.note}</p>
                   )}
                 </div>
               </div>

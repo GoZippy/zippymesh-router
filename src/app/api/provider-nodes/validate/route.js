@@ -1,8 +1,17 @@
+/**
+ * Route-level auth added 2026-08-30 (same class as C1a): this handler takes a
+ * caller-supplied `baseUrl` and an API key and performs an outbound `fetch()`
+ * with that key attached. Unguarded, it is both a credential-relay and a
+ * reachability oracle. It reflects only `res.ok`, so it is a one-bit oracle
+ * rather than H1's three-state one, but it had no guard of its own either.
+ */
+
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/apiErrors.js";
+import { requireAuth } from "@/lib/auth/middleware.js";
 
 // POST /api/provider-nodes/validate - Validate API key against base URL
-export async function POST(request) {
+export const POST = requireAuth(async function POST(request) {
   try {
     const body = await request.json();
     const { baseUrl, apiKey, type } = body;
@@ -24,7 +33,8 @@ export async function POST(request) {
       
       const res = await fetch(modelsUrl, {
         method: "GET",
-        headers: { 
+        redirect: "manual", // never relay the API key to a redirect target (V-1)
+        headers: {
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
           "Authorization": `Bearer ${apiKey}` // Add Bearer token for hybrid proxies
@@ -37,6 +47,7 @@ export async function POST(request) {
     // OpenAI Compatible Validation (Default)
     const modelsUrl = `${baseUrl.replace(/\/$/, "")}/models`;
     const res = await fetch(modelsUrl, {
+      redirect: "manual", // never relay the API key to a redirect target (V-1)
       headers: { "Authorization": `Bearer ${apiKey}` },
     });
 
@@ -45,4 +56,4 @@ export async function POST(request) {
     console.log("Error validating provider node:", error);
     return apiError(request, 500, "Validation failed");
   }
-}
+});

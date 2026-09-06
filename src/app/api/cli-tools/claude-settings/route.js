@@ -5,14 +5,17 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import os from "os";
+// `path` was USED at :88 (path.dirname) but never imported, so POST on this
+// route threw ReferenceError and answered 500 on every call, on every build
+// (adversarial review 2026-08-30, item 16f).
+import path from "path";
 
 const execAsync = promisify(exec);
 
-// Get claude settings path based on OS, use string concat to evade static tracing
-const getClaudeSettingsPath = () => {
-  const homeDir = os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]();
-  return `${homeDir}/.claude/settings.json`;
-};
+// Plain os.homedir(). The previous String.fromCharCode() spelling carried a
+// comment about evading static tracing; it only blinded this repo's own
+// path/secret scanners (review item 16h).
+const getClaudeSettingsPath = () => `${os.homedir()}/.claude/settings.json`;
 
 
 // Check if claude CLI is installed

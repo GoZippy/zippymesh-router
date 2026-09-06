@@ -490,7 +490,7 @@ export default function MarketplacePage() {
         <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
                 <h1 className="text-2xl font-bold">Model Marketplace</h1>
-                <p className="text-text-muted">Spot pricing (USD per 1M tokens) across providers. Live data when connected; official defaults otherwise.</p>
+                <p className="text-text-muted">Effective per-model pricing (USD per 1M tokens) across providers — best of official rates, your synced provider pricing, and community-verified submissions. Not a live market feed.</p>
             </div>
 
             {error && (

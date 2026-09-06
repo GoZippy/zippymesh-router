@@ -15,8 +15,35 @@ export const COLORS = {
   cyan: "\x1b[36m"
 };
 
-// Buffer tokens to prevent context errors
-const BUFFER_TOKENS = 2000;
+/**
+ * Context-guard padding added to the *client-facing* prompt token count.
+ *
+ * History (fixed 2026-08-30): this was a hardcoded `const BUFFER_TOKENS = 2000`
+ * introduced upstream in 7881db81 ("Implement buffer addition to usage tracking
+ * for improved context handling"). Its purpose was to make a CLI client believe
+ * it was 2000 tokens closer to its context limit than it really was, so the
+ * client would compact earlier. The cost was that ZMLR's OpenAI-compatible
+ * `usage` object became unusable: a two-word prompt against Ollama reported
+ * `prompt_tokens: 2011` where the provider said `11`
+ * (docs/_internal/OPENAI_COMPAT_CONTRACT_2026-08-30.md §4, defect 4).
+ *
+ * The padding is now **off by default** — `usage` on the wire is the provider's
+ * own number. An operator who wants the old context-guard behaviour back sets
+ * `ZMLR_USAGE_BUFFER_TOKENS=2000`; the response then carries
+ * `x-zmlr-usage: padded` so the inflation is never silent.
+ *
+ * Read at call time (not module load) so a test or a config reload can change
+ * it without re-importing the module.
+ */
+export const DEFAULT_USAGE_BUFFER_TOKENS = 0;
+
+export function getUsageBufferTokens() {
+  const raw = process.env.ZMLR_USAGE_BUFFER_TOKENS;
+  if (raw === undefined || raw === null || raw === "") return DEFAULT_USAGE_BUFFER_TOKENS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_USAGE_BUFFER_TOKENS;
+  return Math.floor(n);
+}
 
 // Get HH:MM:SS timestamp
 function getTimeString() {
@@ -24,30 +51,40 @@ function getTimeString() {
 }
 
 /**
- * Add buffer tokens to usage to prevent context errors
+ * Add the operator-configured context buffer to a usage object, and normalise
+ * `total_tokens` when the provider omitted it.
+ *
+ * With the default (`ZMLR_USAGE_BUFFER_TOKENS` unset) this only fills in a
+ * missing `total_tokens` — the token counts themselves are passed through
+ * untouched.
+ *
  * @param {object} usage - Usage object (any format)
- * @returns {object} Usage with buffer added
+ * @returns {object} Usage, padded only when a buffer is configured
  */
 export function addBufferToUsage(usage) {
   if (!usage || typeof usage !== "object") return usage;
 
+  const buffer = getUsageBufferTokens();
   const result = { ...usage };
 
-  // Claude format
-  if (result.input_tokens !== undefined) {
-    result.input_tokens += BUFFER_TOKENS;
+  if (buffer > 0) {
+    // Claude format
+    if (result.input_tokens !== undefined) {
+      result.input_tokens += buffer;
+    }
+
+    // OpenAI format
+    if (result.prompt_tokens !== undefined) {
+      result.prompt_tokens += buffer;
+    }
+
+    if (result.total_tokens !== undefined) {
+      result.total_tokens += buffer;
+    }
   }
 
-  // OpenAI format
-  if (result.prompt_tokens !== undefined) {
-    result.prompt_tokens += BUFFER_TOKENS;
-  }
-
-  // Calculate or update total_tokens
-  if (result.total_tokens !== undefined) {
-    result.total_tokens += BUFFER_TOKENS;
-  } else if (result.prompt_tokens !== undefined && result.completion_tokens !== undefined) {
-    // Calculate total_tokens if not exists
+  // Calculate total_tokens if the provider did not send one
+  if (result.total_tokens === undefined && result.prompt_tokens !== undefined && result.completion_tokens !== undefined) {
     result.total_tokens = result.prompt_tokens + result.completion_tokens;
   }
 

@@ -12,6 +12,7 @@
 
 import { getRecommendations } from "@/lib/discovery/recommendationService.js";
 import { getDiscoveryCatalog } from "@/lib/discovery/catalogService.js";
+import { getRegistryModel } from "@/lib/modelRegistry.js";
 
 
 // ============================================================================
@@ -317,9 +318,16 @@ function parseIntentFromRequest(request) {
 }
 
 /**
- * Parse constraints from request headers
+ * Parse constraints from request headers.
+ *
+ * ALWAYS returns an object (fixed 2026-08-30). It used to return `null` when no
+ * `X-Max-*` / `X-Prefer-*` header was present, and every consumer's `= {}`
+ * default only fires on `undefined` — so a plain `{"model":"auto"}` request blew
+ * up in recommendationService's `constraints.maxCostPerMTokens`, smart routing
+ * was skipped, and the literal string "auto" went upstream and 404'd.
+ * `hasConstraints()` tells the callers that care whether anything was set.
  */
-function parseConstraintsFromRequest(request) {
+export function parseConstraintsFromRequest(request) {
   const constraints = {};
 
   // Parse constraint headers
@@ -348,23 +356,152 @@ function parseConstraintsFromRequest(request) {
     constraints.preferLocal = preferLocal.toLowerCase() === "true";
   }
 
-  return Object.keys(constraints).length > 0 ? constraints : null;
+  return constraints;
+}
+
+/** Did the caller actually ask for anything? (An empty constraint set is not
+ *  the same as "unconstrained" for telemetry, which stores `null` for it.)
+ *
+ *  `hasImageInput` / `avoidThinking` are ROUTER-DERIVED facts about the request,
+ *  not things the caller asked for, so they never make a request look
+ *  "constrained" in the telemetry. */
+const DERIVED_CONSTRAINT_KEYS = new Set(["hasImageInput", "avoidThinking"]);
+
+export function hasConstraints(constraints) {
+  if (!constraints) return false;
+  return Object.keys(constraints).some((k) => !DERIVED_CONSTRAINT_KEYS.has(k));
+}
+
+/**
+ * Does this chat body actually contain an image?
+ *
+ * OpenAI multimodal content is an ARRAY of parts, one of which has
+ * `type: "image_url"` (or `"input_image"` on the Responses shape); Anthropic
+ * uses `type: "image"`. Anything else — including a plain string `content`, and
+ * including the word "image" appearing in the prose — is text only.
+ *
+ * This exists because the recommender awarded +5 for vision capability on every
+ * request, so `{"model":"auto"}` with "Say OK" systematically selected the
+ * slowest local model on the box (finding H6).
+ *
+ * @param {object} body - a parsed chat-completions body
+ * @returns {boolean}
+ */
+export function detectImageInput(body) {
+  const messages = body?.messages;
+  if (!Array.isArray(messages)) return false;
+  for (const m of messages) {
+    const content = m?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const t = part?.type;
+      if (t === "image_url" || t === "input_image" || t === "image") return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Should the router steer AWAY from a thinking model for this request?
+ *
+ * Yes for the everyday intents. No when the caller explicitly asked for
+ * reasoning (`X-Intent: reasoning`), which is precisely the case where a
+ * thinking model is the right answer. See the scoring comment in
+ * src/lib/discovery/recommendationService.js for what the flag does and why the
+ * penalty is uniform (so a box with only thinking models still routes).
+ *
+ * @param {string} intent
+ */
+export function shouldAvoidThinking(intent) {
+  return intent !== "reasoning";
+}
+
+/**
+ * Build a plain `Request` carrying a rewritten JSON body.
+ *
+ * `new Request(nextRequest, init)` throws
+ * `TypeError: Cannot read private member #state from an object whose class did
+ * not declare it` — Next's `NextRequest` is not a clonable `Request` input. That
+ * throw is what defeated the whole `model:"auto"` path: routing picked a model,
+ * the rewrite threw, the catch logged and continued with the ORIGINAL body, and
+ * "auto" reached the provider. Building a fresh Request from url/method/headers
+ * sidesteps it (fixed 2026-08-30).
+ *
+ * `content-length` is dropped because the new body's length differs from the
+ * original's, and `content-type` is forced to JSON since the body now is JSON.
+ *
+ * @param {Request} request - original request (NextRequest is fine)
+ * @param {object} body - the new body, serialised with JSON.stringify
+ * @returns {Request} a plain Request; the original is left untouched
+ */
+export function rewriteRequestBody(request, body) {
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  headers.set("content-type", "application/json");
+  return new Request(request.url, {
+    method: request.method || "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Read a request's JSON body without disturbing it. Returns null on anything
+ * unparseable — the caller must treat "no body" as "text-only, no constraints".
+ */
+async function readBody(request) {
+  try {
+    if (typeof request?.clone !== "function") return null;
+    return await request.clone().json();
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Get recommended model or validate requested model
+ *
+ * @param {Request} request
+ * @param {object|null} [parsedBody] - the request body, when the caller already
+ *   has it. Used for image detection only; intent still comes from `X-Intent`.
  */
-async function selectModel(request) {
-  const requestedModel = request.body?.model;
+async function selectModel(request, parsedBody = null) {
+  const requestedModel = request.body?.model ?? parsedBody?.model;
   const intent = parseIntentFromRequest(request);
   const constraints = parseConstraintsFromRequest(request);
+
+  // Router-derived routing facts (2026-08-30, finding H6). These are appended
+  // AFTER parseConstraintsFromRequest so an explicit X-* header always wins.
+  constraints.hasImageInput = detectImageInput(parsedBody);
+  constraints.avoidThinking = shouldAvoidThinking(intent);
 
   // If specific model requested, validate it
   if (requestedModel && requestedModel !== "auto") {
     const catalog = await getDiscoveryCatalog();
     const model = catalog.models.find(m => m.id === requestedModel);
 
+    // catalog.models merges registry-sourced (lifecycle-filtered) and static
+    // (unfiltered, no dedup) entries — a model already deprecated/missing in
+    // the registry can still match via its static twin. Explicitly reject
+    // those instead of blindly honoring a stale client-specified model;
+    // fails open (keeps `model`) when there's no registry entry at all
+    // (e.g. local/p2p models the registry doesn't track) or on lookup error.
+    let registryRejected = false;
     if (model) {
+      const slashIndex = requestedModel.indexOf("/");
+      if (slashIndex > 0) {
+        try {
+          const registryModel = await getRegistryModel(requestedModel.slice(0, slashIndex), requestedModel.slice(slashIndex + 1));
+          if (registryModel && (registryModel.lifecycleState === "missing" || registryModel.lifecycleState === "deprecated")) {
+            registryRejected = true;
+          }
+        } catch {
+          // fail open — treat as if no registry entry exists
+        }
+      }
+    }
+
+    if (model && !registryRejected) {
       return {
         selected: requestedModel,
         reason: "User-specified model",
@@ -381,14 +518,19 @@ async function selectModel(request) {
 
   // Get recommendation
   const recommendations = await getRecommendations(intent, constraints, "");
+  const top = recommendations.recommendations[0] || null;
 
   return {
-    selected: recommendations.recommendations[0]?.fullModel || "default",
+    // null, NOT "default" — "default" is not a model any provider serves, and
+    // returning it made the caller rewrite the body to a guaranteed 404. A null
+    // selection means "smart routing had nothing to offer, keep the original
+    // model" and lets the orchestrator's local fallback take over.
+    selected: top?.fullModel || null,
     fallbackChain: recommendations.fallbackChain,
-    reason: recommendations.recommendations[0]?.reasoning[0] || "No specific reason",
+    reason: top?.reasoning?.[0] || "No specific reason",
     intent,
     constraints,
-    score: recommendations.recommendations[0]?.score || 0,
+    score: top?.score || 0,
     alternatives: recommendations.recommendations.slice(1).map(r => r.fullModel),
     metadata: {
       generatedAt: new Date().toISOString(),
@@ -418,8 +560,10 @@ export async function smartRouter(request) {
     }
 
 
-    // Parse request
-    const modelSelection = await selectModel(request);
+    // Parse request. The body is read here (and only here) so the recommender
+    // can tell a text-only prompt from a multimodal one — see detectImageInput.
+    const parsedBody = await readBody(request);
+    const modelSelection = await selectModel(request, parsedBody);
 
     // Add routing metadata to request
     request.routingMetadata = {
@@ -437,8 +581,8 @@ export async function smartRouter(request) {
     return {
       success: false,
       error: error.message,
-      selected: "default", // Fallback to default
-      fallbackChain: ["default"],
+      selected: null, // keep whatever the client asked for
+      fallbackChain: [],
     };
   }
 }
@@ -503,6 +647,35 @@ export async function executeWithFailover(
 }
 
 /**
+ * Write the `x-selected-model` / `x-routing-*` headers onto a Headers-like
+ * object. Split out of `enrichResponse` (2026-08-30) because the /v1 route only
+ * reached `enrichResponse` on the FAILURE path — a successful `auto` request
+ * returned early and carried no routing headers at all.
+ *
+ * `selected` may legitimately be null (nothing recommended); never write the
+ * string "null".
+ *
+ * @param {Headers|{set:Function}} headers
+ * @param {object} routingMetadata
+ */
+export function applyRoutingHeaders(headers, routingMetadata) {
+  if (!headers || !routingMetadata) return headers;
+  try {
+    if (routingMetadata.selected) headers.set("x-selected-model", routingMetadata.selected);
+    if (routingMetadata.intent) headers.set("x-routing-intent", routingMetadata.intent);
+    headers.set("x-routing-score", routingMetadata.score?.toString() || "0");
+    if (routingMetadata.reason) headers.set("x-routing-reason", routingMetadata.reason);
+    if (routingMetadata.usedModel) {
+      headers.set("x-used-model", routingMetadata.usedModel);
+      headers.set("x-attempt-number", routingMetadata.attemptNumber?.toString() || "1");
+    }
+  } catch {
+    // Immutable headers (a response relayed straight from fetch) — non-fatal.
+  }
+  return headers;
+}
+
+/**
  * Response Metadata Enricher
  *
  * Adds routing metadata to response headers
@@ -510,19 +683,7 @@ export async function executeWithFailover(
 export async function enrichResponse(response, routingMetadata) {
   if (!routingMetadata) return response;
 
-  // Add headers with routing info
-  response.headers.set("x-selected-model", routingMetadata.selected);
-  response.headers.set("x-routing-intent", routingMetadata.intent);
-  response.headers.set("x-routing-score", routingMetadata.score?.toString() || "0");
-
-  if (routingMetadata.reason) {
-    response.headers.set("x-routing-reason", routingMetadata.reason);
-  }
-
-  if (routingMetadata.usedModel) {
-    response.headers.set("x-used-model", routingMetadata.usedModel);
-    response.headers.set("x-attempt-number", routingMetadata.attemptNumber?.toString() || "1");
-  }
+  applyRoutingHeaders(response.headers, routingMetadata);
 
   // Add routing metadata to response body if JSON
   if (response.headers.get("content-type")?.includes("application/json")) {

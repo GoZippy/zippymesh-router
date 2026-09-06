@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { apiError } from "@/lib/apiErrors.js";
+import { requireRole } from "@/lib/auth/middleware.js";
+import { USER_ROLES } from "@/lib/auth/rbac.js";
 
 export const dynamic = "force-dynamic";
 
@@ -35,8 +37,13 @@ export async function GET(request) {
  *
  * meshAllowlist items may be bare nodeIds/endpoints or comma-separated strings —
  * we normalise to an array of trimmed non-empty strings.
+ *
+ * SECURITY: meshMode/meshAllowlist are system-sensitive keys (also gated as
+ * PATCH_SYSTEM_KEYS in ../route.js). This dedicated route writes them directly,
+ * so it MUST enforce the same admin+ role gate or it becomes a confused-deputy
+ * bypass of that gate. Wrapped with requireRole(admin) at export.
  */
-export async function POST(request) {
+async function meshPostHandler(request) {
   try {
     let body;
     try {
@@ -83,3 +90,7 @@ export async function POST(request) {
     return apiError(request, 500, "Failed to save mesh settings");
   }
 }
+
+// admin+ required to write system-sensitive mesh settings (open-mode/legacy
+// owner is treated as superadmin by requireRole, preserving single-user UX).
+export const POST = requireRole(USER_ROLES.ADMIN, meshPostHandler);

@@ -5,10 +5,11 @@ import {
   confirmTotpEnrollment,
   disableTotp,
 } from "@/lib/vault-totp.js";
-import { isVaultUnlocked } from "@/lib/vault.js";
+import { isVaultUnlocked, verifyVaultPassword } from "@/lib/vault.js";
+import { requireAuth } from "@/lib/auth/middleware.js";
 
 /** GET /api/vault/totp — status */
-export async function GET() {
+async function getHandler() {
   return NextResponse.json({ enabled: isTotpEnabled() });
 }
 
@@ -25,7 +26,7 @@ export async function GET() {
  *
  *   action: "disable"    → body must include password + valid current code
  */
-export async function POST(request) {
+async function postHandler(request) {
   const body = await request.json().catch(() => ({}));
   const { action } = body;
 
@@ -40,7 +41,18 @@ export async function POST(request) {
   }
 
   if (action === "confirm") {
+    // Close the enrollment-lockout DoS: the vault must be unlocked and the
+    // supplied password must be the real vault password, so TOTP can only be
+    // enrolled under credentials that actually decrypt the vault. (Without
+    // this, anyone could enroll TOTP under a bogus password and permanently
+    // brick unlock.)
+    if (!isVaultUnlocked()) {
+      return NextResponse.json({ error: "Vault must be unlocked to enroll TOTP" }, { status: 403 });
+    }
     const { password, secret, code, backupCodes } = body;
+    if (!password || !verifyVaultPassword(password)) {
+      return NextResponse.json({ error: "Incorrect vault password" }, { status: 401 });
+    }
     const r = confirmTotpEnrollment({ password, secret, code, backupCodes });
     if (!r.ok) return NextResponse.json({ error: r.error }, { status: 400 });
     return NextResponse.json({ ok: true });
@@ -61,3 +73,8 @@ export async function POST(request) {
     { status: 400 },
   );
 }
+
+// Route-level auth: TOTP enrollment/disable and status must enforce session
+// auth at the route (the edge alone doesn't prove key revocation / login mode).
+export const GET = requireAuth(getHandler);
+export const POST = requireAuth(postHandler);

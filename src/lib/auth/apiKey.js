@@ -1,22 +1,44 @@
+/**
+ * Router API key enforcement for the OpenAI-compatible surface
+ * (`/api/v1*`, `/v1*`, `src/sse/handlers/chat.js`). Only consulted when the
+ * operator has switched `settings.requireApiKey` on; it is off by default.
+ *
+ * ## Proxy trust (security fix, 2026-08-30)
+ *
+ * This module used to derive the client IP from `x-real-ip` and then use that
+ * IP to decide whether `x-forwarded-for` could be trusted — validating one
+ * attacker-controlled header with another. The result was an outright auth
+ * bypass: `isTrustedLanIp()` matched the default CIDR `127.0.0.0/8`, so
+ * `curl -H 'x-real-ip: 127.0.0.1'` from anywhere on the network skipped the
+ * API key entirely, and `requireApiKey` returned "allowed" before it ever
+ * looked at the Authorization header.
+ *
+ * The address now comes from src/lib/net/proxyTrust.js, the one place that
+ * decides whether a claimed address may be believed. A Next route handler has
+ * no socket address, so an address exists ONLY when the operator has declared
+ * a reverse proxy with `TRUST_PROXY=1|true`; otherwise the peer is the
+ * sentinel `"direct"`, meaning unknown.
+ *
+ * Consequence for the LAN bypass: it is now gated on `isKnownPeer()`. With
+ * `TRUST_PROXY` unset — the default, and the single-machine / LAN-reachable
+ * install — there is no address, so there is no bypass and enabling
+ * `requireApiKey` genuinely requires a key. With `TRUST_PROXY=1` the operator
+ * has vouched for a proxy, and the documented `settings.trustedLanCidrs`
+ * bypass behaves exactly as before. Nothing changes when `requireApiKey` is
+ * off, because then no caller reaches this module at all.
+ */
+
 import { verifyRouterApiKey, isBlacklisted, addBlacklistEntry, getSettings } from "../localDb.js";
+import { clientPeer, isKnownPeer } from "../net/proxyTrust.js";
 
 // simple in-memory rate limiter: { keyOrIp: { count, start } }
 const rateCache = new Map();
 const RATE_WINDOW = 60 * 1000; // 1 minute
 const MAX_REQUESTS_PER_WINDOW = 100;
 
-// Known proxy IPs that can be trusted for X-Forwarded-For
-// Only trust X-Forwarded-For if the request comes from one of these
-const TRUSTED_PROXY_IPS = [
-  "127.0.0.1",     // localhost
-  "::1",           // IPv6 localhost
-  "10.0.0.0/8",   // Private Class A
-  "172.16.0.0/12", // Private Class B  
-  "192.168.0.0/16", // Private Class C
-];
-
-// Default trusted LAN CIDRs (can be overridden in settings.trustedLanCidrs)
-// NOTE: These are ONLY applied to the actual client IP, not spoofable headers
+// Default trusted LAN CIDRs (can be overridden in settings.trustedLanCidrs).
+// Applied ONLY to an address established by a trusted proxy — never to a raw
+// request header. See isTrustedLanIp() below.
 const DEFAULT_TRUSTED_LAN_CIDRS = [
   "10.0.0.0/16",     // 10.0.x.x
   "127.0.0.0/8",     // localhost
@@ -54,70 +76,52 @@ function ipInCidr(ip, cidr) {
 }
 
 /**
- * Check if an IP is from a trusted proxy (internal network)
- * Only IPs from internal networks can be trusted to provide valid X-Forwarded-For
+ * The client address for this request, or the sentinel `"direct"` when none can
+ * be established.
+ *
+ * Thin wrapper over `clientPeer()` so the whole app shares one proxy-trust
+ * decision. Exported for tests. NOTE: `"direct"` means UNKNOWN — it is not an
+ * address and must never be treated as loopback. Use `isKnownPeer()` before
+ * granting anything on the strength of it.
  */
-function isTrustedProxyIp(ip) {
-  if (!ip || ip === "unknown") return false;
-  
-  for (const cidr of TRUSTED_PROXY_IPS) {
-    if (ipInCidr(ip, cidr)) return true;
-  }
-  return false;
+export function getClientIp(request) {
+  return clientPeer(request);
 }
 
 /**
- * Extract the real client IP from request, with proper validation
- * SECURITY: Only trust X-Forwarded-For if the request comes from a trusted proxy
+ * Check if an established client address falls in a trusted-LAN CIDR
+ * (`settings.trustedLanCidrs`, else DEFAULT_TRUSTED_LAN_CIDRS) and may
+ * therefore skip the API key.
+ *
+ * Fails closed unless the address came from a proxy the operator declared with
+ * TRUST_PROXY. Without that declaration `peer` is `"direct"` and no CIDR can
+ * match it, which is what stops a forged `x-real-ip: 127.0.0.1` from buying a
+ * bypass.
  */
-function getClientIp(request) {
-  // Get the direct connection IP (always trustworthy)
-  const directIp = request.headers.get("x-real-ip") || 
-                   request.headers.get("remote_addr") || 
-                   "unknown";
-  
-  // Check if request came from a trusted proxy
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  
-  // Only trust X-Forwarded-For if direct connection is from a trusted proxy
-  if (forwardedFor && isTrustedProxyIp(directIp)) {
-    // X-Forwarded-For can contain multiple IPs: client, proxy1, proxy2
-    // The first IP is the original client
-    const ips = forwardedFor.split(",").map(ip => ip.trim());
-    if (ips.length > 0 && ips[0]) {
-      return ips[0];
-    }
-  }
-  
-  // Fall back to direct IP; when unknown, return "unknown" so auth can proceed
-  // (API key still required; Next.js route handlers don't expose socket.remoteAddress)
-  return directIp !== "unknown" ? directIp : "unknown";
-}
+async function isTrustedLanIp(peer) {
+  if (!isKnownPeer(peer)) return false;
 
-/**
- * Check if IP is from a trusted LAN (bypasses API key requirement)
- */
-async function isTrustedLanIp(ip) {
   const settings = await getSettings();
   const cidrs = settings.trustedLanCidrs || DEFAULT_TRUSTED_LAN_CIDRS;
-  
+
   for (const cidr of cidrs) {
-    if (ipInCidr(ip, cidr)) return true;
+    if (ipInCidr(peer, cidr)) return true;
   }
   return false;
 }
 
 export async function requireApiKey(request) {
-  // Get the real client IP with proper validation (or "unknown" when not available)
+  // The client address, or "direct" when no trusted proxy established one.
   const ip = getClientIp(request);
-  
+
   if (await isBlacklisted("ip", ip)) {
     const err = new Error("IP blacklisted");
     err.code = 403;
     throw err;
   }
 
-  // Bypass API key for trusted LAN IPs (only if we have a validated internal IP)
+  // Bypass the API key only for an address a trusted proxy actually vouched
+  // for. Unreachable when TRUST_PROXY is unset — see isTrustedLanIp().
   if (await isTrustedLanIp(ip)) {
     return []; // no scopes, but allowed
   }

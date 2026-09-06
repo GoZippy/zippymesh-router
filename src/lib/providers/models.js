@@ -8,8 +8,12 @@ export const PROVIDER_MODELS_CONFIG = {
         method: "GET",
         headers: {
             "Anthropic-Version": "2023-06-01",
+            "Anthropic-Beta": "oauth-2025-04-20",
             "Content-Type": "application/json"
         },
+        // Not used directly for claude — fetchProviderModels() branches this
+        // provider on apiKey vs. accessToken (Anthropic rejects an OAuth
+        // token sent via x-api-key), mirroring open-sse/executors/default.js.
         authHeader: "x-api-key",
         parseResponse: (data) => data.data || []
     },
@@ -37,7 +41,12 @@ export const PROVIDER_MODELS_CONFIG = {
         parseResponse: (data) => data.data || []
     },
     antigravity: {
-        url: "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:models",
+        // NOTE: previously "daily-cloudcode-pa.sandbox.googleapis.com" — a
+        // typo'd host that doesn't match the real API used everywhere else
+        // (open-sse/config/constants.js, src/lib/oauth/constants/oauth.js),
+        // so every Antigravity model-sync attempt failed outright.
+        url: "https://daily-cloudcode-pa.googleapis.com/v1internal:models",
+        fallbackUrls: ["https://cloudcode-pa.googleapis.com/v1internal:models"],
         method: "POST",
         headers: { "Content-Type": "application/json" },
         authHeader: "Authorization",
@@ -333,12 +342,22 @@ export async function fetchProviderModels(connection) {
     for (const baseEndpoint of endpointCandidates) {
         let url = baseEndpoint;
         if (config.authQuery) {
-            url += `?${config.authQuery}=${token}`;
+            url += `?${config.authQuery}=${encodeURIComponent(token)}`;
         }
 
         // Build headers
         const headers = { ...config.headers };
-        if (config.authHeader && !config.authQuery) {
+        if (connection.provider === "claude") {
+            // Anthropic only accepts an OAuth access token via `Authorization:
+            // Bearer`, not `x-api-key` — sending it as x-api-key (the classic
+            // API-key header) gets an unconditional 401. Mirrors the branch
+            // already used by the real chat executor for this provider.
+            if (normalizedApiKey) {
+                headers["x-api-key"] = normalizedApiKey;
+            } else {
+                headers["Authorization"] = `Bearer ${token}`;
+            }
+        } else if (config.authHeader && !config.authQuery) {
             headers[config.authHeader] = (config.authPrefix || "") + token;
         }
 
@@ -351,13 +370,34 @@ export async function fetchProviderModels(connection) {
             fetchOptions.body = JSON.stringify(config.body);
         }
 
+        const debugKiroSync = connection.provider === "kiro" && process.env.NODE_ENV !== "production";
+
         const response = await fetch(url, fetchOptions);
         if (!response.ok) {
             lastStatus = response.status;
+            if (debugKiroSync) {
+                const bodyText = await response.text().catch(() => "<unreadable>");
+                console.log(`[fetchProviderModels] kiro ${baseEndpoint} -> HTTP ${response.status}: ${bodyText.slice(0, 500)}`);
+            }
             continue;
         }
 
         const data = await response.json();
+        if (connection.provider === "kiro") {
+            const parsed = config.parseResponse(data);
+            if (debugKiroSync) {
+                // Diagnostic: confirm what api.kiro.ai/api/openrouter/models actually
+                // returns for this account (curated subset vs. full IDE-parity catalog),
+                // and surface pagination hints if the API truncates the list. Dev-only.
+                console.log(`[fetchProviderModels] kiro raw response keys: ${Object.keys(data || {}).join(", ")}`);
+                console.log(`[fetchProviderModels] kiro parsed model count: ${Array.isArray(parsed) ? parsed.length : "n/a"}`);
+                console.log(`[fetchProviderModels] kiro model ids: ${Array.isArray(parsed) ? parsed.map(m => m.id || m.name || m.model).join(", ") : "n/a"}`);
+                if (data && (data.has_more || data.next_page || data.nextCursor || data.pagination)) {
+                    console.log(`[fetchProviderModels] kiro response appears paginated:`, JSON.stringify({ has_more: data.has_more, next_page: data.next_page, nextCursor: data.nextCursor, pagination: data.pagination }));
+                }
+            }
+            return parsed;
+        }
         return config.parseResponse(data);
     }
 

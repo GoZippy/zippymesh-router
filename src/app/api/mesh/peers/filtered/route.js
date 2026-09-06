@@ -20,8 +20,23 @@ async function evaluatePeerFilters(peer, filters, controls) {
   const metadata = await getPeerMetadata(peerId);
   const trustScore = await getTrustScore(peerId);
 
-  // Check global controls first
-  if (controls.minTrustScore !== null && trustScore !== null) {
+  // Check global controls first.
+  //
+  // FAIL CLOSED on an unknown score (adversarial review 2026-08-30, item 13).
+  // getTrustScore() now returns null when the sidecar did not score this peer —
+  // which today is every remote peer, since no sidecar registers
+  // GET /trust/{peer_id}. The old guard `trustScore !== null` would have SKIPPED
+  // the threshold in exactly that case, turning a restrictive control into a
+  // permissive one. An operator who set a minimum gets the minimum enforced, and
+  // the reason string no longer quotes a number nobody measured.
+  if (controls.minTrustScore !== null && controls.minTrustScore > 0) {
+    if (trustScore === null) {
+      return {
+        allowed: false,
+        blockedBy: "global",
+        reason: `Trust score unknown (no per-peer score from the sidecar); minimum is ${controls.minTrustScore}`
+      };
+    }
     if (trustScore < controls.minTrustScore) {
       return {
         allowed: false,

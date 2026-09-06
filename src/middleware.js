@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { verifyBearerApiKey } from "./lib/auth/edgeApiKey.js";
 
 if (!process.env.JWT_SECRET) {
   throw new Error("FATAL: JWT_SECRET environment variable is not set.");
@@ -64,13 +65,6 @@ async function checkActivationStatus(wallet, apiUrl, apiKey, requestUrl) {
   }
 }
 
-function isValidApiKey(authHeader) {
-  if (!authHeader) return false;
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token) return false;
-  return token.startsWith("sk-") || token.length >= 20;
-}
-
 export default async function middleware(request) {
   const { pathname } = request.nextUrl;
   console.log(`[Middleware] ${request.method} ${pathname}`);
@@ -89,48 +83,89 @@ export default async function middleware(request) {
     "/api/settings/require-login",
     "/api/init",
     "/api/health",
+    // Agent-token vault routes: the bearer agent token in the body IS the
+    // auth (plus their own per-IP rate limit). Agents hold no session cookie,
+    // so the cookie gate below must not apply — see the route files.
+    "/api/vault/read-with-token",
+    "/api/vault/list-with-token",
     "/api/models/available",
-    "/api/cli-tools/openclaw-settings",
+    // REMOVED 2026-08-30 (adversarial review item 16f): /api/cli-tools/openclaw-settings
+    // was the only member of the /api/cli-tools/* group on this list, and its
+    // POST fetches a caller-supplied baseUrl with a caller-supplied bearer
+    // (SSRF) and then persists a caller-supplied apiKey into
+    // ~/.openclaw/openclaw.json. Its four sibling routes were never public.
+    // The only consumers are dashboard cards
+    // (src/app/(dashboard)/dashboard/cli-tools/components/*ToolCard.js), which
+    // are rendered behind /dashboard and fetch same-origin with the session
+    // cookie, so the cookie gate below serves them. Do not re-add it.
     "/api/activation/check",
     "/api/provider-status",
     "/api/tokenbuddy/rate-limits",
     "/activate"
-  ].includes(normalizedPath) || 
-  normalizedPath.startsWith("/api/provider-status") || 
+  ].includes(normalizedPath) ||
+  normalizedPath.startsWith("/api/provider-status") ||
   normalizedPath.startsWith("/api/tokenbuddy/rate-limits") ||
-  normalizedPath.startsWith("/api/setup/");
+  normalizedPath.startsWith("/api/setup/") ||
+  // Static provider-logo PNGs served by /api/providers/icon/[id]. Not
+  // sensitive (just branding assets) — needs to be public because
+  // next/image's server-side optimizer fetches this URL without the
+  // browser's session cookie, so gating it behind auth made every provider
+  // logo 401 and silently fall back to the 2-letter initials avatar.
+  normalizedPath.startsWith("/api/providers/icon/");
 
   const isV1Api = pathname.startsWith("/api/v1") || pathname.startsWith("/v1");
   const isDashboard = pathname.startsWith("/dashboard");
-  const isManagementApi = (pathname.startsWith("/api") || pathname.startsWith("/setup") || pathname.startsWith("/dashboard")) && !isPublicApi && !isV1Api;
+  // /dashboard is a PAGE, handled by isDashboard (redirect to /login on auth
+  // failure). It must NOT be folded into isManagementApi — otherwise an
+  // invalid/expired cookie makes the dashboard dead-end with a JSON
+  // {"error":"Unauthorized"} 401 the browser can't recover from, instead of
+  // sending the user to /login.
+  const isManagementApi = (pathname.startsWith("/api") || pathname.startsWith("/setup")) && !isPublicApi && !isV1Api;
 
   if (isPublicApi) return NextResponse.next();
 
   if (isDashboard || isManagementApi) {
-    if (isManagementApi && isValidApiKey(request.headers.get("authorization"))) {
+    // F3: only a cryptographically valid router API key (HMAC crc) may bypass
+    // cookie auth for management APIs — NOT any "Bearer <20+ chars>" string.
+    // NOTE: this proves key AUTHENTICITY only. The edge cannot check REVOCATION
+    // (the crc is static and the edge has no DB), so a revoked-but-valid key
+    // still passes here. Sensitive management routes MUST add their own
+    // route-level guard (requireAuth / requireApiKey) — do not rely on this edge
+    // check alone. See .autoclaw/orchestrator/reviews for the edge-only route audit.
+    if (isManagementApi && (await verifyBearerApiKey(request.headers.get("authorization")))) {
       return NextResponse.next();
     }
 
+    // Validate the session cookie. A missing OR invalid/expired token is
+    // treated the same — as "unauthenticated" — and handled by the
+    // requireLogin gate below, rather than hard-failing here.
     const token = request.cookies.get("auth_token")?.value;
+    let tokenValid = false;
     if (token) {
       try {
         await jwtVerify(token, SECRET);
-        const apiUrl = process.env.ACTIVATION_API_URL;
-        const apiKey = process.env.ACTIVATION_API_KEY;
-        const wallet = request.cookies.get("zippymesh_wallet")?.value;
-        if (apiUrl && apiKey && (isDashboard || isManagementApi) && !pathname.startsWith("/activate")) {
-          if (!wallet) return NextResponse.redirect(new URL("/activate", request.url));
-          const { activated } = await checkActivationStatus(wallet, apiUrl, apiKey, request.url);
-          if (!activated) return NextResponse.redirect(new URL("/activate", request.url));
-        }
-        return NextResponse.next();
-      } catch (err) {
-        if (isManagementApi) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        return NextResponse.redirect(new URL("/login", request.url));
+        tokenValid = true;
+      } catch {
+        tokenValid = false; // expired/tampered/secret-rotated → re-auth below
       }
     }
 
-    // No valid auth token — check if login is required before deciding what to do
+    if (tokenValid) {
+      const apiUrl = process.env.ACTIVATION_API_URL;
+      const apiKey = process.env.ACTIVATION_API_KEY;
+      const wallet = request.cookies.get("zippymesh_wallet")?.value;
+      if (apiUrl && apiKey && !pathname.startsWith("/activate")) {
+        if (!wallet) return NextResponse.redirect(new URL("/activate", request.url));
+        const { activated } = await checkActivationStatus(wallet, apiUrl, apiKey, request.url);
+        if (!activated) return NextResponse.redirect(new URL("/activate", request.url));
+      }
+      return NextResponse.next();
+    }
+
+    // Unauthenticated (no token, or a stale one) — consult requireLogin, then
+    // send PAGES to /login and APIs to 401. Clear any stale auth_token so the
+    // browser stops replaying a dead session (otherwise the dashboard would
+    // keep re-triggering the failure on every load).
     let requireLogin = true;
     const now = Date.now();
     if (requireLoginCache !== null && (now - requireLoginCacheAt) < REQUIRE_LOGIN_CACHE_TTL_MS) {
@@ -145,10 +180,15 @@ export default async function middleware(request) {
         requireLoginCacheAt = now;
       } catch (err) { }
     }
-    if (!requireLogin) return NextResponse.next();
 
-    if (isDashboard) return NextResponse.redirect(new URL("/login", request.url));
-    if (isManagementApi) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const withClearedCookie = (resp) => {
+      if (token) resp.cookies.delete("auth_token");
+      return resp;
+    };
+
+    if (!requireLogin) return withClearedCookie(NextResponse.next());
+    if (isDashboard) return withClearedCookie(NextResponse.redirect(new URL("/login", request.url)));
+    if (isManagementApi) return withClearedCookie(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   return NextResponse.next();

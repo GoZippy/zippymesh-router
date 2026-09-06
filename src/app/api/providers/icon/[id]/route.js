@@ -23,7 +23,8 @@ function sanitizeId(id) {
  * Serves provider icon PNG. Returns placeholder when file is missing (avoids 404s).
  */
 export async function GET(request, { params }) {
-  const id = sanitizeId(params?.id);
+  const { id: rawId } = await params;
+  const id = sanitizeId(rawId);
   if (!id) {
     return apiError(request, 400, "Invalid provider id");
   }

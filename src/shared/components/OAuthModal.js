@@ -13,6 +13,19 @@ import {
   getManualCallbackPort,
 } from "@/shared/constants/providerCapabilities";
 
+// Extracts a display string from an API error response body, which may be
+// either the legacy plain-string `{error: "..."}` shape or the structured
+// `{error: {message, type, code}}` shape produced by apiError()/errorResponse().
+// Without this, a structured error renders as "[object Object]" wherever
+// `new Error(data.error)` or `setError(data.error)` assumed the legacy shape.
+function extractErrorMessage(data, fallback) {
+  const err = data?.error;
+  if (typeof err === "string" && err) return err;
+  if (err && typeof err === "object" && typeof err.message === "string") return err.message;
+  if (typeof data?.message === "string" && data.message) return data.message;
+  return fallback;
+}
+
 // Human-readable labels for each OAuth flow step
 const STEP_LABELS = {
   setup: "Enter client secret",
@@ -87,7 +100,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
       const data = await res.json();
       console.log("[OAuthModal] Exchange response", { ok: res.ok, data });
 
-      if (!res.ok) throw new Error(data.error || data.message || "Token exchange failed");
+      if (!res.ok) throw new Error(extractErrorMessage(data, "Token exchange failed"));
 
       setStep("success");
       onSuccess?.();
@@ -119,7 +132,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
         const data = await res.json();
 
         if (!res.ok) {
-          throw new Error(data.errorDescription || data.error || "Failed to poll for token");
+          throw new Error(data.errorDescription || extractErrorMessage(data, "Failed to poll for token"));
         }
 
         if (data.success) {
@@ -182,7 +195,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 
         const res = await fetch(`/api/oauth/${provider}/device-code`);
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error);
+        if (!res.ok) throw new Error(extractErrorMessage(data, "Failed to start device authorization"));
 
         setDeviceData(data);
 
@@ -210,7 +223,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, connectionI
 
       const res = await fetch(`/api/oauth/${provider}/authorize?redirect_uri=${encodeURIComponent(redirectUri)}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(extractErrorMessage(data, "Failed to start authorization"));
 
       setAuthData({ ...data, redirectUri });
 

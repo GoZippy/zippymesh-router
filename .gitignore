@@ -20,7 +20,9 @@
 /src-tauri/binaries/*.exe
 /src-tauri/binaries/*.bin
 /src-tauri/target/
-/.next-win-retry-*/
+# Windows build-retry dist dirs AND isolated verification builds
+# (ZIPPY_NEXT_DIST_DIR=.next-a12 / .next-f2 / etc.)
+/.next-*/
 /out/
 
 # production
@@ -80,8 +82,17 @@ docs/*
 !docs/zippymesh-licensing-bundle/
 !docs/zippymesh-licensing-bundle/*.md
 !docs/project_status.md
+# Public operator docs added 2026-08-30 (Kiro Crew / Track A+C)
+!docs/DOCTOR.md
+!docs/MCP_STDIO.md
+!docs/ZVAULT_RUN.md
+# Linked from docs/SETUP.md but were never tracked (install audit 2026-08-30)
+!docs/INSTALLER_MATRIX.md
+!docs/API.md
 test/*
 bin/*
+# zvault launcher (Track C) — the only source file that lives in bin/
+!bin/zvault.mjs
 open-sse/test/*
 RM.vn.md
 RM.md
@@ -89,6 +100,8 @@ cursor/*
 PUBLIC.md
 scripts/*
 !scripts/validate-open-core.cjs
+# shared leak-pattern definitions, required by validate-open-core.cjs and secrets-check.cjs
+!scripts/leak-patterns.cjs
 !scripts/build.cjs
 !scripts/prepare-standalone.cjs
 !scripts/setup-env.mjs
@@ -103,6 +116,18 @@ scripts/*
 !scripts/build-tauri-frontend.cjs
 !scripts/zippy-launcher.cjs
 !scripts/build-sidecar.cjs
+# Track A tooling added 2026-08-30: doctor, MCP stdio runner, production-build e2e runner
+!scripts/doctor.mjs
+!scripts/doctor/
+!scripts/doctor/**
+!scripts/mcp-stdio.mjs
+# Shared release/build helper modules (2026-08-30 adversarial round: zip leak
+# scan + Tauri bundle filter). Without these the release scripts MODULE_NOT_FOUND
+# on a clean checkout.
+!scripts/lib/
+!scripts/lib/**
+!scripts/e2e/
+!scripts/e2e/**
 Thanks.md
 PUBLIC.en.md
 PR/*
@@ -136,6 +161,10 @@ sidecar/target/
 
 # Large build artifacts
 dist/*.zip
+
+# Local build logs (tee'd output from npm run build:* commands)
+community-build.log
+tauri-build.log
 
 # User-specific runtime data (NEVER commit — contains credentials, tokens, playbooks, usage data)
 data/

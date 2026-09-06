@@ -1,6 +1,10 @@
 # =============================================================================
 # ZippyMesh LLM Router — Windows Upgrade Script
-# Usage: .\upgrade.ps1 -Zip "C:\Downloads\zippymesh-router-v0.3.2-alpha.zip"
+# Usage: .\upgrade.ps1 -Zip "C:\Downloads\zippymesh-router-v1.3.1-win32-x64.zip"
+#
+# -Zip is the ONLY parameter and it is mandatory. (docs/RELEASE.md used to
+# document -ReleasePath and -SkipBackup; neither has ever existed. Corrected
+# 2026-08-30, adversarial review item 16g.)
 # =============================================================================
 param(
     [Parameter(Mandatory=$true)]
@@ -17,7 +21,14 @@ function Write-Fail    { param($msg) Write-Host "[upgrade] ERROR: $msg" -Foregro
 # ── Validate zip ──────────────────────────────────────────────────────────────
 if (-not (Test-Path $Zip)) { Write-Fail "File not found: $Zip" }
 $Zip = Resolve-Path $Zip
-$NewVersion = [regex]::Match([System.IO.Path]::GetFileNameWithoutExtension($Zip), 'v[\d\.\-a-z]+$').Value
+# Release archives are now platform-tagged — zippymesh-router-v1.3.1-win32-x64.zip
+# — so anchor on the "v<semver>" group rather than "everything after the last v
+# to end of string", which used to swallow the platform tag into the version.
+$ZipStem = [System.IO.Path]::GetFileNameWithoutExtension($Zip)
+# Drop a trailing "<platform>-<arch>" tag first, then take everything after the
+# last "v" — so both shapes report the same version.
+$ZipStem = [regex]::Replace($ZipStem, '-(win32|linux|darwin|freebsd|openbsd|sunos|aix)-[a-z0-9]+$', '')
+$NewVersion = [regex]::Match($ZipStem, 'v[\d\.\-a-z]+$').Value
 
 # ── Detect install directory ──────────────────────────────────────────────────
 $InstallDir = $env:ZIPPYMESH_INSTALL_DIR

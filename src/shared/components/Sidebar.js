@@ -8,6 +8,8 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { DISPLAY_NAMES } from "@/shared/constants/displayNames";
 import { useExpertMode } from "@/shared/hooks/useExpertMode";
+import { canSeeAdmin, canSeeShutdown } from "@/lib/auth/navAccess";
+import { filterNavByLabs } from "@/lib/labs/features";
 import Button from "./Button";
 import { ConfirmModal } from "./Modal";
 
@@ -30,11 +32,16 @@ const allNavItems = [
   { href: "/dashboard/cost-simulator", label: "Cost Simulator", icon: "calculate", expertOnly: true },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
   { href: "/dashboard/vault-keys", label: "Vault", icon: "security", expertOnly: false },
-  { href: "/dashboard/network", label: "Network", icon: "hub", expertOnly: true },
-  { href: "/dashboard/monetization", label: "Monetization", icon: "payments", expertOnly: true },
-  { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet", expertOnly: true },
-  { href: "/dashboard/compute", label: "Compute", icon: "memory", expertOnly: true },
-  { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal", expertOnly: true },
+  // Experimental (Labs-gated) — hidden unless enabled on /dashboard/labs. The
+  // marketplace entry above is also Labs-gated via lib/labs/features.js navHrefs.
+  { href: "/dashboard/network", label: "Network", icon: "hub" },
+  { href: "/dashboard/monetization", label: "Monetization", icon: "payments" },
+  { href: "/dashboard/wallet", label: "Wallet", icon: "account_balance_wallet" },
+  { href: "/dashboard/compute", label: "Compute", icon: "memory" },
+  // Not expertOnly: this is where the setup wizard's finish screen sends
+  // Claude Code / Cursor / Codex users to connect their CLI — hiding it
+  // behind Expert Mode (off by default) made that instruction a dead end.
+  { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal", expertOnly: false },
 ];
 
 // Debug items (only show when ENABLE_REQUEST_LOGS=true)
@@ -43,10 +50,15 @@ const debugItems = [
 ];
 
 const systemItems = [
+  { href: "/dashboard/labs", label: "Labs", icon: "science" },
   { href: "/dashboard/profile", label: "Settings", icon: "settings" },
   { href: "/dashboard/about", label: "About", icon: "info" },
   { href: "/dashboard/help", label: "Help", icon: "help" },
 ];
+
+// Privileged admin entry — gated by role (admin+). Kept out of the default nav
+// list and injected only when the session role allows it (fail-closed UI).
+const adminNavItem = { href: "/dashboard/admin", label: "Admin", icon: "admin_panel_settings" };
 
 const compactNavPriority = [
   "/dashboard",
@@ -80,19 +92,37 @@ export default function Sidebar({
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [pluginNavItems, setPluginNavItems] = useState([]);
+  // Session role for nav gating. null until /api/auth/session resolves; we
+  // fail-closed (hide privileged entries) while unknown.
+  const [sessionRole, setSessionRole] = useState(null);
+  // Experimental (Labs) feature flags from settings.experimentalFeatures. Empty
+  // until /api/settings resolves; missing keys are treated as OFF (fail-closed).
+  const [experimentalFlags, setExperimentalFlags] = useState({});
   const { isExpert, toggle: toggleExpert } = useExpertMode();
   const showCompactControls = compactMode;
 
+  // Role-derived visibility (pure helpers; fail-closed while role unknown).
+  const showAdminNav = canSeeAdmin(sessionRole);
+  const showShutdown = canSeeShutdown(sessionRole);
+
   const defaultNavItems = useMemo(() => {
-    const base = allNavItems.filter(item => !item.expertOnly || isExpert);
+    // expertOnly filter, then Labs gating (experimental routes hidden unless their
+    // feature is enabled on /dashboard/labs).
+    const base = filterNavByLabs(
+      allNavItems.filter(item => !item.expertOnly || isExpert),
+      experimentalFlags
+    );
     const allHrefs = new Set([
       ...allNavItems.map(item => item.href),
       ...debugItems.map(item => item.href),
       ...systemItems.map(item => item.href),
+      adminNavItem.href,
     ]);
     const uniquePluginItems = pluginNavItems.filter(item => !allHrefs.has(item.href));
-    return [...base, ...uniquePluginItems];
-  }, [isExpert, pluginNavItems]);
+    // Inject the privileged Admin entry only for admin+ sessions (fail-closed).
+    const adminItems = showAdminNav ? [adminNavItem] : [];
+    return [...base, ...adminItems, ...uniquePluginItems];
+  }, [isExpert, pluginNavItems, showAdminNav, experimentalFlags]);
   const [navItems, setNavItems] = useState(defaultNavItems);
 
   const swipeSensitivityLabel =
@@ -125,7 +155,14 @@ export default function Sidebar({
   useEffect(() => {
     fetch("/api/settings")
       .then(res => res.json())
-      .then(data => setShowDebug(data?.enableRequestLogs === true))
+      .then(data => {
+        setShowDebug(data?.enableRequestLogs === true);
+        setExperimentalFlags(
+          data?.experimentalFeatures && typeof data.experimentalFeatures === "object"
+            ? data.experimentalFeatures
+            : {}
+        );
+      })
       .catch(() => { });
   }, []);
 
@@ -138,6 +175,21 @@ export default function Sidebar({
         }
       })
       .catch(() => { });
+  }, []);
+
+  useEffect(() => {
+    // Resolve the session role for nav gating. On any failure we leave the role
+    // null, which the pure helpers treat as no privileged access (fail-closed).
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.authenticated && typeof data.role === "string") {
+          setSessionRole(data.role);
+        } else {
+          setSessionRole(null);
+        }
+      })
+      .catch(() => setSessionRole(null));
   }, []);
 
   useEffect(() => {
@@ -400,16 +452,18 @@ export default function Sidebar({
             </div>
           </div>
 
-          {/* Shutdown button */}
-          <Button
-            variant="outline"
-            fullWidth
-            icon="power_settings_new"
-            onClick={() => setShowShutdownModal(true)}
-            className="text-red-500 border-red-200 hover:bg-red-50 hover:border-red-300"
-          >
-            Shutdown
-          </Button>
+          {/* Shutdown button — superadmin only (fail-closed while role unknown) */}
+          {showShutdown && (
+            <Button
+              variant="outline"
+              fullWidth
+              icon="power_settings_new"
+              onClick={() => setShowShutdownModal(true)}
+              className="text-red-500 border-red-200 hover:bg-red-50 hover:border-red-300"
+            >
+              Shutdown
+            </Button>
+          )}
         </div>
       </aside>
 

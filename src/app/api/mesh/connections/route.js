@@ -4,6 +4,7 @@ import {
   setNodeConnections,
   updateNodeConnection,
   getWallets,
+  toSafeWallets,
 } from "@/lib/localDb.js";
 import { apiError, withStandardHeaders, getRequestIdFromRequest } from "@/lib/apiErrors.js";
 
@@ -12,9 +13,11 @@ export async function GET(request) {
   try {
     const connections = await getNodeConnections();
     const wallets = await getWallets();
+    // toSafeWallets drops `encryptedPrivateKey` (audit F7 / adversarial review
+    // item 4). The network page reads only `w.id` off this array.
     return withStandardHeaders(NextResponse.json({
       connections,
-      wallets,
+      wallets: toSafeWallets(wallets),
     }), requestId);
   } catch (error) {
     console.error("Error fetching connections:", error);

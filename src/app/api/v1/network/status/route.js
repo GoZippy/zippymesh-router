@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSidecarUrl } from "@/lib/sidecar";
+import { getSidecarUrl, sidecarAuthHeaders } from "@/lib/sidecar";
 
 const SIDECAR_URL = getSidecarUrl();
 
@@ -7,8 +7,8 @@ export async function GET() {
     try {
         // Parallel fetch for info and peers
         const [infoRes, peersRes] = await Promise.allSettled([
-            fetch(`${SIDECAR_URL}/node/info`, { cache: "no-store", next: { revalidate: 0 } }),
-            fetch(`${SIDECAR_URL}/peers`, { cache: "no-store", next: { revalidate: 0 } })
+            fetch(`${SIDECAR_URL}/node/info`, { cache: "no-store", next: { revalidate: 0 }, headers: { ...sidecarAuthHeaders() } }),
+            fetch(`${SIDECAR_URL}/peers`, { cache: "no-store", next: { revalidate: 0 }, headers: { ...sidecarAuthHeaders() } })
         ]);
 
         let info = null;

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getNodePricingConfig, setNodePricingConfig } from "@/lib/localDb.js";
-import { getSidecarUrl } from "@/lib/sidecar";
+import { getSidecarUrl, sidecarAuthHeaders } from "@/lib/sidecar";
 
 const SIDECAR_URL = getSidecarUrl();
 
@@ -8,7 +8,7 @@ export async function GET() {
     try {
         const [nodeConfig, sidecarRes] = await Promise.all([
             getNodePricingConfig(),
-            fetch(`${SIDECAR_URL}/node/pricing`, { cache: "no-store", next: { revalidate: 0 } }).catch(() => null),
+            fetch(`${SIDECAR_URL}/node/pricing`, { cache: "no-store", next: { revalidate: 0 }, headers: { ...sidecarAuthHeaders() } }).catch(() => null),
         ]);
 
         const sidecarData = sidecarRes?.ok ? await sidecarRes.json() : null;
@@ -88,7 +88,7 @@ export async function POST(req) {
 
         const res = await fetch(`${SIDECAR_URL}/node/pricing`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
             body: JSON.stringify(sidecarPayload),
         });
 

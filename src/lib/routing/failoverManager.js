@@ -14,6 +14,7 @@ import { resolveProviderId, FREE_PROVIDERS, APIKEY_PROVIDERS, LOCAL_PROVIDERS } 
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from '../../shared/constants/models.js';
 import { getEquivalentModels } from '../../sse/config/modelEquivalence.js';
 import { isModelDegraded } from '../modelHealth.js';
+import { getRegistryModel } from '../modelRegistry.js';
 
 // Cache for dynamically fetched local provider models (TTL: 5 minutes)
 const localModelCache = new Map();
@@ -362,6 +363,22 @@ export async function buildFailoverChain(context, originalProvider, originalMode
         }
     }
 
+    // Drop any candidate the model_registry already knows is gone. None of the
+    // 6 tiers above check this (only isModelDegraded — a live-failure backoff
+    // tracker, unrelated to provider-side deprecation) — a stale candidate
+    // would otherwise still be offered as a "failover" straight into another
+    // guaranteed failure. Fails open per-candidate: a lookup error or missing
+    // registry entry keeps the candidate, since this manager's whole purpose
+    // is "never fail a request" — an unrelated registry hiccup shouldn't
+    // shrink the candidate pool.
+    const registryStates = await Promise.all(
+        candidates.map((c) => getRegistryModel(c.provider, c.model).catch(() => null))
+    );
+    const liveCandidates = candidates.filter((c, i) => {
+        const state = registryStates[i]?.lifecycleState;
+        return state !== 'missing' && state !== 'deprecated';
+    });
+
     // Sort by priority: same_model > equivalent > user_preferred > free > local > default
     const sourcePriority = {
         'same_model_different_provider': 0,
@@ -372,14 +389,14 @@ export async function buildFailoverChain(context, originalProvider, originalMode
         'default_stack_failover': 5
     };
 
-    candidates.sort((a, b) => {
+    liveCandidates.sort((a, b) => {
         const aPriority = sourcePriority[a.source] ?? 99;
         const bPriority = sourcePriority[b.source] ?? 99;
         return aPriority - bPriority;
     });
 
     // Limit to maxRetries
-    return candidates.slice(0, failoverConfig.maxRetries);
+    return liveCandidates.slice(0, failoverConfig.maxRetries);
 }
 
 /**

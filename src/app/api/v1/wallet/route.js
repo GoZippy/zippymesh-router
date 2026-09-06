@@ -1,12 +1,26 @@
+/**
+ * /api/v1/wallet — wallet CRUD.
+ *
+ * SECURITY: this route is UNAUTHENTICATED by design. src/middleware.js:104
+ * classifies `/api/v1` as `isV1Api` and excludes it from `isManagementApi`, so
+ * the edge gate never runs, and there is no route-level guard here. That is
+ * deliberate for GET: the public `/buy` and `/download` pages read it without a
+ * session (adversarial review 2026-08-30, item 4 — "do NOT gate GET").
+ *
+ * Because it is unauthenticated, every response goes through toSafeWallet(),
+ * which drops `encryptedPrivateKey` and reports its presence as a boolean, and
+ * every write goes through updateWallet()'s column allowlist. Do not return a
+ * raw wallet row from this file.
+ */
 import { NextResponse } from "next/server";
-import { getWallets, createWallet, updateWallet, deleteWallet } from "@/lib/localDb.js";
+import { getWallets, createWallet, updateWallet, deleteWallet, toSafeWallet, toSafeWallets } from "@/lib/localDb.js";
 import { encrypt } from "@/lib/cryptoUtils.js";
 import { apiError } from "@/lib/apiErrors.js";
 
 export async function GET(request) {
     try {
         const wallets = await getWallets();
-        return NextResponse.json(wallets);
+        return NextResponse.json(toSafeWallets(wallets));
     } catch (error) {
         return apiError(request, 500, "Internal Server Error");
     }
@@ -35,7 +49,7 @@ export async function POST(req) {
             metadata: data.metadata || {}
         });
 
-        return NextResponse.json(wallet);
+        return NextResponse.json(toSafeWallet(wallet));
     } catch (error) {
         return apiError(req, 500, "Internal Server Error");
     }
@@ -55,7 +69,7 @@ export async function PATCH(req) {
             return apiError(req, 404, "Wallet not found");
         }
 
-        return NextResponse.json(updated);
+        return NextResponse.json(toSafeWallet(updated));
     } catch (error) {
         return apiError(req, 500, "Internal Server Error");
     }
@@ -84,7 +98,7 @@ export async function DELETE(req) {
             return apiError(req, 404, "Wallet not found or already deleted");
         }
 
-        return NextResponse.json({ success: true, wallet: deleted });
+        return NextResponse.json({ success: true, wallet: toSafeWallet(deleted) });
     } catch (error) {
         return apiError(req, 500, "Internal Server Error");
     }

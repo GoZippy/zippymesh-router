@@ -189,6 +189,16 @@ export function getProviderModels(aliasOrId) {
   return PROVIDER_MODELS[aliasOrId] || [];
 }
 
+/**
+ * First model of a provider's static table, or null.
+ *
+ * There is deliberately NO `PROVIDER_MODELS["ollama"]` / `["lmstudio"]` entry:
+ * a local runtime's inventory is whatever the user pulled, so a hardcoded list
+ * would be wrong the moment it shipped. Callers that must turn `model:"auto"`
+ * into something concrete for a local provider fall back to
+ * `pickLocalDefaultModel()` in src/lib/routing/localModelIndex.js, which asks
+ * the runtime. See src/sse/services/orchestrator.js.
+ */
 export function getDefaultModel(aliasOrId) {
   const models = PROVIDER_MODELS[aliasOrId];
   return models?.[0]?.id || null;

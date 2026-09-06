@@ -76,7 +76,7 @@ async function runTests() {
         await makeRequest('/wallet?action=status');
     } catch (error) {
         log('error', 'Next.js development server is not running');
-        log('warn', 'Start with: cd k:\\Projects\\ZippyMesh_LLM_Router && npm run dev');
+        log('warn', 'Start with: npm run dev (from the repository root)');
         process.exit(1);
     }
 

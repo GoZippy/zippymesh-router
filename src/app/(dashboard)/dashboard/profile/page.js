@@ -8,6 +8,26 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { formatRequestError, safeFetchJson } from "@/shared/utils";
 
+/**
+ * Coerce an API error value into a plain string safe to render as a React
+ * child. API errors come back in several shapes:
+ *   - "plain string"
+ *   - { error: "string" }         (already handled by callers)
+ *   - { message, type, code, ... } (Anthropic-style provider errors)
+ *   - null / undefined
+ * This helper returns the best available human-readable string.
+ */
+function errText(err, fallback = "Request failed") {
+  if (err == null) return fallback;
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    if (typeof err.message === "string") return err.message;
+    if (typeof err.error === "string") return err.error;
+    try { return JSON.stringify(err); } catch { return fallback; }
+  }
+  return String(err);
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const { theme, setTheme, isDark } = useTheme();
@@ -147,7 +167,7 @@ export default function ProfilePage() {
         setMeshStatus({ type: "success", message: "Mesh settings saved" });
       } else {
         const data = res.data || {};
-        setMeshStatus({ type: "error", message: data.error || "Failed to save" });
+        setMeshStatus({ type: "error", message: errText(data.error, "Failed to save") });
       }
     } catch (err) {
       setMeshStatus({ type: "error", message: "An error occurred" });
@@ -176,7 +196,7 @@ export default function ProfilePage() {
         setWebhookStatus({ type: "success", message: "Webhook added" });
         fetchWebhooks();
       } else {
-        setWebhookStatus({ type: "error", message: res.data?.error || "Failed to add" });
+        setWebhookStatus({ type: "error", message: errText(res.data?.error, "Failed to add") });
       }
     } catch { setWebhookStatus({ type: "error", message: "An error occurred" }); }
     finally { setAddingWebhook(false); }
@@ -199,7 +219,7 @@ export default function ProfilePage() {
         body: JSON.stringify({ action: "test" }),
       });
       const ok = res.data?.ok;
-      setWebhookStatus({ type: ok ? "success" : "error", message: ok ? `Test delivered (${res.data?.status})` : `Test failed: ${res.data?.error || "unknown error"}` });
+      setWebhookStatus({ type: ok ? "success" : "error", message: ok ? `Test delivered (${res.data?.status})` : `Test failed: ${errText(res.data?.error, "unknown error")}` });
       fetchWebhooks();
     } catch { setWebhookStatus({ type: "error", message: "Test request failed" }); }
     finally { setTestingId(null); }
@@ -264,7 +284,7 @@ export default function ProfilePage() {
         setNewKeyExpiry("");
         fetchApiKeys();
       } else {
-        setKeyStatus({ type: "error", message: data.error || "Failed to create key" });
+        setKeyStatus({ type: "error", message: errText(data.error, "Failed to create key") });
       }
     } catch (err) {
       setKeyStatus({ type: "error", message: "An error occurred" });
@@ -283,7 +303,7 @@ export default function ProfilePage() {
         setKeyStatus({ type: "success", message: "API key revoked" });
       } else {
         const data = res.data || {};
-        setKeyStatus({ type: "error", message: data.error || "Failed to revoke key" });
+        setKeyStatus({ type: "error", message: errText(data.error, "Failed to revoke key") });
       }
     } catch (err) {
       setKeyStatus({ type: "error", message: "An error occurred" });
@@ -325,7 +345,7 @@ export default function ProfilePage() {
         setPasswords({ current: "", new: "", confirm: "" });
       } else {
         const data = res.data || {};
-        setPassStatus({ type: "error", message: data.error || "Failed to update password" });
+        setPassStatus({ type: "error", message: errText(data.error, "Failed to update password") });
       }
     } catch (err) {
       setPassStatus({ type: "error", message: "An error occurred" });

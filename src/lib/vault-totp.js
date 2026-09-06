@@ -26,7 +26,7 @@
  *   key="totp_backup_codes_hashed"   value=JSON [bcrypt-hash, ...]
  */
 
-import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv, timingSafeEqual } from "node:crypto";
+import { randomBytes, pbkdf2Sync, createCipheriv, createDecipheriv } from "node:crypto";
 import { authenticator } from "otplib";
 import bcrypt from "bcryptjs";
 import {
@@ -36,7 +36,8 @@ import {
 } from "./localDb.js";
 
 const ENC_ALGO = "aes-256-gcm";
-const PBKDF2_ITER = 210_000;
+// OWASP 2023 PBKDF2-SHA256 recommendation (was 210k, the SHA-512 figure).
+const PBKDF2_ITER = 600_000;
 const KEY_LEN = 32;
 const DIGEST = "sha256";
 const SALT_BYTES = 16;

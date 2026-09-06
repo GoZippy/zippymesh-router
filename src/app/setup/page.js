@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Card, Button, Input } from "@/shared/components";
 import MeshSignatureBadge from "@/shared/components/MeshSignatureBadge";
+import AddLocalRuntime from "@/shared/components/providers/AddLocalRuntime";
+import { completePasswordStep } from "./securityStepLogic.js";
 import { cn } from "@/shared/utils/cn";
 
 // ─── Step definitions ────────────────────────────────────────────────────────
@@ -99,6 +101,30 @@ function StepDots({ current, total }) {
 
 // ─── Step 0: Security ─────────────────────────────────────────────────────────
 
+/**
+ * Step 0 also has to LOG THE USER IN — fix for H2, 2026-08-30.
+ *
+ * `PATCH /api/settings {newPassword}` sets the password and returns no
+ * `Set-Cookie`: it is a public route with a `firstRun` exemption, not a login.
+ * So on a fresh install the wizard advanced to step 1 with an EMPTY cookie jar,
+ * and the "Add a local runtime" card — the headline feature this step exists to
+ * showcase — posted to `POST /api/provider-nodes` (which has no firstRun
+ * exemption), got a 401, and ejected the user to /login mid-setup. Verified:
+ *
+ *   GET  /api/settings/require-login              -> {"requireLogin":true}
+ *   PATCH /api/settings {"newPassword":"…"}       -> 200, cookie jar EMPTY
+ *   POST /api/provider-nodes {type:"local"}       -> 401 {"error":"Unauthorized"}
+ *
+ * Fixing it in the wizard rather than by exempting `/api/provider-nodes` from
+ * auth is deliberate: that route now drives outbound fetches and mints routing
+ * targets (finding C1), so it is the last route that should grow a first-run
+ * bypass. One extra `POST /api/auth/login` with the password the user just
+ * chose gives the rest of the wizard a real session.
+ *
+ * A failed auto-login is NOT fatal and never redirects: the password IS set, so
+ * sending the user back to step 0 would strand them. `onNext(false, reason)`
+ * carries the bad news to step 1, which says so inline.
+ */
 function StepSecurity({ onNext }) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -108,28 +134,17 @@ function StepSecurity({ onNext }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    if (password.length < 4) {
-      setError("Password must be at least 4 characters.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
     setLoading(true);
     try {
-      const res = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newPassword: password }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error?.message ?? "Failed to set password.");
+      // Whole sequence (validate -> PATCH /api/settings -> POST /api/auth/login)
+      // lives in ./securityStepLogic.js so it is unit-testable in a Node
+      // environment; this component only maps the result onto state.
+      const r = await completePasswordStep({ password, confirmPassword });
+      if (!r.ok) {
+        setError(r.error);
+        return;
       }
-      onNext();
-    } catch (err) {
-      setError(err.message);
+      onNext(r.sessionOk, r.sessionError);
     } finally {
       setLoading(false);
     }
@@ -173,9 +188,15 @@ function StepSecurity({ onNext }) {
 
 // ─── Step 1: Connect a provider ───────────────────────────────────────────────
 
-function StepProvider({ onNext, onSkip }) {
+function StepProvider({ onNext, onSkip, sessionReady = true, sessionError = "" }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(null);
+  // Set once the local-runtime card reports a 201/200, so the wizard can say
+  // "you're done here" instead of leaving the user guessing.
+  const [localAdded, setLocalAdded] = useState(false);
+  // Set if the card ever gets a 401. See StepSecurity's header for why that can
+  // still happen and why it must not become a redirect (H2).
+  const [sessionMissing, setSessionMissing] = useState(!sessionReady);
 
   const BADGE_COLORS = {
     green:  "bg-green-100  dark:bg-green-900/30  text-green-700  dark:text-green-300  border-green-200  dark:border-green-800",
@@ -187,8 +208,37 @@ function StepProvider({ onNext, onSkip }) {
     <div className="flex flex-col gap-4">
       <p className="text-sm text-text-muted">
         ZippyMesh routes your requests across multiple LLM providers. Add at
-        least one to get started. The three easiest options are below.
+        least one to get started. If you already run a model locally, that is
+        the fastest option — it is right below.
       </p>
+
+      {sessionMissing && (
+        <p className="text-sm text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+          <span className="material-symbols-outlined text-[16px] mt-0.5">info</span>
+          <span>
+            Session missing — your password is saved, but this browser was not signed in
+            automatically{sessionError ? ` (${sessionError})` : ""}. Continue with setup and add
+            your runtime from <strong>Dashboard → Providers</strong> once you have signed in.
+          </span>
+        </p>
+      )}
+
+      {/* Option 1 — a runtime already running on this machine. Defaults to
+          Ollama; one probe, no LAN sweep, and the node is routable straight
+          away (POST /api/provider-nodes {type:"local"}). */}
+      <AddLocalRuntime
+        compact
+        onAdded={() => { setLocalAdded(true); setSessionMissing(false); }}
+        onUnauthorized={() => setSessionMissing(true)}
+      />
+
+      <div className="flex items-center gap-3">
+        <span className="h-px flex-1 bg-black/10 dark:bg-white/10" />
+        <span className="text-xs text-text-muted uppercase tracking-wider">
+          or use a hosted provider
+        </span>
+        <span className="h-px flex-1 bg-black/10 dark:bg-white/10" />
+      </div>
 
       <div className="flex flex-col gap-3">
         {QUICK_PROVIDERS.map((provider) => {
@@ -295,6 +345,12 @@ function StepProvider({ onNext, onSkip }) {
       </div>
 
       <div className="flex flex-col gap-2 pt-2">
+        {localAdded && (
+          <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-[16px]">check_circle</span>
+            Local runtime connected — you can continue.
+          </p>
+        )}
         <Button onClick={onNext} fullWidth variant="primary" icon="check">
           I&apos;ve connected a provider — continue
         </Button>
@@ -465,7 +521,7 @@ function StepTest({ onNext }) {
 
 // ─── Step 3: Vault (optional) ────────────────────────────────────────────────
 
-function StepVault({ onNext, onSkip }) {
+function StepVault({ onNext, onSkip, finishing }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 flex items-start gap-3">
@@ -499,11 +555,11 @@ function StepVault({ onNext, onSkip }) {
       </div>
 
       <div className="flex gap-3">
-        <Button variant="secondary" onClick={onSkip} fullWidth>
+        <Button variant="secondary" onClick={onSkip} disabled={finishing} fullWidth>
           Skip for now
         </Button>
-        <Button onClick={onNext} fullWidth icon="arrow_forward" iconPosition="right">
-          Set up Vault
+        <Button onClick={onNext} disabled={finishing} fullWidth icon="arrow_forward" iconPosition="right">
+          {finishing ? "Finishing setup..." : "Set up Vault"}
         </Button>
       </div>
     </div>
@@ -567,6 +623,10 @@ export default function SetupPage() {
   const [step, setStep] = useState(0);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState("");
+  // Whether step 0's auto-login produced a session (H2). Steps after 0 call
+  // guarded management APIs; without this they 401 with no explanation.
+  const [sessionReady, setSessionReady] = useState(true);
+  const [sessionError, setSessionError] = useState("");
   const router = useRouter();
 
   // If setup is already complete (firstRun=false and a password exists), send
@@ -584,14 +644,36 @@ export default function SetupPage() {
 
   const currentStep = STEPS[step];
 
+  async function completeSetup() {
+    const res = await fetch("/api/setup/complete", { method: "POST" });
+    if (!res.ok) throw new Error("Failed to complete setup.");
+  }
+
   async function finish() {
     setFinishing(true);
     setFinishError("");
     try {
-      const res = await fetch("/api/setup/complete", { method: "POST" });
-      if (!res.ok) throw new Error("Failed to complete setup.");
+      await completeSetup();
       router.push("/dashboard");
       router.refresh();
+    } catch (err) {
+      setFinishError(err.message);
+      setFinishing(false);
+    }
+  }
+
+  // "Set up Vault" exits the wizard straight to /dashboard/vault-keys instead
+  // of the StepDone screen. It must still call /api/setup/complete first —
+  // otherwise firstRun stays true, so any later visit to "/" bounces back to
+  // /setup and restarts the wizard at Step 1, where the password step will
+  // silently accept a brand-new password with no current-password check
+  // (the PATCH /api/settings firstRun bypass), overwriting the one just set.
+  async function finishToVault() {
+    setFinishing(true);
+    setFinishError("");
+    try {
+      await completeSetup();
+      router.push("/dashboard/vault-keys?setup=1");
     } catch (err) {
       setFinishError(err.message);
       setFinishing(false);
@@ -631,22 +713,36 @@ export default function SetupPage() {
 
           {/* Step content */}
           {step === 0 && (
-            <StepSecurity onNext={() => setStep(1)} />
+            <StepSecurity
+              onNext={(ok = true, reason = "") => {
+                setSessionReady(ok !== false);
+                setSessionError(reason || "");
+                setStep(1);
+              }}
+            />
           )}
           {step === 1 && (
             <StepProvider
               onNext={() => setStep(2)}
               onSkip={() => setStep(2)}
+              sessionReady={sessionReady}
+              sessionError={sessionError}
             />
           )}
           {step === 2 && (
             <StepTest onNext={() => setStep(3)} />
           )}
           {step === 3 && (
-            <StepVault
-              onNext={() => { router.push("/dashboard/vault-keys?setup=1"); }}
-              onSkip={() => setStep(4)}
-            />
+            <>
+              <StepVault
+                onNext={finishToVault}
+                onSkip={() => setStep(4)}
+                finishing={finishing}
+              />
+              {finishError && (
+                <p className="text-sm text-red-500 text-center mt-2">{finishError}</p>
+              )}
+            </>
           )}
           {step === 4 && (
             <>

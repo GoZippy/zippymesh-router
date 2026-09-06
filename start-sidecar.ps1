@@ -29,6 +29,29 @@ if (-not (Test-Path $sidecarDir)) {
     exit 1
 }
 
+# --- Sidecar API auth wiring -------------------------------------------------
+# The sidecar requires "Authorization: Bearer <SIDE_CAR_SECRET>" on every route
+# except /health and /version. Load the secret from the repo .env (written by
+# `npm run setup`) so this manually-started sidecar accepts requests from the
+# Next.js dev server. If no secret is available anywhere, fall back to
+# NODE_ENV=development, which the sidecar treats as open (dev-only behavior).
+if (-not $env:SIDE_CAR_SECRET) {
+    $envFile = Join-Path $PSScriptRoot ".env"
+    if (Test-Path $envFile) {
+        $secretLine = Get-Content $envFile | Where-Object { $_ -match '^SIDE_CAR_SECRET=(.+)$' } | Select-Object -First 1
+        if ($secretLine -match '^SIDE_CAR_SECRET=(.+)$') {
+            $env:SIDE_CAR_SECRET = $Matches[1].Trim()
+            Write-Host "[*] Loaded SIDE_CAR_SECRET from .env (API auth enabled)" -ForegroundColor Gray
+        }
+    }
+}
+if (-not $env:SIDE_CAR_SECRET -and -not $env:NODE_ENV) {
+    $env:NODE_ENV = "development"
+    Write-Host "[!] No SIDE_CAR_SECRET found - running OPEN in development mode." -ForegroundColor Yellow
+    Write-Host "    Run 'npm run setup' to generate one, or set SIDE_CAR_SECRET yourself." -ForegroundColor Yellow
+}
+# -----------------------------------------------------------------------------
+
 Push-Location $sidecarDir
 
 try {

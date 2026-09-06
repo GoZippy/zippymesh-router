@@ -6,6 +6,7 @@
  */
 
 import { getDb } from "./localDb.js";
+import { isOfflineMode } from "./privacy/offlineMode.js";
 
 const ZIPPYMESH_URL = process.env.NEXT_PUBLIC_ZIPPYMESH_URL || "https://zippymesh.com";
 const SYNC_INTERVAL = 60 * 1000; // 1 minute
@@ -20,6 +21,15 @@ let heartbeatInterval = null;
  */
 export async function initTelemetrySync() {
   const db = await getDb();
+
+  // Offline/privacy mode: hard-disable ALL non-provider outbound (heartbeat +
+  // telemetry), even if an account is connected. Single switch for privacy-minded
+  // users; default OFF (telemetry is already opt-in regardless).
+  if (isOfflineMode(process.env, db.data?.settings)) {
+    console.log("[Telemetry] Offline mode — no outbound heartbeat or telemetry");
+    return;
+  }
+
   const connection = db.data.zippymeshConnection;
 
   if (!connection?.connectionToken) {

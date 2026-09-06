@@ -1,3 +1,20 @@
+/**
+ * ZMLR browser E2E flow.
+ *
+ * WARNING — this suite MUTATES its target: it drives the setup wizard, sets the
+ * admin password to `admin123`, adds a provider and mints a virtual key. It must
+ * only ever run against a THROWAWAY ZMLR instance (isolated DATA_DIR, its own
+ * PORT + JWT_SECRET), never the operator's real install.
+ *
+ * `playwright.config.cjs` enforces this via `tests/e2e/globalSetup.cjs`: a bare
+ * `npx playwright test` throws before any test runs. To run it:
+ *
+ *   1. DATA_DIR=$(mktemp -d) PORT=20999 JWT_SECRET=$(openssl rand -hex 32) npm start
+ *   2. ZMLR_E2E_BASE_URL=http://localhost:20999 PLAYWRIGHT_ALLOW_REAL=1 npx playwright test
+ *
+ * Both env vars are required (the base URL names the disposable target; the
+ * flag is the explicit acknowledgement that the flow writes to it).
+ */
 const { test, expect } = require('@playwright/test');
 
 test.describe('ZMLR E2E Flow', () => {
@@ -150,9 +167,18 @@ test.describe('ZMLR E2E Flow', () => {
     await page.getByLabel('Note / Identifier').fill('E2E Test Key');
     await page.getByRole('button', { name: 'Generate Key' }).click();
 
-    // Read the generated Key (zpc1_....)
+    // Read the generated key.
+    //
+    // Fixed 2026-08-30: this used to assert a "zpc1" prefix that NO code path
+    // produces. /api/keys -> createRouterApiKey() (src/lib/localDb.js) mints
+    // `Buffer.from(uuid4 + uuid4).toString("base64")` — 96 opaque base64
+    // characters, no prefix at all. Asserting a prefix here taught clients to
+    // sniff for one; see docs/_internal/OPENAI_COMPAT_CONTRACT_2026-08-30.md §2.
     const apiKeyRaw = await page.getByRole('textbox').first().inputValue();
-    expect(apiKeyRaw).toContain('zpc1');
+    expect(apiKeyRaw).toMatch(/^[A-Za-z0-9+/]+=*$/);
+    expect(apiKeyRaw.length).toBeGreaterThanOrEqual(64);
+    expect(apiKeyRaw.startsWith('zpc1')).toBe(false);
+    expect(apiKeyRaw.startsWith('sk-')).toBe(false);
 
     // Make an authenticated request with this virtual key
     const response = await request.post('/v1/chat/completions', {

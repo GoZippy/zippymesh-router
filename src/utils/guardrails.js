@@ -72,10 +72,21 @@ function getConfigPath() {
     }
     const appDataConfigPath = path.join(appDataPath, 'guardrails.config.json');
     if (fs.existsSync(appDataConfigPath)) return appDataConfigPath;
-    
+
+    // The production standalone runs with cwd = the bundle root (server.js does
+    // process.chdir(__dirname)), and scripts/prepare-standalone.cjs copies the
+    // config to <bundle>/config/. In a source checkout cwd is the repo root,
+    // where config/ also lives. This is the candidate that actually resolves in
+    // a release build — the __dirname one below only works from source, because
+    // `next build` bundles this module and ../../../config does not exist in the
+    // output (2026-08-30: without this, checkSafety loaded 0 rules in every
+    // shipped build and content-policy rules were silently inert).
+    const cwdConfigPath = path.join(process.cwd(), 'config', 'guardrails.config.json');
+    if (fs.existsSync(cwdConfigPath)) return cwdConfigPath;
+
     const projectConfig = path.resolve(__dirname, '../../../config/guardrails.config.json');
     if (fs.existsSync(projectConfig)) return projectConfig;
-    
+
     return appDataConfigPath;
 }
 

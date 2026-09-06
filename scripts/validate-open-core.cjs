@@ -35,6 +35,7 @@ const STUB_MARKER = "OPEN_CORE_STUB";
 // Falls back to the historical OPEN_CORE_MANIFEST.md list if .zippy-private is absent.
 const FALLBACK_PROPRIETARY = [
   "src/lib/discovery/p2pDiscovery.js",
+  "src/lib/discovery/gossipDiscovery.js",
   "src/lib/zippycoin-wallet.js",
   "src/lib/trustScore.js",
   "src/lib/wallet-management.js",
@@ -69,73 +70,45 @@ function loadProprietaryPaths() {
 const PROPRIETARY_PATHS = loadProprietaryPaths();
 
 // ── 2. Internal-only paths that must never reach the open-core tree ───────────
-const INTERNAL_DIRS = [
-  "docs/_internal",
-  ".claude",
-  ".cursor",
-  ".voidspec",
-  ".autoclaw",
-  ".kilo",
-  "experiments",
-  "tester",
-  "test-results",
-  "data",
-  "logs",
-  "plans",        // internal planning docs
-  "sidecar",      // private — full Rust sidecar source
-  "src-tauri",    // private — Tauri shell + native deps
-];
+const {
+  BUILD_ARTIFACT_DIRS,
+  isInternalDirName,
+  isInternalRelPath,
+  isInternalFileName,
+  readScannableText,
+  selfTest: exclusionsSelfTest,
+} = require("./open-core-exclusions.cjs");
 
-const INTERNAL_FILE_REGEXES = [
-  // .env, .env.local, .env.mesh, etc. — but NOT .env.example (intentional public template)
-  /^\.env(?!\.example$)(\.|$)/i,
-  /^debug_/i,
-  /^startup.*\.log$/i,
-  /\.log$/i,
-  /\.sqlite(-shm|-wal)?$/i,
-  /^oauth-secrets\.json$/i,
-  /^db\.json$/i,
-  /\.bak$/i,
-  /\.resolved(\.|$)/i,
-  /^null$/,
-  /^diff_output\.txt$/i,
-  /^cargo_check_output\.txt$/i,
-  /^network-scan-report\.json$/i,
-  /^frontend_debug\.log$/i,
-  /^\.kilocodemodes$/i,
-  /^\.zippy-private$/i,
-];
+// Same failure mode as a dead leak pattern: a list that no longer covers what
+// it claims reports PASS. Prove it before scanning.
+exclusionsSelfTest();
 
 // ── 3. Leak-pattern strings that should never appear in shippable text ────────
-// These are pre-compiled regexes scanned over .md, .json, .yml, .yaml, .txt files
-// in the validated tree. Anchored to be specific (not just any digit-string).
-// Match 10.0.x.x but NOT CIDR notation (10.0.0.0/8, 10.0.0.0/16) which is
-// public RFC1918 reserved-range knowledge, legitimately used in trusted-LAN
-// allowlists and not an internal-infrastructure leak.
-const LEAK_PATTERNS = [
-  { re: /\b10\.0\.\d{1,3}\.\d{1,3}(?!\/\d)\b/g, label: "internal IP (10.0.x.x)" },
-  { re: /\bclaw\d{3}\b/g,               label: "internal hostname (clawNNN)" },
-  { re: /\b\/home\/sysop\//g,           label: "internal user path (/home/sysop/)" },
-  { re: /C:\\Users\\gotad\\/gi,         label: "internal user path (C:\\Users\\gotad\\)" },
-  { re: /\bk:\\Projects\\/gi,           label: "internal dev path (k:\\Projects\\)" },
-  { re: /\bs:\\Projects\\/gi,           label: "internal dev path (s:\\Projects\\)" },
-];
+// Shared with secrets-check.cjs, the PR-time gate. See scripts/leak-patterns.cjs
+// for why there is one definition and not two, and for why the needles are
+// assembled rather than spelled.
+const {
+  LEAK_PATTERNS,
+  selfTest: leakSelfTest,
+  appliesTo: leakAppliesTo,
+} = require("./leak-patterns.cjs");
 
-const LEAK_SCAN_EXTS = new Set([".md", ".txt", ".json", ".yml", ".yaml", ".js", ".cjs", ".mjs", ".ts"]);
+// This gate's failure mode is silence: a pattern that can no longer match prints
+// PASS and the push goes out. Prove every pattern still bites before scanning.
+leakSelfTest();
+
 // Dirs the leak-scan walker skips entirely. These either get excluded by
 // build-community.cjs already, are build-derived, or are vendor/lock.
-const LEAK_SCAN_SKIP_DIRS = new Set([
-  "node_modules", ".git", ".next", "stubs",
-  "community-dist",                 // gets blown away on every build:community
-  ".next-win-retry-2", ".next-win-retry-3", // Next.js build retries (gitignored)
-  ".claude", ".cursor", ".voidspec", ".autoclaw", ".kilo",
-  "src-tauri", "sidecar",           // private — not in community build
-  "_internal",                      // docs/_internal — internal-only docs
-  "plans", "logs", "data", "experiments", "tester", "test-results", "dist",
-  "out", "tmp", ".vscode", ".idea",
-  "_deprecated", "archive", "_archive", "_old", "backup",
-  "package-lock.json", "pnpm-lock.yaml",
-]);
+// Dirs the walker skips outright. BUILD ARTIFACTS AND VENDOR ONLY.
+//
+// This list used to also name .claude, .cursor, .voidspec, .autoclaw, .kilo,
+// plans, archive, sidecar, src-tauri and _internal — every one of them a
+// directory the internal-only check exists to catch. Skipping them meant the
+// walker could not report them, and the separate root-level path check saw
+// only the top of the tree, so the same directory nested one level down was
+// invisible to both. Anything internal belongs in open-core-exclusions.cjs, so
+// that it is REPORTED here rather than passed over.
+const LEAK_SCAN_SKIP_DIRS = new Set(BUILD_ARTIFACT_DIRS);
 
 // ──────────────────────────────────────────────────────────────────────────────
 function isDirEntry(rel) { return !path.extname(rel); }
@@ -195,13 +168,8 @@ for (const rel of PROPRIETARY_PATHS) {
   proprietaryViolations++;
 }
 
-// Check 2: internal-only paths
-for (const rel of INTERNAL_DIRS) {
-  if (exists(path.join(ROOT, rel))) {
-    console.error(`  [LEAK]  ${rel}/ — internal-only directory present in open-core tree`);
-    internalViolations++;
-  }
-}
+// Check 2 (internal-only directories and files) runs inside walk() below, so a
+// directory is caught wherever it sits rather than only at the tree root.
 
 function walk(dir, relBase = "") {
   let entries;
@@ -212,31 +180,37 @@ function walk(dir, relBase = "") {
     const rel = relBase ? path.join(relBase, entry.name) : entry.name;
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (isInternalDirName(entry.name) || isInternalRelPath(rel)) {
+        console.error(`  [LEAK]  ${rel}/ — internal-only directory present in open-core tree`);
+        internalViolations++;
+        continue; // do not descend; one finding per directory, not one per file
+      }
       walk(abs, rel);
       continue;
     }
     if (!entry.isFile()) continue;
 
     // file-name check
-    for (const re of INTERNAL_FILE_REGEXES) {
-      if (re.test(entry.name)) {
-        console.error(`  [LEAK]  ${rel} — internal-only filename matched ${re}`);
-        internalViolations++;
-        break;
-      }
+    if (isInternalFileName(entry.name)) {
+      console.error(`  [LEAK]  ${rel} — internal-only filename`);
+      internalViolations++;
     }
 
-    // leak-pattern scan on text files (Check 3)
-    const ext = path.extname(entry.name).toLowerCase();
-    if (!LEAK_SCAN_EXTS.has(ext)) continue;
-    let content;
-    try { content = fs.readFileSync(abs, "utf8"); } catch { continue; }
-    for (const { re, label } of LEAK_PATTERNS) {
-      const m = content.match(re);
+    // leak-pattern scan (Check 3). Every text file, decided by sniffing the
+    // bytes — not by an extension allowlist, which is how a .ps1 carrying a
+    // hardcoded checkout path shipped unscanned.
+    const content = readScannableText(abs);
+    if (content === null) continue;
+    for (const pat of LEAK_PATTERNS) {
+      if (!leakAppliesTo(pat, rel)) continue;
+      pat.re.lastIndex = 0;
+      const m = content.match(pat.re);
       if (m) {
-        console.error(`  [LEAK]  ${rel} — ${label} (${m.length}× e.g. "${m[0]}")`);
+        console.error(`  [LEAK]  ${rel} — ${pat.name} (${m.length}× e.g. "${m[0]}")`);
         leakViolations++;
-        break;
+        // No break. A file that carries two different needles used to report
+        // only the first, so a scrub-and-rerun loop kept "discovering" the same
+        // file and a reader could take one clean-looking line as the whole story.
       }
     }
   }

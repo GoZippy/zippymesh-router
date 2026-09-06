@@ -11,9 +11,14 @@ export async function GET() {
     let hasFirstRequest = false;
 
     if (db) {
-      // 1. At least one active provider connection
+      // 1. At least one active provider connection.
+      // NOTE: nothing in the codebase ever writes testStatus='success' — every
+      // real code path (connectionTester.js, providers/[id]/test/route.js,
+      // OAuth connect routes) writes 'active'. This previously made hasProvider
+      // permanently false, so the "Get Started" checklist could never reach
+      // 4/4 even on a fully-configured, actively-routing install.
       const providerRow = db.prepare(
-        `SELECT COUNT(*) as c FROM provider_connections WHERE isActive = 1 AND testStatus = 'success'`
+        `SELECT COUNT(*) as c FROM provider_connections WHERE isActive = 1 AND testStatus IN ('active', 'success')`
       ).get();
       hasProvider = (providerRow?.c ?? 0) > 0;
 

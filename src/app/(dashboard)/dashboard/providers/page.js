@@ -5,6 +5,7 @@ import Image from "next/image";
 import PropTypes from "prop-types";
 import { Card, CardSkeleton, Badge, Button, Input, Modal, Select } from "@/shared/components";
 import AddToPlaybookModal from "@/shared/components/AddToPlaybookModal";
+import AddLocalRuntime from "@/shared/components/providers/AddLocalRuntime";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { FREE_PROVIDERS, OPENAI_COMPATIBLE_PREFIX, ANTHROPIC_COMPATIBLE_PREFIX } from "@/shared/constants/providers";
 import { getProviderSignupUrl, getProviderIconUrl } from "@/shared/constants/provider-urls";
@@ -200,6 +201,14 @@ export default function ProvidersPage() {
       setSyncModelsLoading(false);
     }
   }, [syncModelsLoading, fetchData]);
+
+  // The one-call local-runtime path (POST /api/provider-nodes {type:"local"})
+  // already created the node AND its auto-managed provider connection, so a
+  // plain refetch is enough to make it show up in the grid.
+  const handleLocalRuntimeAdded = useCallback(async () => {
+    setDiscoveredCount(null);
+    await fetchData();
+  }, [fetchData]);
 
   const handleScan = async () => {
     setScanning(true);
@@ -639,6 +648,15 @@ export default function ProvidersPage() {
         </div>
       )}
 
+      {/* Local runtime fast path — the first thing most people need. Sits above
+          the provider grid so it is the first "add" affordance on the page;
+          the ~240 s LAN sweep is now the secondary link inside this card. */}
+      <AddLocalRuntime
+        onAdded={handleLocalRuntimeAdded}
+        onScanLan={handleScan}
+        scanning={scanning}
+      />
+
       {/* Filter/Sort Toolbar */}
       <Card padding="sm">
         <div className="flex flex-col gap-4">
@@ -722,16 +740,9 @@ export default function ProvidersPage() {
             >
               {syncModelsLoading ? "Syncing…" : "Sync all provider model lists"}
             </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={scanning ? "sync" : "travel_explore"}
-              onClick={handleScan}
-              disabled={scanning}
-              className={scanning ? "animate-spin-slow" : ""}
-            >
-              {scanning ? "Scanning..." : "Scan Local Network"}
-            </Button>
+            {/* "Scan Local Network" used to live here as a primary action. It is
+                a ~240 s /24 sweep, so it is now the secondary link inside the
+                "Add a local runtime" card above — same handler, same behaviour. */}
             <Button size="sm" icon="add" onClick={() => setShowAddAnthropicCompatibleModal(true)}>
               Add Anthropic Compatible
             </Button>

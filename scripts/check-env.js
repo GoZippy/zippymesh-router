@@ -53,7 +53,9 @@ function getConfiguredProviders() {
 
   const dbPath = path.join(dataDir, "db.json");
   if (!fs.existsSync(dbPath)) {
-    // Also check the local ./data directory (default DATA_DIR=./data in .env.example)
+    // Fall back to the in-repo ./data dir for legacy installs that set
+    // DATA_DIR=./data (shipped as the default in .env.example before
+    // 2026-07-04). New installs use the per-user OS data dir resolved above.
     const localDb = path.join(ROOT, "data", "db.json");
     if (fs.existsSync(localDb)) {
       return parseDbProviders(localDb);

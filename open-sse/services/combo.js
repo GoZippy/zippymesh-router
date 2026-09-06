@@ -4,6 +4,23 @@
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse, errorResponse } from "../utils/error.js";
+import { getRegistryModel } from "@/lib/modelRegistry.js";
+
+/**
+ * True if the model_registry marks provider/model as missing or deprecated.
+ * Fails open (returns false) on any lookup error or malformed modelStr, so a
+ * registry problem never blocks a combo request that would otherwise work.
+ */
+async function isKnownStale(modelStr) {
+  const slashIndex = modelStr.indexOf("/");
+  if (slashIndex <= 0) return false;
+  try {
+    const registryModel = await getRegistryModel(modelStr.slice(0, slashIndex), modelStr.slice(slashIndex + 1));
+    return registryModel?.lifecycleState === "missing" || registryModel?.lifecycleState === "deprecated";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Get combo models from combos data
@@ -42,6 +59,16 @@ export async function handleComboChat({ body, models, handleSingleModel, log }) 
 
   for (let i = 0; i < models.length; i++) {
     const modelStr = models[i];
+
+    // Skip a model the registry already knows is gone instead of burning a
+    // full failing round-trip before falling back to the next one.
+    if (await isKnownStale(modelStr)) {
+      log.warn("COMBO", `Model ${modelStr} is missing/deprecated in the registry, skipping`);
+      lastError = `${modelStr} is no longer offered by its provider`;
+      lastStatus = lastStatus || 404;
+      continue;
+    }
+
     log.info("COMBO", `Trying model ${i + 1}/${models.length}: ${modelStr}`);
 
     const result = await handleSingleModel(body, modelStr);

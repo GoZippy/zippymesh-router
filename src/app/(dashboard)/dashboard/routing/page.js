@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardSkeleton, Badge, Button, Input, Modal, Select, Toggle } from "@/shared/components";
 import { formatRequestError, getRelativeTime, safeFetchJson, safeFetchJsonAll } from "@/shared/utils";
 import TemplateGallery from "./components/TemplateGallery";
@@ -613,16 +613,62 @@ function PlaybooksTab() {
     const [showSimulateModal, setShowSimulateModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [editingPlaybook, setEditingPlaybook] = useState(null);
+    const [staleCountByPlaybook, setStaleCountByPlaybook] = useState({});
 
     useEffect(() => {
         fetchPlaybooks();
+    }, []);
+
+    // Batch-check every playbook's rule targets against the model registry so
+    // the card grid can flag a "N stale" warning without anyone having to
+    // open Manage Rules first. Combo-id targets are skipped here — the Combos
+    // page already surfaces staleness for those one level down.
+    const checkPlaybookLifecycle = useCallback(async (playbookList) => {
+        const allTargets = playbookList.flatMap((p) => (p.rules || []).map((r) => r.target).filter(Boolean));
+        if (allTargets.length === 0) {
+            setStaleCountByPlaybook({});
+            return;
+        }
+        try {
+            const [comboRes, lifecycleRes] = await safeFetchJsonAll([
+                { key: "combos", url: "/api/combos" },
+                {
+                    key: "lifecycle",
+                    url: "/api/models/lifecycle-check",
+                    options: {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ pairs: Array.from(new Set(allTargets)) }),
+                    },
+                },
+            ]);
+            const comboIds = new Set((comboRes.ok ? comboRes.data?.combos : [])?.map((c) => c.id) || []);
+            const lifecycleResults = lifecycleRes.ok ? (lifecycleRes.data?.results || {}) : {};
+
+            const counts = {};
+            for (const p of playbookList) {
+                const staleCount = (p.rules || []).filter((r) => {
+                    if (!r.target || comboIds.has(r.target)) return false;
+                    const state = lifecycleResults[r.target]?.lifecycleState;
+                    return state === "missing" || state === "deprecated";
+                }).length;
+                if (staleCount > 0) counts[p.id] = staleCount;
+            }
+            setStaleCountByPlaybook(counts);
+        } catch (err) {
+            console.error("Failed to check playbook target lifecycle:", err);
+        }
     }, []);
 
     const fetchPlaybooks = async () => {
         try {
             const response = await safeFetchJson("/api/routing/playbooks");
             const data = response.data || {};
-            if (response.ok) setPlaybooks(data.playbooks || []);
+            if (response.ok) {
+                const nextPlaybooks = data.playbooks || [];
+                setPlaybooks(nextPlaybooks);
+                checkPlaybookLifecycle(nextPlaybooks);
+            }
         } catch (err) {
             console.error("Failed to fetch playbooks:", err);
         } finally {
@@ -737,6 +783,16 @@ function PlaybooksTab() {
                             </div>
                             <p className="text-sm text-text-muted mb-4 line-clamp-2">{playbook.description || "No description provided."}</p>
 
+                            {staleCountByPlaybook[playbook.id] > 0 && (
+                                <div
+                                    className="flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 mb-2"
+                                    title="Open Manage Rules to see which target(s) need updating"
+                                >
+                                    <span className="material-symbols-outlined text-[14px]">warning</span>
+                                    {staleCountByPlaybook[playbook.id]} rule{staleCountByPlaybook[playbook.id] > 1 ? "s" : ""} target{staleCountByPlaybook[playbook.id] > 1 ? "" : "s"} an unavailable model
+                                </div>
+                            )}
+
                             <div className="flex items-center justify-between text-xs text-text-muted mt-auto">
                                 <span>{playbook.rules?.length || 0} Rules</span>
                                 <span>Updated {getRelativeTime(playbook.updatedAt)}</span>
@@ -824,6 +880,7 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
     const [combos, setCombos] = useState([]);
     const [loadingTargets, setLoadingTargets] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [targetLifecycleMap, setTargetLifecycleMap] = useState({});
 
     // New rule state
     const [newType, setNewType] = useState("intent");
@@ -837,11 +894,45 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
         }
     }, [isOpen, playbook]);
 
+    // Flag rule targets that point at a model no longer offered by its provider.
+    // A target is either a combo id (checked one level down via combo.models
+    // when that combo card renders) or a raw "provider/model" id — only the
+    // latter is checked here since combos already surface their own staleness.
+    useEffect(() => {
+        if (!isOpen || rules.length === 0) {
+            setTargetLifecycleMap({});
+            return;
+        }
+        const comboIds = new Set(combos.map((c) => c.id));
+        const modelTargets = Array.from(new Set(
+            rules.map((r) => r.target).filter((t) => t && !comboIds.has(t))
+        ));
+        if (modelTargets.length === 0) {
+            setTargetLifecycleMap({});
+            return;
+        }
+        (async () => {
+            try {
+                const res = await safeFetchJson("/api/models/lifecycle-check", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pairs: modelTargets }),
+                });
+                if (res.ok) setTargetLifecycleMap(res.data?.results || {});
+            } catch (err) {
+                console.error("Failed to check rule target lifecycle:", err);
+            }
+        })();
+    }, [isOpen, rules, combos]);
+
     const fetchTargets = async () => {
         setLoadingTargets(true);
         try {
             const [modelsResponse, combosResponse] = await safeFetchJsonAll([
-                { key: "models", url: "/api/v1/models" },
+                // Routing rules may target models that are configured but not
+                // currently live; `/v1/models` (unqualified) is now the live,
+                // servable set only, so fetch the full catalogue here.
+                { key: "models", url: "/api/v1/models?all=1" },
                 { key: "combos", url: "/api/combos" },
             ]);
             if (modelsResponse.ok) {
@@ -925,13 +1016,24 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                         </div>
                     ) : (
                         <div className="flex flex-col gap-2">
-                            {rules.map((rule, idx) => (
+                            {rules.map((rule, idx) => {
+                                const targetLifecycle = targetLifecycleMap[rule.target]?.lifecycleState;
+                                const isStaleTarget = targetLifecycle === "missing" || targetLifecycle === "deprecated";
+                                return (
                                 <div key={idx} className="flex items-center justify-between p-3 bg-white dark:bg-white/5 border rounded-lg group">
                                     <div className="flex items-center gap-3">
                                         <Badge variant="secondary" size="sm">{rule.type}</Badge>
                                         <span className="text-sm font-mono text-purple-600 dark:text-purple-400">"{Array.isArray(rule.value) ? rule.value.join(", ") : rule.value}"</span>
                                         <span className="material-symbols-outlined text-xs text-text-muted">arrow_forward</span>
-                                        <span className="text-sm font-medium">{rule.target}</span>
+                                        <span className={`text-sm font-medium ${isStaleTarget ? "text-amber-600 dark:text-amber-400" : ""}`}>{rule.target}</span>
+                                        {isStaleTarget && (
+                                            <span
+                                                className="material-symbols-outlined text-[15px] text-amber-600 dark:text-amber-400"
+                                                title={`This model is no longer offered by its provider (${targetLifecycle}). This rule will fall through to the next match until you update the target.`}
+                                            >
+                                                warning
+                                            </span>
+                                        )}
                                     </div>
                                     <button
                                         onClick={() => handleRemoveRule(idx)}
@@ -940,7 +1042,8 @@ function ManageRulesModal({ isOpen, playbook, onClose, onUpdate }) {
                                         <span className="material-symbols-outlined text-sm">close</span>
                                     </button>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
                 </div>

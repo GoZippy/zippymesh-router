@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSidecarUrl } from "@/lib/sidecar";
+import { getSidecarUrl, sidecarAuthHeaders } from "@/lib/sidecar";
 import { apiError } from "@/lib/apiErrors.js";
 
 const SIDECAR_URL = getSidecarUrl();
@@ -15,7 +15,7 @@ export async function POST(req) {
 
         const res = await fetch(`${SIDECAR_URL}/peers/connect`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...sidecarAuthHeaders() },
             body: JSON.stringify({ multiaddr }),
         });
 

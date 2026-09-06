@@ -1,14 +1,30 @@
-
-
+/**
+ * /api/cli-tools/openclaw-settings — read/write the operator's
+ * ~/.openclaw/openclaw.json so the CLI Tools dashboard card can point OpenClaw
+ * at this router.
+ *
+ * AUTH (adversarial review 2026-08-30, item 16f): this path used to sit on
+ * src/middleware.js's PUBLIC list — the only member of the /api/cli-tools/*
+ * group that did — while its POST fetched a caller-supplied `baseUrl` with a
+ * caller-supplied bearer (SSRF) and then persisted a caller-supplied `apiKey`
+ * to disk. It is now off that list, and every verb is additionally wrapped in
+ * requireAuth() rather than relying on the edge gate alone (the edge can prove
+ * an API key is authentic but cannot see revocation — see src/middleware.js).
+ */
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import os from "os";
+import { requireAuth } from "@/lib/auth/middleware.js";
 
 const execAsync = promisify(exec);
 
-const getOpenClawDir = () => `${os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]()}/.openclaw`;
+// Plain os.homedir(). This was written as os[String.fromCharCode(...)]() with a
+// comment about evading static tracing; that only blinded the repo's own
+// secret/path scanners (adversarial review item 16h) and hid nothing from an
+// attacker, who reads the response body.
+const getOpenClawDir = () => `${os.homedir()}/.openclaw`;
 const getOpenClawSettingsPath = () => `${getOpenClawDir()}/openclaw.json`;
 
 // Check if openclaw CLI is installed
@@ -35,6 +51,41 @@ const readSettings = async () => {
   }
 };
 
+/**
+ * Recursively blank out credential-shaped values before returning a config file
+ * to an HTTP caller.
+ *
+ * SECURITY (2026-08-30 audit, finding C2): GET on this route is in the edge
+ * middleware's PUBLIC list, and it returned the operator's entire
+ * `~/.openclaw/openclaw.json` verbatim — including
+ * `models.providers.<name>.apiKey` for EVERY provider configured in OpenClaw,
+ * not just ZippyMesh's. That is a full third-party API-key dump to any
+ * unauthenticated caller that can reach the port.
+ *
+ * The dashboard card that consumes this response only reads
+ * `models.providers.zippymesh.baseUrl` and `agents.defaults.model.primary`
+ * (src/app/(dashboard)/dashboard/cli-tools/components/OpenClawToolCard.js), so
+ * replacing secret values with a boolean-ish placeholder keeps the UI working
+ * while removing the disclosure. Structure is preserved so a caller can still
+ * see WHICH providers have a key configured.
+ */
+const SECRET_KEY_PATTERN = /(api[_-]?key|secret|token|password|passphrase|credential|authorization)/i;
+
+const redactSecrets = (value) => {
+  if (Array.isArray(value)) return value.map(redactSecrets);
+  if (!value || typeof value !== "object") return value;
+
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (SECRET_KEY_PATTERN.test(k) && typeof v === "string") {
+      out[k] = v.length > 0 ? "__REDACTED__" : v;
+    } else {
+      out[k] = redactSecrets(v);
+    }
+  }
+  return out;
+};
+
 // Check if settings has ZippyMesh config
 const hasZippyMeshConfig = (settings) => {
   if (!settings || !settings.models || !settings.models.providers) return false;
@@ -42,7 +93,7 @@ const hasZippyMeshConfig = (settings) => {
 };
 
 // GET - Check openclaw CLI and read current settings
-export async function GET() {
+async function getHandler() {
   try {
     const isInstalled = await checkOpenClawInstalled();
 
@@ -58,7 +109,9 @@ export async function GET() {
 
     return NextResponse.json({
       installed: true,
-      settings,
+      // hasZippyMesh is computed from the REAL settings; only the copy that
+      // leaves the process is redacted. See redactSecrets above.
+      settings: redactSecrets(settings),
       hasZippyMesh: hasZippyMeshConfig(settings),
       settingsPath: getOpenClawSettingsPath(),
     });
@@ -69,7 +122,7 @@ export async function GET() {
 }
 
 // POST - Update ZippyMesh settings (merge with existing settings)
-export async function POST(request) {
+async function postHandler(request) {
   try {
     const { baseUrl, apiKey, model } = await request.json();
 
@@ -180,7 +233,7 @@ export async function POST(request) {
 }
 
 // DELETE - Remove ZippyMesh settings only (keep other settings)
-export async function DELETE() {
+async function deleteHandler() {
   try {
     const settingsPath = getOpenClawSettingsPath();
 
@@ -226,3 +279,9 @@ export async function DELETE() {
     return NextResponse.json({ error: "Failed to reset openclaw settings" }, { status: 500 });
   }
 }
+
+// Route-level guard on every verb — see the header. requireAuth also applies
+// the shared 300/min per-peer dashboard budget.
+export const GET = requireAuth(getHandler);
+export const POST = requireAuth(postHandler);
+export const DELETE = requireAuth(deleteHandler);

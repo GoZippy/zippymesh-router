@@ -255,6 +255,11 @@ export function normalizeUsageEntry(entry = {}) {
     requestId: entry.requestId || generateRequestId(),
     provider: entry.provider || "unknown",
     connectionId: entry.connectionId || null,
+    // OPTIONAL per-user attribution. Defaults to null so legacy call sites that
+    // never pass userId continue to work unchanged. Records persisted before this
+    // field existed simply lack `userId`; readers MUST treat a missing/null value
+    // as 'unattributed' (see UNATTRIBUTED + summarizeUsage()).
+    userId: entry.userId ?? null,
     model: entry.model || "unknown",
     timestamp: entry.timestamp || new Date().toISOString(),
     latencyMs: safeNumber(entry.latencyMs ?? entry.latency, 0),
@@ -791,4 +796,101 @@ export async function getUsageStats() {
   }
 
   return stats;
+}
+
+/**
+ * Bucket key used for usage records that carry no `userId` — i.e. records written
+ * before per-user attribution existed, or by code paths with no authenticated
+ * user. Reading a missing/null/empty `userId` MUST resolve to this constant so
+ * legacy data is never dropped or mis-bucketed.
+ */
+export const UNATTRIBUTED = "unattributed";
+
+/** Resolve a record's attribution bucket, fail-safe for legacy/missing values. */
+function resolveUserBucket(entry) {
+  const uid = entry?.userId;
+  if (uid === undefined || uid === null || uid === "") return UNATTRIBUTED;
+  return String(uid);
+}
+
+/** Pull the prompt-token count off a record, tolerating legacy/partial shapes. */
+function entryPromptTokens(entry) {
+  return safeNumber(
+    entry?.ourPromptTokens ?? entry?.tokens?.prompt_tokens ?? entry?.tokens?.input_tokens,
+    0
+  );
+}
+
+/** Pull the completion-token count off a record, tolerating legacy/partial shapes. */
+function entryCompletionTokens(entry) {
+  return safeNumber(
+    entry?.ourCompletionTokens ?? entry?.tokens?.completion_tokens ?? entry?.tokens?.output_tokens,
+    0
+  );
+}
+
+/** Pull a per-record cost off the record if one was persisted (else 0). */
+function entryCostUsd(entry) {
+  return safeNumber(entry?.ourExpectedCostUsd ?? entry?.providerReportedCostUsd, 0);
+}
+
+function emptyTotals() {
+  return { requests: 0, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost: 0 };
+}
+
+function accumulate(totals, entry) {
+  const prompt = entryPromptTokens(entry);
+  const completion = entryCompletionTokens(entry);
+  totals.requests += 1;
+  totals.prompt_tokens += prompt;
+  totals.completion_tokens += completion;
+  totals.total_tokens += prompt + completion;
+  totals.cost += entryCostUsd(entry);
+}
+
+/**
+ * Aggregate usage with optional per-user filtering.
+ *
+ * Back-compat: records written before per-user attribution existed have no
+ * `userId`; they are bucketed under UNATTRIBUTED ('unattributed') rather than
+ * dropped. Reading never throws on a missing/legacy field — every accessor is
+ * null-tolerant.
+ *
+ * @param {object} [options]
+ * @param {string|number|null} [options.userId]  If provided (and not null),
+ *        only records attributed to that user are aggregated into `totals`.
+ *        Pass UNATTRIBUTED to target legacy/unattributed records explicitly.
+ * @returns {Promise<{
+ *   totals: { requests:number, prompt_tokens:number, completion_tokens:number, total_tokens:number, cost:number },
+ *   byUser: Record<string, { requests:number, prompt_tokens:number, completion_tokens:number, total_tokens:number, cost:number }>,
+ *   filteredUserId: string|null
+ * }>}
+ */
+export async function summarizeUsage({ userId } = {}) {
+  const db = await getUsageDb();
+  const history = Array.isArray(db?.data?.history) ? db.data.history : [];
+
+  // Normalize the requested filter (null/undefined => no filter).
+  const wantUser =
+    userId === undefined || userId === null || userId === "" ? null : String(userId);
+
+  const totals = emptyTotals();
+  const byUser = {};
+
+  for (const entry of history) {
+    const bucket = resolveUserBucket(entry);
+
+    // Always build the full per-user breakdown so admins see every bucket,
+    // including 'unattributed'.
+    if (!byUser[bucket]) byUser[bucket] = emptyTotals();
+    accumulate(byUser[bucket], entry);
+
+    // `totals` reflects the (optional) filter: when filtering, only the matching
+    // user's records roll up; otherwise everything does.
+    if (wantUser === null || bucket === wantUser) {
+      accumulate(totals, entry);
+    }
+  }
+
+  return { totals, byUser, filteredUserId: wantUser };
 }

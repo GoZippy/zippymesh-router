@@ -69,6 +69,22 @@ ENV ZIPPY_PORT=20128
 ENV DATA_DIR=/app/data
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Bind inside the container. REQUIRED, and not a loosening.
+#
+# The standalone entry point that `CMD` runs is patched by
+# scripts/prepare-standalone.cjs to resolve ZIPPY_BIND_HOST > HOST > HOSTNAME >
+# 127.0.0.1 — a loopback default, which is right for a laptop install and WRONG
+# for a container: a process bound to the container's loopback is unreachable
+# from the host, so every published port would refuse the connection and the
+# HEALTHCHECK below (which curls localhost INSIDE the container) would be the
+# only thing that could still reach it.
+#
+# Containment is the PUBLISH, not the bind: docker-compose.yml maps
+# "127.0.0.1:20128:20128", so the port is reachable from the host only. Change
+# that mapping — not this line — if you intend to expose the node to a network,
+# and enable login at /setup first.
+ENV HOST=0.0.0.0
+
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["/sbin/dumb-init", "--"]
 

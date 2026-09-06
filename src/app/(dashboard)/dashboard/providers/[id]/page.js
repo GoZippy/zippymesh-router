@@ -353,6 +353,7 @@ export default function ProviderDetailPage() {
   const [dynamicModelsUpdatedAt, setDynamicModelsUpdatedAt] = useState(null);
   const [refreshModelsTrigger, setRefreshModelsTrigger] = useState(0);
   const [refreshModelsSyncing, setRefreshModelsSyncing] = useState(false);
+  const [refreshModelsWarning, setRefreshModelsWarning] = useState(null);
   const [modelSearch, setModelSearch] = useState("");
   const [modelSort, setModelSort] = useState("name-asc");
   const [modelFilter, setModelFilter] = useState("all"); // all, free, premium, code, chat, vision
@@ -528,7 +529,10 @@ export default function ProviderDetailPage() {
     const fetchDynamicModels = async () => {
       try {
         setDynamicModelsLoading(true);
-        const response = await safeFetchJson("/v1/models");
+        // `/v1/models` now lists only ids the install can serve right now;
+        // this page enumerates a provider's *catalogue* to pick from, so ask
+        // for the full inventory explicitly (2026-08-30 routing fix).
+        const response = await safeFetchJson("/v1/models?all=1");
         if (!response.ok) {
           console.log(formatRequestError("Failed to load models", response, "Failed to load models"));
           setDynamicModels([]);
@@ -568,13 +572,32 @@ export default function ProviderDetailPage() {
   const handleRefreshModels = useCallback(async () => {
     if (refreshModelsSyncing || connections.length === 0) return;
     setRefreshModelsSyncing(true);
+    setRefreshModelsWarning(null);
     try {
       const res = await safeFetchJson(`/api/provider-sync/${providerId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force: true }),
       });
-      if (res.ok) setRefreshModelsTrigger((t) => t + 1);
+      if (res.ok) {
+        setRefreshModelsTrigger((t) => t + 1);
+        // /api/provider-sync always resolves 200 even when every connection's
+        // model fetch failed server-side — the real per-connection error
+        // lives in modelSync.warnings, which the caller previously never
+        // read, so a fully-failed sync looked identical to a successful one.
+        const syncWarnings = res.data?.modelSync?.warnings || [];
+        if (syncWarnings.length > 0) {
+          setRefreshModelsWarning(
+            syncWarnings.length === 1
+              ? syncWarnings[0].error
+              : `${syncWarnings.length} connections failed to sync: ${syncWarnings.map((w) => w.error).join("; ")}`
+          );
+        }
+      } else {
+        setRefreshModelsWarning(res.data?.error?.message || res.data?.error || "Model refresh failed");
+      }
+    } catch (error) {
+      setRefreshModelsWarning(error?.message || "Model refresh failed");
     } finally {
       setRefreshModelsSyncing(false);
     }
@@ -1362,8 +1385,29 @@ export default function ProviderDetailPage() {
             <span className="text-[11px] text-text-muted">
               sync {dynamicModelsLoading ? "..." : syncLabel}
             </span>
+            {connections.length > 0 && (
+              <button
+                onClick={handleRefreshModels}
+                disabled={refreshModelsSyncing}
+                className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
+                title="Refresh available models for this provider"
+              >
+                <span className={`material-symbols-outlined text-[15px] ${refreshModelsSyncing ? "spin-animation" : ""}`}>
+                  sync
+                </span>
+              </button>
+            )}
           </div>
         </div>
+        {refreshModelsWarning && (
+          <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 mb-3">
+            <span className="material-symbols-outlined text-[15px] shrink-0 mt-0.5">warning</span>
+            <span className="flex-1">{refreshModelsWarning}</span>
+            <button onClick={() => setRefreshModelsWarning(null)} className="text-amber-700 dark:text-amber-400 hover:opacity-70 shrink-0">
+              <span className="material-symbols-outlined text-[15px]">close</span>
+            </button>
+          </div>
+        )}
         {renderModelsSection()}
 
       </Card>
@@ -2172,7 +2216,7 @@ function ConnectionRow({ connection, isOAuth, providerNode, isFirst, isLast, isT
           onChange={onToggleActive}
           title={(connection.isEnabled ?? true) ? "Disable connection" : "Enable connection"}
         />
-        <div className="flex gap-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex gap-1 ml-1 opacity-40 group-hover:opacity-100 transition-opacity">
           <button
             onClick={onTest}
             disabled={isTesting}

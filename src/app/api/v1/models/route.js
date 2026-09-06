@@ -1,29 +1,55 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { resolveProviderId } from "@/shared/constants/providers.js";
-import { getProviderConnections, getCombos, getDb, getRoutingPlaybooks, getProviderNodes } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getDb, getRoutingPlaybooks, getProviderNodes, getSettings } from "@/lib/localDb";
 import { getSidecarPeers } from "@/lib/sidecar";
 import { getRegistryModels } from "@/lib/modelRegistry.js";
 import { maybeAutoRefreshProviderCatalog } from "@/lib/providers/sync";
+import { isOfflineMode } from "@/lib/privacy/offlineMode.js";
+import { getLocalModelIndex } from "@/lib/routing/localModelIndex.js";
+import { requireApiKey } from "@/lib/auth/apiKey.js";
+import { apiError } from "@/lib/apiErrors.js";
 
 /**
- * Cloud providers with public/authenticated model endpoints
+ * Cloud providers with public/authenticated model endpoints.
+ *
+ * `public` no longer means "fetch unconditionally" (changed 2026-08-30). It used
+ * to, which meant EVERY `GET /v1/models` call — on an install with no Kilo
+ * connection, no cloud provider at all, and a user who chose ZMLR to keep their
+ * traffic local — made an outbound request to api.kilo.ai and folded its ~366
+ * models into the list. Now a cloud catalogue is fetched only when the operator
+ * has an active connection for it, or when the caller explicitly asks for the
+ * whole catalogue with `?all=1`, and never in offline mode.
  */
 const CLOUD_MODEL_ENDPOINTS = {
   kilo: { url: "https://api.kilo.ai/api/gateway/models", public: true },
   // Add more providers with models endpoints as needed
 };
 
+/** Cloud catalogue TTL. The remote lists change on the scale of days; re-fetching
+ *  them per request is what made this route a 5–28 s call. */
+const CLOUD_CACHE_TTL_MS = 10 * 60 * 1000;
+/** @type {Map<string, {fetchedAt: number, models: Array|null}>} */
+const cloudModelCache = new Map();
+
+/** Exported for tests. */
+export function __clearModelsRouteCaches() {
+  cloudModelCache.clear();
+}
+
 /**
- * Fetch models from a cloud provider's models endpoint
+ * Fetch models from a cloud provider's models endpoint (TTL-cached).
  */
 async function fetchCloudModels(providerId, connection) {
   const config = CLOUD_MODEL_ENDPOINTS[providerId];
   if (!config) return null;
-  
+
+  const cached = cloudModelCache.get(providerId);
+  if (cached && Date.now() - cached.fetchedAt < CLOUD_CACHE_TTL_MS) return cached.models;
+
   const timeout = 5000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
+
   try {
     const headers = {};
     const apiKey = typeof connection?.apiKey === "string" ? connection.apiKey.trim() : connection?.apiKey;
@@ -31,62 +57,27 @@ async function fetchCloudModels(providerId, connection) {
     if (apiKey) {
       headers["Authorization"] = `Bearer ${apiKey}`;
     }
-    
+
     const res = await fetch(config.url, { signal: controller.signal, headers });
-    if (!res.ok) return null;
-    
+    if (!res.ok) {
+      cloudModelCache.set(providerId, { fetchedAt: Date.now(), models: null });
+      return null;
+    }
+
     const data = await res.json();
     const raw = data?.data ?? data?.models ?? data?.results ?? (Array.isArray(data) ? data : []);
     const list = Array.isArray(raw) ? raw : [];
-    return list.map(m => ({
+    const models = list.map(m => ({
       id: m.id,
       name: m.name || m.id,
       owned_by: m.owned_by,
     }));
+    cloudModelCache.set(providerId, { fetchedAt: Date.now(), models });
+    return models;
   } catch (e) {
     console.log(`Failed to fetch models from ${providerId}:`, e.message);
+    cloudModelCache.set(providerId, { fetchedAt: Date.now(), models: null });
     return null;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-/**
- * Fetch models from a local provider (Ollama or LMStudio)
- * Uses longer timeout for remote URLs (network/internet)
- */
-async function fetchLocalModels(node) {
-  const isLocalhost = node.baseUrl?.includes("localhost") || node.baseUrl?.includes("127.0.0.1");
-  const timeout = isLocalhost ? 3000 : 8000;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  
-  try {
-    if (node.apiType === "ollama") {
-      // Ollama uses /api/tags
-      const res = await fetch(`${node.baseUrl}/api/tags`, { signal: controller.signal });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.models || []).map(m => ({
-        id: m.name,
-        name: m.name,
-        size: m.size,
-        modified: m.modified_at,
-      }));
-    } else {
-      // OpenAI-compatible (LMStudio) uses /v1/models
-      const url = node.baseUrl.endsWith('/v1') ? `${node.baseUrl}/models` : `${node.baseUrl}/v1/models`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.data || []).map(m => ({
-        id: m.id,
-        name: m.id,
-        owned_by: m.owned_by,
-      }));
-    }
-  } catch (e) {
-    return [];
   } finally {
     clearTimeout(timeoutId);
   }
@@ -129,16 +120,69 @@ export async function OPTIONS() {
 
 /**
  * GET /v1/models - OpenAI compatible models list
- * Returns models from all active providers and combos in OpenAI format.
- * Clients must use the exact `id` from this response as the `model` in POST /v1/chat/completions.
+ *
+ * Returns the models this install can actually serve, in OpenAI format. Clients
+ * must use the exact `id` from this response as the `model` in
+ * `POST /v1/chat/completions`.
+ *
+ * Reworked 2026-08-30 (was 7–28 s, phoned home on every call, and listed 475
+ * models an install with zero providers could not serve):
+ *
+ *  - **Only configured inventory.** Static `PROVIDER_MODELS` entries are emitted
+ *    only for providers with an active connection. An install with no cloud
+ *    provider gets its local runtimes, its playbooks and nothing else.
+ *  - **`?all=1` / `?catalog=1`** restores the full static catalogue plus the
+ *    public cloud catalogues, for a UI that wants to show what *could* be added.
+ *  - **No blocking catalogue sync.** `maybeAutoRefreshProviderCatalog()` waits up
+ *    to 30 s of deliberate jitter before it even starts; it is now fire-and-forget
+ *    and is skipped entirely in offline mode.
+ *  - **Cloud catalogues are cached** for 10 min and fetched only for providers
+ *    the operator actually connected (or under `?all=1`). `ZIPPY_OFFLINE=true` /
+ *    `settings.offlineMode` blocks the fetch outright.
+ *  - **Gated by `requireApiKey`.** When the operator turns the setting on, this
+ *    route needs the same `Authorization: Bearer <router key>` as chat; it used
+ *    to leak the whole provider inventory unauthenticated.
+ *
+ * Model ids: `<provider>/<provider-local-id>` (`ollama/qwen3.5:4b`). The bare
+ * provider-local id also resolves on `POST /v1/chat/completions` when exactly one
+ * registered provider serves it — it is deliberately NOT advertised here,
+ * because the qualified form is the one that is always unambiguous.
  */
-export async function GET() {
+export async function GET(request) {
   try {
-    // Keep model inventory fresh for all UI/API consumers hitting /v1/models.
+    const url = (() => { try { return new URL(request?.url || "http://local/v1/models"); } catch { return null; } })();
+    const wantAll = url ? (url.searchParams.get("all") === "1" || url.searchParams.get("catalog") === "1") : false;
+
+    let settings = {};
     try {
-      await maybeAutoRefreshProviderCatalog();
-    } catch (refreshError) {
-      console.log("Provider catalog auto-refresh skipped:", refreshError?.message || refreshError);
+      settings = (await getSettings()) || {};
+    } catch (e) {
+      console.log("Could not read settings for /v1/models:", e?.message || e);
+    }
+
+    // Same gate as POST /v1/chat/completions (src/sse/handlers/chat.js), and the
+    // same error envelope as everything else on /v1 — apiError() so `type`,
+    // `code`, `request_id` and the CORS header come from one place.
+    if (settings.requireApiKey) {
+      try {
+        await requireApiKey(request);
+      } catch (err) {
+        return apiError(request, err?.code || 401, err?.message || "Missing API key");
+      }
+    }
+
+    const offline = isOfflineMode(process.env, settings);
+
+    // Keep model inventory fresh for all UI/API consumers hitting /v1/models —
+    // but NEVER on the caller's clock. maybeAutoRefreshProviderCatalog() sleeps
+    // a random 0–30 s jitter before syncing every configured provider; awaiting
+    // it here is what made this route take 7–28 s.
+    if (!offline) {
+      Promise.resolve()
+        .then(() => maybeAutoRefreshProviderCatalog())
+        .catch((refreshError) => {
+          console.log("Provider catalog auto-refresh skipped:", refreshError?.message || refreshError);
+        });
     }
 
     // Get active provider connections
@@ -246,54 +290,38 @@ export async function GET() {
       }
     }
 
-    // Add local provider models (Ollama, LMStudio) - include localhost and remote (network/internet)
-    let localNodes = [];
+    // Add local provider models (Ollama, LMStudio) — include localhost and
+    // remote (network/internet). Served from the shared TTL-cached index so a
+    // warm call does not re-probe every runtime.
     try {
-      localNodes = await getProviderNodes();
-      localNodes = localNodes.filter(n => n.baseUrl && n.type === "local");
-    } catch (e) {
-      console.log("Could not fetch local provider nodes");
-    }
-
-    // Fetch models from each local provider in parallel
-    const localModelPromises = localNodes.map(async (node) => {
-      const nodeModels = await fetchLocalModels(node);
-      const prefix = node.apiType === "ollama" ? "ollama" : "lmstudio";
-      return nodeModels.map(m => ({
-        id: `${prefix}/${m.id}`,
-        object: "model",
-        created: timestamp,
-        owned_by: prefix,
-        permission: [],
-        root: m.id,
-        parent: null,
-        zippy: { source: "local", baseUrl: node.baseUrl, nodeName: node.name },
-      }));
-    });
-
-    const localModelResults = await Promise.all(localModelPromises);
-    const seenLocalModels = new Set();
-    for (const nodeModels of localModelResults) {
-      for (const model of nodeModels) {
-        // Dedupe in case multiple nodes have same model
-        if (!seenLocalModels.has(model.id)) {
-          seenLocalModels.add(model.id);
-          models.push(model);
-        }
+      const index = await getLocalModelIndex();
+      for (const entry of index.entries) {
+        models.push({
+          id: entry.id,
+          object: "model",
+          created: timestamp,
+          owned_by: entry.prefix,
+          permission: [],
+          root: entry.tag,
+          parent: null,
+          zippy: { source: "local", baseUrl: entry.node?.baseUrl, nodeName: entry.node?.name },
+        });
       }
+    } catch (e) {
+      console.log("Could not fetch local provider models:", e?.message || e);
     }
 
-    // Fetch models from cloud providers with dynamic endpoints (Kilo, etc.)
+    // Fetch models from cloud providers with dynamic endpoints (Kilo, etc.).
+    // Only for providers the operator actually connected — unless ?all=1 asks
+    // for the whole catalogue — and never while offline.
     const cloudProviderIds = Object.keys(CLOUD_MODEL_ENDPOINTS);
     const cloudFetchPromises = [];
-    
+
     for (const providerId of cloudProviderIds) {
-      // Check if this provider is active
       const conn = connections.find(c => c.provider === providerId);
-      if (connections.length > 0 && !conn && !CLOUD_MODEL_ENDPOINTS[providerId].public) {
-        continue; // Skip non-public providers without active connection
-      }
-      
+      const allowed = !offline && (conn || (wantAll && CLOUD_MODEL_ENDPOINTS[providerId].public));
+      if (!allowed) continue;
+
       cloudFetchPromises.push(
         fetchCloudModels(providerId, conn).then(cloudModels => ({
           providerId,
@@ -301,7 +329,7 @@ export async function GET() {
         }))
       );
     }
-    
+
     const cloudResults = await Promise.all(cloudFetchPromises);
     const dynamicProviders = new Set();
     
@@ -346,13 +374,19 @@ export async function GET() {
     }
 
 
-    // Add provider models (skip providers we already fetched dynamically)
+    // Add provider models (skip providers we already fetched dynamically).
+    //
+    // Fixed 2026-08-30: the old condition was
+    // `if (connections.length > 0 && !activeAliases.has(alias)) continue;`
+    // — i.e. with ZERO connections it fell through and listed EVERY model in the
+    // static catalogue, ~92 models nobody held a key for, on a fresh install.
+    // A model id in this list now means "this install can serve it". `?all=1`
+    // brings back the full catalogue for UIs that want to show what could be added.
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       // Skip if we already fetched this provider dynamically
       if (dynamicProviders.has(alias)) continue;
-      
-      // If we have active providers, only include those; otherwise include all
-      if (connections.length > 0 && !activeAliases.has(alias)) {
+
+      if (!wantAll && !activeAliases.has(alias)) {
         continue;
       }
 

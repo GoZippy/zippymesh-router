@@ -17,13 +17,84 @@ export function parseSSELine(line) {
   }
 }
 
+/**
+ * Vendor spellings of "thinking tokens" seen on an OpenAI-shaped delta.
+ *
+ * Ollama (>= 0.32) streams a thinking model's reasoning as `delta.reasoning`.
+ * DeepSeek, and every client that grew support for it, use
+ * `delta.reasoning_content`. Before 2026-08-30 ZMLR's stream filter only knew
+ * `reasoning_content`, so every Ollama reasoning frame failed
+ * `hasValuableContent()` and was dropped: raw Ollama emitted 107 `data:` frames
+ * for a prompt where ZMLR emitted 5, and the stream sat silent for the whole
+ * thinking phase (docs/_internal/OPENAI_COMPAT_CONTRACT_2026-08-30.md §5,
+ * defect 6).
+ */
+const REASONING_DELTA_ALIASES = ["reasoning", "reasoning_content", "thinking", "thought"];
+
+/**
+ * Normalise an OpenAI-shaped stream chunk in place so every vendor spelling of
+ * the reasoning delta arrives at the client as `delta.reasoning_content` — the
+ * de-facto OpenAI-compatible field.
+ *
+ * `delta.content` is left exactly as the provider sent it, so concatenating
+ * `delta.content` across the stream still yields the assistant's answer and
+ * nothing else.
+ *
+ * @param {object} chunk - Parsed `chat.completion.chunk`
+ * @returns {boolean} true when the chunk was modified (caller must re-serialise)
+ */
+export function normalizeOpenAIChunk(chunk) {
+  const delta = chunk?.choices?.[0]?.delta;
+  if (!delta || typeof delta !== "object") return false;
+
+  let mutated = false;
+  for (const alias of REASONING_DELTA_ALIASES) {
+    if (alias === "reasoning_content") continue;
+    const value = delta[alias];
+    if (typeof value !== "string" || value === "") {
+      // Still drop an empty vendor field so it never reaches the client.
+      if (alias in delta && (value === "" || value === null)) {
+        delete delta[alias];
+        mutated = true;
+      }
+      continue;
+    }
+    delta.reasoning_content = (delta.reasoning_content || "") + value;
+    delete delta[alias];
+    mutated = true;
+  }
+
+  return mutated;
+}
+
+/**
+ * Force an OpenAI-shaped chunk (or non-streaming body) to report the
+ * provider-qualified model id the router resolved, rather than the
+ * provider-local tag the provider echoes back.
+ *
+ * @param {object} chunk
+ * @param {string|null} clientModelId e.g. "ollama/qwen3.5:4b"
+ * @returns {boolean} true when the chunk was modified
+ */
+export function applyClientModelToChunk(chunk, clientModelId) {
+  if (!chunk || typeof chunk !== "object") return false;
+  if (typeof clientModelId !== "string" || !clientModelId) return false;
+  if (chunk.model === clientModelId) return false;
+  if (chunk.model === undefined) return false;
+  chunk.model = clientModelId;
+  return true;
+}
+
 // Check if chunk has valuable content (not empty)
 export function hasValuableContent(chunk, format) {
   // OpenAI format
   if (format === FORMATS.OPENAI && chunk.choices?.[0]?.delta) {
     const delta = chunk.choices[0].delta;
+    const hasReasoning = REASONING_DELTA_ALIASES.some(
+      (alias) => typeof delta[alias] === "string" && delta[alias] !== ""
+    );
     return delta.content && delta.content !== "" ||
-           delta.reasoning_content && delta.reasoning_content !== "" ||
+           hasReasoning ||
            delta.tool_calls && delta.tool_calls.length > 0 ||
            chunk.choices[0].finish_reason ||
            delta.role;

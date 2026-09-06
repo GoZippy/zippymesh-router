@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { listVaultEntries, storeVaultEntry, isVaultUnlocked } from "@/lib/vault.js";
+import { requireAuth } from "@/lib/auth/middleware.js";
 
 /** GET /api/vault/entries — list entry metadata (no values) */
-export async function GET() {
+async function getHandler() {
   const entries = listVaultEntries();
   return NextResponse.json({ entries, unlocked: isVaultUnlocked() });
 }
 
 /** POST /api/vault/entries — add or update an entry */
-export async function POST(request) {
+async function postHandler(request) {
   if (!isVaultUnlocked()) {
     return NextResponse.json({ error: "Vault is locked" }, { status: 403 });
   }
@@ -21,3 +22,8 @@ export async function POST(request) {
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 });
   return NextResponse.json({ ok: true });
 }
+
+// Route-level auth (defense-in-depth): the edge proves key authenticity but NOT
+// revocation, so the vault (secret storage) enforces session auth at the route.
+export const GET = requireAuth(getHandler);
+export const POST = requireAuth(postHandler);

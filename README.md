@@ -146,10 +146,20 @@ Output in `community-dist/`. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 
 
 ## MCP server
 
-ZMLR includes an MCP (Model Context Protocol) server for AI agents:
+ZMLR includes an MCP (Model Context Protocol) server for AI agents, over two transports.
+
+**stdio** — for Claude Code, Cursor, Kilo, Cline and anything else that launches an MCP subprocess. No build and no running server needed:
 
 ```bash
-# In your MCP client config:
+claude mcp add zmlr -e DATA_DIR="$HOME/.zippy-mesh" -e ZIPPYVAULT_TOKEN=... \
+  -- node /absolute/path/to/ZippyMesh_LLM_Router/scripts/mcp-stdio.mjs
+```
+
+See **[`docs/MCP_STDIO.md`](docs/MCP_STDIO.md)** for the Cursor / Kilo config snippets, the environment variables, and the vault unlock-scope note (`vault_get` needs `ZMLR_URL` pointed at a running ZMLR server).
+
+**HTTP** — when ZMLR is already running and your client can POST to a URL:
+
+```json
 {
   "mcpServers": {
     "zmlr": {
@@ -159,7 +169,14 @@ ZMLR includes an MCP (Model Context Protocol) server for AI agents:
 }
 ```
 
-Tools: `list_models`, `recommend_model`, `validate_model`, `execute_with_routing`
+Tools (identical on both transports): `list_models`, `recommend_model`, `validate_model`, `get_models_by_capability`, `get_routing_metadata`, `execute_with_routing`, and the ZippyVault tools `vault_status`, `vault_list`, `vault_get`, `vault_store`.
+
+The vault tools never run on the router key alone. `vault_list`, `vault_get` and `vault_store` require a **scoped ZippyVault agent token** (issue one with `POST /api/vault/tokens`); the token's scopes bound what the agent can see, and every access is logged.
+
+- Over HTTP (`/api/mcp`): send the token per request as `x-zippyvault-token: <token>` (or `Authorization: Bearer <token>` when that header is not carrying your router API key).
+- Over stdio (`scripts/mcp-stdio.mjs`): set `ZIPPYVAULT_TOKEN=<token>` in that process's environment — in your MCP client's `env` block.
+
+`vault_list` works on a locked vault (metadata only, with an `unlocked` flag); `vault_get` needs the vault unlocked; `vault_store` needs a token scoped to `*` and an unlocked vault. `vault_status` needs no token and returns no secret material.
 
 ---
 

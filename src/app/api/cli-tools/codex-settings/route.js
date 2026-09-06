@@ -8,7 +8,9 @@ import os from "os";
 
 const execAsync = promisify(exec);
 
-const getCodexDir = () => `${os[String.fromCharCode(104, 111, 109, 101, 100, 105, 114)]()}/.codex`;
+// Plain os.homedir() — see review item 16h; the String.fromCharCode() spelling
+// only blinded this repo's own path/secret scanners.
+const getCodexDir = () => `${os.homedir()}/.codex`;
 const getCodexConfigPath = () => `${getCodexDir()}/config.toml`;
 const getCodexAuthPath = () => `${getCodexDir()}/auth.json`;
 

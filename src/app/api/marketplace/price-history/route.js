@@ -19,8 +19,8 @@ export async function GET(request) {
     } else if (providerId) {
       history = await getPriceHistory(providerId, modelId, activeOnly);
     } else {
-      // Return all history if no provider specified
-      history = await getPriceHistory("*", null, activeOnly);
+      // Return all history if no provider specified (null = no provider filter)
+      history = await getPriceHistory(null, null, activeOnly);
     }
 
     return NextResponse.json({

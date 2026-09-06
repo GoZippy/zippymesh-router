@@ -1,25 +1,32 @@
 @echo off
-setlocal EnableDelayedExpansion
+REM ZippyMesh LLM Router - start the production standalone build from a SOURCE TREE.
+REM
+REM   start-stable.cmd          loopback only (http://127.0.0.1:20128)
+REM   start-stable.cmd --lan    also reachable from other machines on the network
+REM
+REM A released zip carries its own start-stable.cmd next to server.js; this one is
+REM for running the build you produced with `npm run build` out of the repo.
+setlocal
 cd /d "%~dp0"
 
-REM Load .env from standalone folder if it exists
-if exist ".next\standalone\.env" (
-  for /f "usebackq tokens=1,* delims==" %%a in (".next\standalone\.env") do (
-    set "%%a=%%b"
-  )
-)
-
-REM Default values (can be overridden by .env)
-if not defined PORT set PORT=20128
-if not defined HOSTNAME set HOSTNAME=0.0.0.0
-if not defined DATA_DIR set DATA_DIR=%APPDATA%\zippy-mesh
 if not exist ".next\standalone\server.js" (
-  echo Run build first: npm run build:next
-  echo Then: node scripts\prepare-standalone.cjs
+  echo No standalone build found. Run:  npm run build
   exit /b 1
 )
 if not exist ".next\standalone\.next\static" (
   node scripts\prepare-standalone.cjs
 )
-echo Starting ZippyMesh Router at http://localhost:%PORT% (HOSTNAME=%HOSTNAME% for network access)
+
+REM server.js chdir()s into .next\standalone, so it would otherwise only see
+REM .next\standalone\.env. Point it at the .env in this directory instead.
+if exist ".env" set ZIPPY_ENV_FILE=%CD%\.env
+
+REM Do NOT default PORT / ZIPPY_BIND_HOST here: server.js resolves them from the
+REM environment first, then .env, then falls back to 127.0.0.1:20128.
+if /i "%~1"=="--lan" (
+  set ZIPPY_BIND_HOST=0.0.0.0
+  echo LAN mode: this node will be reachable from other machines. Enable login at /setup first.
+)
+
+echo Starting ZippyMesh Router (default http://127.0.0.1:20128; .env can override PORT / ZIPPY_BIND_HOST)
 node .next\standalone\server.js
